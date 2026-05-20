@@ -1,0 +1,108 @@
+description: Wake modeling for Nengchao Control System
+farm:
+  layout_x:
+  - 40584699.18
+  - 40585632.814
+  - 40586648.79
+  - 40587688.637
+  - 40588695.712
+  - 40590127.391
+  - 40591080.46
+  - 40584692.974
+  - 40584710.317
+  - 40584960.973
+  - 40585821.103
+  - 40586975.213
+  - 40588129.324
+  - 40589283.435
+  - 40590437.545
+  - 40591305.663
+  - 40591447.032
+  - 40585211.629
+  - 40586237.259
+  - 40587262.89
+  - 40588288.52
+  - 40589314.15
+  - 40590339.78
+  - 40591744.258
+  layout_y:
+  - 3712226.37
+  - 3712222.798
+  - 3712222.164
+  - 3712220.518
+  - 3712219.945
+  - 3712217.872
+  - 3712217.311
+  - 3711167.445
+  - 3710107.981
+  - 3709048.518
+  - 3710109.726
+  - 3710111.471
+  - 3710113.215
+  - 3710114.96
+  - 3710116.705
+  - 3710817.698
+  - 3709419.201
+  - 3707989.055
+  - 3707994.24
+  - 3707999.426
+  - 3708004.612
+  - 3708009.798
+  - 3708014.984
+  - 3707901.432
+  turbine_library_path: ..
+  turbine_type:
+  - goldwind_8_5mw_calibrated
+floris_version: v4.6
+flow_field:
+  air_density: 1.225
+  reference_wind_height: 128
+  turbulence_intensities:
+  - 0.06
+  wind_directions:
+  - 22.5
+  wind_shear: 0.12
+  wind_speeds:
+  - 8.5
+  wind_veer: 0.0
+logging:
+  console:
+    enable: true
+    level: WARNING
+  file:
+    enable: false
+    level: WARNING
+name: Goldwind_Dafeng_H1_Project
+solver:
+  turbine_grid_points: 3
+  type: turbine_grid
+wake:
+  enable_active_wake_mixing: false
+  enable_secondary_steering: true
+  enable_transverse_velocities: true
+  enable_yaw_added_recovery: true
+  model_strings:
+    combination_model: sosfs
+    deflection_model: gauss
+    turbulence_model: crespo_hernandez
+    velocity_model: gauss
+  wake_deflection_parameters:
+    gauss:
+      ad: 0.0
+      alpha: 0.58
+      bd: 0.0
+      beta: 0.077
+      ka: 0.38
+      kb: 0.004
+  wake_turbulence_parameters:
+    crespo_hernandez:
+      ai: 0.8
+      constant: 0.73
+      downstream: -0.32
+      initial: 0.1
+  wake_velocity_parameters:
+    gauss:
+      alpha: 2.9975666443913314
+      beta: 0.9999498418550712
+      ka: 0.9943995848504213
+      kb: 0.049987053870552724
