@@ -45,7 +45,7 @@ Creating a wind farm environment of the Ablaincourt layout with the Floris backg
 from wfcrl import environments as envs
 env = envs.make("Ablaincourt_Floris")
 ```
-
+```
 Examples of test cases using the PettingZoo environment are given in the `examples` folder:
 
 | Script | Description |
