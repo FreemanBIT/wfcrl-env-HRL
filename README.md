@@ -34,7 +34,7 @@ A visual overview of some layouts:
 
 | Turb7_Row1      | Ormonde | HornsRev2     | DafengH1|
 |----------------------------------|--------------------|--------------------|--------------------------------------------------------------------------------------|
-|<img src="docs/layouts/layoutTurb7_Row1.svg" >   | <img src="docs/layouts/layoutOrmonde.svg" >   | <img src="docs/layouts/layoutHornsRev2.svg" >   |<img src="docs/layouts/docs/layouts/DafengH1.png" >   |
+|<img src="docs/layouts/layoutTurb7_Row1.svg" >   | <img src="docs/layouts/layoutOrmonde.svg" >   | <img src="docs/layouts/layoutHornsRev2.svg" >   |<img src="docs/layouts/DafengH1.png" >   |
 
 
 ## Example
