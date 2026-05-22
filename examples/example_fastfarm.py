@@ -1,49 +1,54 @@
-import sys, os
+"""
+FAST.Farm Standalone Simulation Example
+=========================================
+Runs any FAST.Farm case from data_cases using the standalone interface.
+Usage:
+    python examples/example_fastfarm.py --case DafengH1 --steps 5
+    python examples/example_fastfarm.py --case Turb6_Row2 --steps 3
+"""
+import argparse, numpy as np, os, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import numpy as np
+parser = argparse.ArgumentParser()
+parser.add_argument("--case", type=str, default="DafengH1",
+                    help="Case name from data_cases (e.g. DafengH1, Ablaincourt)")
+parser.add_argument("--steps", type=int, default=5)
+parser.add_argument("--wind_speed", type=float, default=10.0)
+parser.add_argument("--yaw", type=float, default=0.0)
+parser.add_argument("--pitch", type=float, default=0.0)
+args = parser.parse_args()
 
-from wfcrl import environments as envs
-from wfcrl.rewards import StepPercentage
+from wfcrl.environments.data_cases import named_cases_dictionary
 
-env = envs.make(
-    "Dec_DafengH1_Fastfarm",
-    max_num_steps=2, #100
-    controls=["yaw", "pitch"],
-    reward_shaper=StepPercentage(),
-    load_coef=1,
-    # UNCOMMENT TO ADD CUSTOM PATH TO FAST.Farm
-    # path_to_simulator="path_to_simulator"
-)
+key = args.case + "_"
+if key not in named_cases_dictionary:
+    avail = [k.rstrip("_") for k in named_cases_dictionary]
+    print(f"Unknown case '{args.case}'. Available: {avail}"); sys.exit(1)
 
+farm_case = named_cases_dictionary[key][0]  # [0]=FAST.Farm case
+print(f"Case: {args.case} ({farm_case.num_turbines} turbines)")
 
-def dummy_policy(agent, i):
-    if (agent == "turbine_1") and (i == 20):
-        return {
-            "yaw": np.array([15.0]),
-            "pitch": np.array([3.0]),
-        }
-    return {"yaw": np.array([0]), "pitch": np.array([0.0])}
+from wfcrl.interface import FastFarmStandaloneInterface
 
+config = farm_case.dict()
+config["max_iter"] = args.steps
+config["speed"] = args.wind_speed
+config["dt"] = getattr(farm_case, 'dt', 3)
+config["t_init"] = 0
 
-env.reset()
-r = {agent: 0.0 for agent in env.possible_agents}
-num_steps = {agent: 0 for agent in env.possible_agents}
-loads = {agent: 0.0 for agent in env.possible_agents}
-powers = {agent: 0.0 for agent in env.possible_agents}
+ts = time.time()
+out_dir = os.path.join(os.path.dirname(__file__), "..",
+    "__simul__", "fastfarm", f"{args.case}_{ts:.0f}")
+os.makedirs(out_dir, exist_ok=True)
 
-for agent in env.agent_iter():
-    observation, reward, termination, truncation, info = env.last()
-    r[agent] += reward
-    if termination or truncation:
-        action = None
-    else:
-        action = dummy_policy(agent, num_steps[agent])
-        num_steps[agent] += 1
-        loads[agent] += float(np.mean(np.abs(info["load"]))) if "load" in info else 0.0
-        powers[agent] += float(info["power"]) if "power" in info else 0.0
-    env.step(action)
+ff = FastFarmStandaloneInterface(config, out_dir)
+ff.setup()
+ff.set_yaw_pitch(args.yaw, args.pitch)
+print(f"Running {args.steps} steps...")
+meas = ff.run()
 
-print(f"\nTotal reward = {r}\n")
-print(f"Powers = {powers}\n")
-print(f"Loads = {loads}\n")
+if meas['power_mw'] is not None:
+    fp = meas['power_mw'].sum(axis=1)
+    print(f"Farm power: mean={fp.mean():.2f} MW, range=[{fp.min():.2f}, {fp.max():.2f}] MW")
+else:
+    print("No power data")

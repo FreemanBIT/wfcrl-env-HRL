@@ -1,4 +1,6 @@
+import os
 import platform
+import re
 import time
 import warnings
 from abc import ABC
@@ -21,6 +23,8 @@ from wfcrl.simul_utils import (
     reset_simul_file,
     write_inflow_info,
 )
+from openfast_toolbox.io.fast_input_file import FASTInputFile
+from openfast_toolbox.io import FASTOutputFile
 
 
 class BaseInterface(ABC):
@@ -681,6 +685,218 @@ class FlorisInterface(BaseInterface):
 
     def get_parameters(self):
         pass
+
+
+# =====================================================================
+# Standalone FAST.Farm Interface (no MPI, subprocess-based)
+# =====================================================================
+class FastFarmStandaloneInterface:
+    """
+    Standalone interface for FAST.Farm farm-level control.
+    Uses subprocess (not MPI) — compatible with FAST.Farm v5.0.0+.
+
+    Architecture:
+        Controller -> set_yaw_pitch() -> run FAST.Farm -> parse .outb -> measurements
+    """
+
+    def __init__(self, config_dict, output_dir, farm_base=None):
+        self.config = config_dict
+        self.output_dir = output_dir
+        self.n_turbines = config_dict.get('num_turbines', 0)
+        self.fstf_file = None
+        self.farm_base = farm_base
+
+    def setup(self, add_outlist=True):
+        """Generate FAST.Farm input files and configure environment."""
+        farm_base_dir = os.path.join(self.output_dir, "FarmInputs")
+        os.makedirs(farm_base_dir, exist_ok=True)
+        self.fstf_file = create_ff_case(self.config, output_dir=self.output_dir)
+        self.farm_base = os.path.dirname(self.fstf_file) if self.farm_base is None else self.farm_base
+        if add_outlist:
+            self._add_outlist()
+        self._fix_inflow()
+
+    def _add_outlist(self):
+        """Add OutList channels to generated turbine .fst files."""
+        fstf = FASTInputFile(self.fstf_file)
+        wt_refs = [row[3].replace('"', "") for row in fstf["WindTurbines"]]
+        channels = ["GenPwr","GenTq","RotSpeed","RootMIP1","RootMOoP1","RootMzb1","YawPzn","BldPitch1","HSShftP"]
+        for wt_ref in wt_refs:
+            wt_path = os.path.join(self.farm_base, wt_ref)
+            with open(wt_path, 'rb') as f: raw = f.read()
+            text = raw.decode('ascii', errors='replace')
+            if 'OutList' in text: continue
+            lines = text.split('\n'); nl = []; inserted = False
+            for line in lines:
+                nl.append(line)
+                if not inserted and line.strip().startswith('"G0"'):
+                    nl.append('')
+                    for ch in channels: nl.append(f'"{ch}"    {ch}')
+                    nl.append('END of input file'); inserted = True
+            if inserted:
+                ob = '\n'.join(nl).encode('ascii', errors='replace')
+                ob = ob.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+                with open(wt_path, 'wb') as f: f.write(ob)
+
+    def _fix_inflow(self):
+        """Fix InflowWind.dat wind direction and RotorApexOffsetPos."""
+        inflow_path = os.path.join(self.farm_base, "InflowWind.dat")
+        if not os.path.exists(inflow_path): return
+        wdir = self.config.get('direction', 270)
+        prop_dir = (wdir + 90) % 360
+        inflow = FASTInputFile(inflow_path)
+        inflow["PropagationDir"] = prop_dir; inflow.write(inflow_path)
+        with open(inflow_path, 'rb') as f: raw = f.read()
+        raw = raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+        text = raw.decode('ascii')
+        text = re.sub(r'^(\s*)[0-9.+-]+\s+RotorApexOffsetPos',
+                      r'\1 0.0, 0.0, 0.0   RotorApexOffsetPos',
+                      text, flags=re.MULTILINE)
+        with open(inflow_path, 'wb') as f: f.write(text.encode('ascii'))
+        write_inflow_info(inflow_path, float(self.config.get('speed', 10)))
+
+    def set_yaw_pitch(self, yaw_deg, pitch_deg):
+        """Set yaw/pitch via ElastoDyn NacYaw/BlPitch (ROSCO-style)."""
+        fstf = FASTInputFile(self.fstf_file)
+        wt_refs = [row[3].replace('"', "") for row in fstf["WindTurbines"]]
+        for wt_ref in wt_refs:
+            wt_path = os.path.join(self.farm_base, wt_ref)
+            wt = FASTInputFile(wt_path)
+            ed_path = os.path.join(self.farm_base, wt["EDFile"].replace('"', ""))
+            ed = FASTInputFile(ed_path)
+            ed["NacYaw"] = float(yaw_deg)
+            ed["BlPitch(1)"] = float(pitch_deg)
+            ed["BlPitch(2)"] = float(pitch_deg)
+            ed["BlPitch(3)"] = float(pitch_deg)
+            ed.write(ed_path)
+            with open(ed_path, 'rb') as f: raw = f.read()
+            raw = raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+            with open(ed_path, 'wb') as f: f.write(raw)
+
+    def run(self):
+        """Run FAST.Farm as standalone subprocess. Returns dict with 'time', 'power_mw'."""
+        import subprocess as _sp
+        ff_exe = FastFarmInterface.default_exe_path
+        if not os.path.exists(ff_exe): raise FileNotFoundError(f"FAST.Farm not found: {ff_exe}")
+        proc = _sp.Popen([ff_exe, self.fstf_file], cwd=self.farm_base,
+                         stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True, bufsize=1)
+        for _ in proc.stdout: pass
+        proc.wait()
+        prefix = os.path.splitext(os.path.basename(self.fstf_file))[0]
+        all_power = []; time_vec = None
+        for i in range(1, self.n_turbines + 1):
+            ob = os.path.join(self.farm_base, f"{prefix}.T{i}.outb")
+            o = os.path.join(self.farm_base, f"{prefix}.T{i}.out")
+            if os.path.exists(ob): df = FASTOutputFile(ob).toDataFrame()
+            elif os.path.exists(o): df = FASTOutputFile(o).toDataFrame()
+            else: continue
+            if time_vec is None: time_vec = df.iloc[:, 0].values
+            for col in df.columns:
+                base = col.split('[')[0].strip('_ ')
+                if base == 'GenPwr':
+                    unit = col.split('[')[1].split(']')[0] if '[' in col else 'W'
+                    p = df[col].values
+                    p_mw = p / 1e3 if unit.upper() in ('KW','KILOWATT','KWATT') else p / 1e6
+                    all_power.append(p_mw); break
+        return {'time': time_vec, 'power_mw': np.column_stack(all_power) if all_power else None}
+
+
+class FastFarmOnlineInterface(FastFarmStandaloneInterface):
+    """
+    Online optimization interface for FAST.Farm.
+    Runs one DT_low step at a time — controller decides next action based on
+    current step's measurements. Supports closed-loop / online optimization.
+
+    Architecture:
+        interface = FastFarmOnlineInterface(config, out_dir)
+        interface.setup()
+        for step in range(n_steps):
+            meas = interface.step(yaw_deg, pitch_deg)
+            # meas['power_mw'] -> per-turbine power (MW)
+            # meas['farm_power_mw'] -> total farm power (MW)
+            yaw_next, pitch_next = controller.optimize(meas)
+    """
+
+    def __init__(self, config_dict, output_dir, farm_base=None):
+        super().__init__(config_dict, output_dir, farm_base)
+        self._step_idx = 0
+        self._cumulative_time = 0.0
+        self.step_history = []
+
+    def setup(self, add_outlist=True):
+        super().setup(add_outlist)
+        self._template_config = self.config.copy()
+
+    def step(self, yaw_deg, pitch_deg):
+        """Run one FAST.Farm time step with given yaw/pitch. Returns measurements."""
+        seg_dir = os.path.join(self.output_dir, f"step_{self._step_idx:04d}")
+        os.makedirs(seg_dir, exist_ok=True)
+
+        config = self._template_config.copy()
+        config["max_iter"] = 1
+
+        from wfcrl.simul_utils import create_ff_case
+        self.fstf_file = create_ff_case(config, output_dir=seg_dir)
+        self.farm_base = os.path.dirname(self.fstf_file)
+        self._add_outlist()
+        self._fix_inflow()
+        self.set_yaw_pitch(float(yaw_deg), float(pitch_deg))
+
+        import subprocess as _sp
+        ff_exe = FastFarmInterface.default_exe_path
+        proc = _sp.Popen([ff_exe, self.fstf_file], cwd=self.farm_base,
+                         stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True, bufsize=1)
+        for _ in proc.stdout: pass
+        proc.wait()
+
+        prefix = os.path.splitext(os.path.basename(self.fstf_file))[0]
+        power_mw = np.zeros(self.n_turbines)
+        for i in range(1, self.n_turbines + 1):
+            ob = os.path.join(self.farm_base, f"{prefix}.T{i}.outb")
+            o = os.path.join(self.farm_base, f"{prefix}.T{i}.out")
+            if os.path.exists(ob): df = FASTOutputFile(ob).toDataFrame()
+            elif os.path.exists(o): df = FASTOutputFile(o).toDataFrame()
+            else: continue
+            for col in df.columns:
+                base = col.split('[')[0].strip('_ ')
+                if base == 'GenPwr':
+                    unit = col.split('[')[1].split(']')[0] if '[' in col else 'W'
+                    p = df[col].values[-1]
+                    p_mw = p / 1e3 if unit.upper() in ('KW','KILOWATT','KWATT') else p / 1e6
+                    power_mw[i-1] = p_mw; break
+
+        meas = {
+            'step': self._step_idx, 'time': self._cumulative_time,
+            'dt': self.config.get('dt', 3.0), 'power_mw': power_mw,
+            'farm_power_mw': power_mw.sum(),
+            'yaw_cmd': yaw_deg, 'pitch_cmd': pitch_deg,
+        }
+        self.step_history.append(meas)
+        self._step_idx += 1
+        self._cumulative_time += self.config.get('dt', 3.0)
+        return meas
+
+
+# =====================================================================
+# HyCon-Style Controller Base Class
+# =====================================================================
+class FarmControllerBase:
+    """HyCon-style farm-level controller base class. Subclasses implement compute_controls()."""
+    def __init__(self, n_turbines):
+        self.n_turbines = n_turbines
+        self.control_history = []
+
+    def compute_controls(self, measurement_dict):
+        raise NotImplementedError
+
+    def step(self, measurement_dict):
+        controls = self.compute_controls(measurement_dict)
+        self.control_history.append({
+            'time': measurement_dict.get('time', 0),
+            'yaw_cmd': controls.get('yaw'),
+            'pitch_cmd': controls.get('pitch'),
+        })
+        return controls
 
     def sample_parameters(self):
         pass
