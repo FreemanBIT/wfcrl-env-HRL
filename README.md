@@ -46,12 +46,17 @@ from wfcrl import environments as envs
 env = envs.make("Ablaincourt_Floris")
 ```
 ```
-Examples of test cases using the PettingZoo environment are given in the `examples` folder:
+Examples of test cases are given in the `examples` folder:
 
 | Script | Description |
 |--------|-------------|
 | `python examples/example_floris.py` | Simulate `Ablaincourt` layout on FLORIS |
-| `mpiexec -n 1 python examples/run_dafeng_fastfarm.py` | Simulate `DafengH1` layout on FAST.Farm v5.0.0 (24 turbines) |
+| `python examples/example_fastfarm.py` | Simulate any FAST.Farm case with the standalone interface |
+| `python examples/run_dafeng_baseline.py` | DafengH1 baseline simulation on FAST.Farm (24 turbines, standalone) |
+| `python examples/example_hycon_farm_control.py` | HyCon/ROSCO-style segmented farm control with FAST.Farm |
+| `python examples/example_online_control.py` | Online closed-loop optimization control with FAST.Farm |
+
+> **Note:** The new standalone example scripts use `FastFarmStandaloneInterface` / `FastFarmOnlineInterface` (subprocess-based) and do **not** require MPI. The legacy MPI-based `FastFarmInterface` remains available for backward compatibility.
 
 More detailed examples can be found in the `demo.ipynb` notebook. See below under *Running Example Notebooks*.
 
@@ -75,7 +80,7 @@ WFCRL supports **FAST.Farm v5.0.0** (upgraded from v3.5.1).
    - `DISCON.dll` — NREL 5MW reference controller, pre-compiled for OpenFAST v5.0.0
    - Place it in `wfcrl/simulators/fastfarm/servo_dll/DISCON_WT1.dll`
 
-3. **Install MS-MPI**:
+3. **Install MS-MPI** (required only for the legacy MPI-based interface):
    Download **BOTH** Windows MPI setup (.exe) and MPI SDK (.msi) from [Microsoft MPI](https://www.microsoft.com/en-us/download/details.aspx?id=100593)
 
    Verify your installation by running `set MSMPI` in a command prompt:
@@ -88,47 +93,110 @@ WFCRL supports **FAST.Farm v5.0.0** (upgraded from v3.5.1).
    MSMPI_LIB64=C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\
    ```
 
-4. **Test the setup**:
+4. **Test the setup** (standalone, no MPI needed):
 
    ```
-   mpiexec -n 1 python examples/run_dafeng_fastfarm.py
+   python examples/example_fastfarm.py --case DafengH1 --steps 3
    ```
 
-## More details on interfacing with FAST.Farm
+   Or run the full DafengH1 baseline:
 
-A simple tutorial to start a simulation with the FAST.Farm interface is available in the notebook `interface.ipynb` notebook. To properly launch the notebook, see the intructions below in *Running Examples Notebook*.
+   ```
+   python examples/run_dafeng_baseline.py
+   ```
 
-**Creating an interface from a WFCRL case:**
+## Interfacing with FAST.Farm
 
+WFCRL provides three interface levels for FAST.Farm. The **standalone interface** (subprocess-based) is the recommended approach for most use cases.
+
+A tutorial is also available in the `interface.ipynb` notebook (see *Running Example Notebooks*).
+
+### 1. Standalone Interface (`FastFarmStandaloneInterface`)
+
+The preferred way to run FAST.Farm. Uses `subprocess` (no MPI) — launches FAST.Farm, runs the full simulation, and parses `.outb` output files.
+
+**Basic usage:**
+
+```python
+from wfcrl.environments.data_cases import named_cases_dictionary
+from wfcrl.interface import FastFarmStandaloneInterface
+
+farm_case = named_cases_dictionary["DafengH1_"][0]
+config = farm_case.dict()
+config["max_iter"] = 10
+config["speed"] = 10.0
+
+ff = FastFarmStandaloneInterface(config, output_dir="./my_sim")
+ff.setup()                          # Generate input files
+ff.set_yaw_pitch(yaw_deg=270.0, pitch_deg=0.0)  # Set fixed yaw/pitch
+measurements = ff.run()             # Run FAST.Farm and parse outputs
+
+# measurements contains:
+#   'time'     - time vector
+#   'power_mw' - per-turbine power (n_steps x n_turbines)
 ```
-from wfcrl.environments import data_cases as cases
+
+**On Windows**, by default, the FAST.Farm executable is expected at:
+`wfcrl/simulators/fastfarm/bin/FAST.Farm_x64_OMP.exe`.
+
+### 2. Online / Step-by-Step Interface (`FastFarmOnlineInterface`)
+
+For **closed-loop optimization** — runs one `DT_low` time step at a time, so the controller can react to measurements before the next step.
+
+```python
+from wfcrl.interface import FastFarmOnlineInterface
+
+interface = FastFarmOnlineInterface(config, output_dir)
+interface.setup()
+
+for step in range(n_steps):
+    meas = interface.step(yaw_deg, pitch_deg)
+    # meas['power_mw']       -> per-turbine power (MW)
+    # meas['farm_power_mw']  -> total farm power (MW)
+    # meas['yaw_cmd']        -> applied yaw
+    # meas['pitch_cmd']      -> applied pitch
+    yaw_next, pitch_next = my_controller.optimize(meas)
+```
+
+### 3. Controller Base Class (`FarmControllerBase`)
+
+A base class for implementing farm-level controllers in the HyCon/ROSCO style:
+
+```python
+from wfcrl.interface import FarmControllerBase
+
+class MyController(FarmControllerBase):
+    def compute_controls(self, measurement_dict):
+        # measurement_dict contains 'power_mw', 'farm_power_mw', 'time', etc.
+        return {'yaw': ..., 'pitch': ...}
+
+controller = MyController(n_turbines)
+controls = controller.step(measurement_dict)
+```
+
+### 4. Legacy MPI Interface (`FastFarmInterface`)
+
+The original MPI-based interface is still available for backward compatibility. It uses `mpi4py` to spawn FAST.Farm as an MPI process.
+
+```python
 from wfcrl.interface import FastFarmInterface
 
-config = cases.fastfarm_6t
-interface = FastFarmInterface(config)
+interface = FastFarmInterface.from_case(case, fast_farm_executable=path_to_exe)
+interface.init(wind_speed=10.0)
+interface.update_command(yaw=np.zeros(num_turbines))
 ```
 
-On Windows, by default, your FAST.Farm executable is assumed to be located in `wfcrl/simulators/fastfarm/bin/FAST.Farm_x64_OMP.exe`. If not, you can also pass it to the interface:
+> **Note:** The legacy MPI interface requires MS-MPI and `mpi4py`. For new projects, prefer `FastFarmStandaloneInterface`.
 
-```
-interface = FastFarmInterface(config, fast_farm_executable=path_to_exe)
-```
+### Measurements
 
-**Creating an interface from existing configuration files:**
-Alternatively, if you already have your simulation files ready, you can just point towards the `.fstf` file:
-```
-ff_interface = FastFarmInterface(fstf_file=path_to_fstf)
-```
+At every iteration, all interfaces retrieve per-turbine measurements:
+- Wind speed and direction at the farm entrance
+- Turbine output power
+- Yaw, pitch, and torque
+- 6 blade load components (root bending moments)
 
-At every iteration, the FAST.Farm interface retrieves 12 measures per turbine:
-- 2 wind measurements: wind velocity and direction at the entrance of the farm
-- The current output power of the turbine
-- The yaw of the turbine
-- The pitch of the turbine
-- The torque of the turbine
-- 6 measures of blade loads
-
-A detailed example can be found in the `interface.ipynb` notebook. To run this notebook, follow the instructions under *Running Example Notebooks*.
+A detailed tutorial is available in the `interface.ipynb` notebook (see *Running Example Notebooks*).
 
 
 # Running Example Notebooks
