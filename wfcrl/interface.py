@@ -240,10 +240,10 @@ class MPI_Interface(BaseInterface):
         )
 
     def _finalize_mpi_comm(self):
-        # Disconnect from intercommunicator
-        if isinstance(self._comm, MPI.Intercomm):
-            self._comm.Disconnect()
+        # Mark as disconnected and release the MPI comm reference.
+        # This prevents mpi4py from attempting cleanup on exit.
         self._comm_connected = False
+        self._comm = None
 
     def get_yaw_command(self):
         if 1 - self._current_yaw_command[0]:
@@ -429,6 +429,9 @@ class FastFarmInterface(MPI_Interface):
         )
 
     def init(self, wind_speed: float = None, wind_direction: float = None):
+        # Clean up previous FAST.Farm before spawning a new one
+        if hasattr(self, '_comm') and self._comm is not None:
+            self._finalize_mpi_comm()
         # wind speed and direction ignored for now
         if wind_direction is not None:
             warnings.warn(

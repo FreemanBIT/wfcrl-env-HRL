@@ -96,4 +96,5 @@ class WindFarmEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def close(self):
-        pass
+        if hasattr(self, 'mdp') and hasattr(self.mdp, 'interface') and hasattr(self.mdp.interface, '_finalize_mpi_comm'):
+            self.mdp.interface._finalize_mpi_comm()

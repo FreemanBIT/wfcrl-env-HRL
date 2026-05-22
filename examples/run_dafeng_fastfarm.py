@@ -122,6 +122,7 @@ def step_policy(i, j):
 
 
 rewards = multi_agent_step_routine(ff_env, step_policy)
+env.close()
 print(f"Rewards per turbine: {rewards}")
 print(f"Total reward (sum): {sum(rewards.values()):.2f}")
 
@@ -171,3 +172,6 @@ print(f"Total reward (yaw+pitch): {sum(rewards2.values()):.2f}")
 print("\n" + "=" * 60)
 print("Simulation complete!")
 print("=" * 60)
+
+import subprocess
+subprocess.run(["taskkill", "/f", "/im", "FAST.Farm_x64_OMP.exe"], capture_output=True)

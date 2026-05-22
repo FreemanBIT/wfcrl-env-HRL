@@ -158,9 +158,9 @@ def create_ff_case(case: Dict, output_dir=None):
     # Hub Height (m)
     hubHeight = ed["TowerHt"]
     # x-extent of high res box in diamter around turbine location
-    extent_X_high = 1.2  # np.round((fstf['NX_High'] * dX_High)/D,2)
+    extent_X_high = 2.0  # np.round((fstf['NX_High'] * dX_High)/D,2)
     # y-extent of high res box in diamter around turbine location
-    extent_YZ_high = 1.2  # np.round((fstf['NY_High'] * dYZ_High)/D,2)
+    extent_YZ_high = 2.0  # np.round((fstf['NY_High'] * dYZ_High)/D,2)
     # maximum blade chord (m). Turbine specific.
     chord_max = 5
     # All turbine have same z coordinates

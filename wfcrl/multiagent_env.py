@@ -266,4 +266,5 @@ class MAWindFarmEnv(AECEnv):
         self._accumulate_rewards()
 
     def close(self):
-        pass
+        if hasattr(self, '_mdp') and hasattr(self._mdp, 'interface') and hasattr(self._mdp.interface, '_finalize_mpi_comm'):
+            self._mdp.interface._finalize_mpi_comm()
