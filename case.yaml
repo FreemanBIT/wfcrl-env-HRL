@@ -1,0 +1,73 @@
+description: Base template for turbines using Gauss Curl Hybrid model
+farm:
+  layout_x:
+  - 484.8
+  - 797.1
+  - 1038.8
+  - 1377.6
+  - 1716.9
+  - 2057.3
+  - 2400.0
+  layout_y:
+  - 274.0
+  - 251.0
+  - 66.9
+  - -22.7
+  - -112.5
+  - -195.3
+  - -259.0
+  turbine_type:
+  - nrel_5MW
+floris_version: v4.6
+flow_field:
+  air_density: 1.225
+  reference_wind_height: -1
+  turbulence_intensities:
+  - 0.06
+  wind_directions:
+  - 270
+  wind_shear: 0.12
+  wind_speeds:
+  - 8
+  wind_veer: 0.0
+logging:
+  console:
+    enable: true
+    level: WARNING
+  file:
+    enable: false
+    level: WARNING
+name: GCH
+solver:
+  turbine_grid_points: 3
+  type: turbine_grid
+wake:
+  enable_active_wake_mixing: false
+  enable_secondary_steering: true
+  enable_transverse_velocities: true
+  enable_yaw_added_recovery: true
+  model_strings:
+    combination_model: sosfs
+    deflection_model: gauss
+    turbulence_model: crespo_hernandez
+    velocity_model: gauss
+  wake_deflection_parameters:
+    gauss:
+      ad: 0.0
+      alpha: 0.58
+      bd: 0.0
+      beta: 0.077
+      ka: 0.38
+      kb: 0.004
+  wake_turbulence_parameters:
+    crespo_hernandez:
+      ai: 0.8
+      constant: 0.5
+      downstream: -0.32
+      initial: 0.1
+  wake_velocity_parameters:
+    gauss:
+      alpha: 0.58
+      beta: 0.077
+      ka: 0.38
+      kb: 0.004

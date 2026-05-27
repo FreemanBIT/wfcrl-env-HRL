@@ -1,217 +1,221 @@
 # WFCRL: Interfacing and Benchmark Reinforcement Learning for Wind Farm Control
 
-## Environments
+---
 
-List all environments with:
+## 环境总览
 
-```
+列出所有可用环境：
+
+```python
 from wfcrl import environments as envs
 envs.list_envs()
 ```
 
-All wind farms environments are implemented with both the `Gymnasium` and `PettingZoo` API, and can be run on both the `Floris` and the `FAST.Farm` wind farm simulators.
+所有风场环境同时支持 `Gymnasium` 和 `PettingZoo` API，可在 **FLORIS** 和 **FAST.Farm** 两种风场仿真器上运行。
 
-The root name of the environment is associated with a specific layout, of arrangement of turbines in the field. It is combined with a prefix and a suffix:
-- A `Dec_` prefix is added before environment names to indicate an Agent Environment Cycle implementation supported by `PettingZoo`.
-- A `Floris` or `FAST.Farm` suffix is added after the name of the environment to indicate the name of the background simulator.
+环境命名规则：
+- `Dec_` 前缀 → PettingZoo Agent Environment Cycle 实现
+- `{布局名称}_{仿真器}` 后缀 → 如 `DafengH1_Floris`、`DafengH1_Fastfarm`
 
+| 布局名称 | 风机数 | 说明 |
+|---------|--------|------|
+| DafengH1 | 24 | 江苏大丰 H1 风场 (24 × Goldwind 8.5MW) |
+| Ablaincourt | 7 | 基于 Ablaincourt 风场布局 (Duc et al, 2019) |
+| Turb16_TCRWP | 16 | TC RWP 参考风场（前 16 台） |
+| Turb6_Row2 | 6 | 自定义 2 行 × 3 列布局 |
+| Turb16_Row5 | 16 | CL-Windcon 项目布局 |
+| Turb32_Row5 | 32 | CL-Windcon 项目布局 |
+| TurbX_Row1 (X=1..12) | X | 程序生成单行布局 |
+| Ormonde | 31 | Ormonde 海上风场 |
+| WMR | 36 | Westermost Rough 海上风场 |
+| HornsRev1 | 76 | Horns Rev 1 海上风场 |
+| HornsRev2 | 92 | Horns Rev 2 海上风场 |
+| TCRWP | 32 | Total Control Reference Wind Power Plant |
 
-| Root Name          | **\# Agents** | **Description**     |
-|----------------------------------|--------------------|--------------------------------------------------------------------------------------|
-| DafengH1                         | 24                 | Layout of the DafengH1 wind farm (24 x Goldwind 8.5MW turbines, China)               |
-| Ablaincourt                      | 7                  | Inspired by layout of the Ablaincourt farm    (Duc et al, 2019)            |
-| Turb16_TCRWP                    | 16                 | Layout of the [Total Control Reference Wind Power Plant](https://farmconners.readthedocs.io/en/latest/provided_data_sets.html) (TC RWP) (the first 16 turbines)   |
-| Turb6_Row2                      | 6                  | Custom case  - 2 rows of 3 turbines                                  |
-| Turb16_Row5                     | 16                 | Layout of the first 32 turbines in the the CL-Windcon project [as implemented in WFSim](https://github.com/TUDelft-DataDrivenControl/WFSim/blob/master/layoutDefinitions/layoutSet_clwindcon_80turb.m)           |
-| Turb32_Row5                     | 32                 | Layout of the farm used in the                            |
-| TurbX_Row1 for X in [1, 12] | X                  | Procedurally generated single row layout with X turbines, |
-| Ormonde                          | 31                 | Layout of the Ormonde Offshore Wind Farm                                             |
-| WMR                              | 36                 | Layout of the Westermost Rough Offshore Wind Farm                                    |
-| HornsRev1                        | 76                 | Layout of the Horns Rev 1 Offshore Wind Farm                                         |
-| HornsRev2                        | 92                 | Layout of the Horns Rev 2 Offshore Wind Farm                                         |
+部分布局可视化：
 
-A visual overview of some layouts:
+| Turb7_Row1 | Ormonde | HornsRev2 | DafengH1 |
+|-----------|---------|-----------|----------|
+| <img src="docs/layouts/layoutTurb7_Row1.svg"> | <img src="docs/layouts/layoutOrmonde.svg"> | <img src="docs/layouts/layoutHornsRev2.svg"> | <img src="docs/layouts/DafengH1.png"> |
 
-| Turb7_Row1      | Ormonde | HornsRev2     | DafengH1|
-|----------------------------------|--------------------|--------------------|--------------------------------------------------------------------------------------|
-|<img src="docs/layouts/layoutTurb7_Row1.svg" >   | <img src="docs/layouts/layoutOrmonde.svg" >   | <img src="docs/layouts/layoutHornsRev2.svg" >   |<img src="docs/layouts/DafengH1.png" >   |
+---
 
+## 示例脚本
 
-## Example
+所有示例脚本位于 `examples/` 目录：
 
-Creating a wind farm environment of the Ablaincourt layout with the Floris background on Gymnasium:
+| 脚本 | 说明 |
+|------|------|
+| `python examples/example_FASTFarm.py` | **FAST.Farm 连续闭环控制** — 使用 `ContinuousFastFarmInterface` 一次启动 FAST.Farm，通过 DISCON bridge DLL 逐时间步交换控制/测量，流场持续演化（物理正确）。支持 CLI：`--case`/`--steps`/`--wind_speed`/`--wind_direction`。输出全场 + 前 6 台单机功率时序图。 |
+| `python examples/example_floris.py` | **FLORIS 在线控制** — 使用 `FlorisInterface` 通过 FLORIS Python API 逐时间步计算尾流和功率。与 `example_FASTFarm.py` 相同的 CLI 参数和控制逻辑（启发式偏航扫描）。仅支持偏航控制。输出功率时序图。 |
+| `python examples/demo.ipynb` | Jupyter Notebook 演示 — RL 环境创建、控制循环、奖励计算与可视化 |
+| `python examples/interface.ipynb` | Jupyter Notebook 教程 — 统一仿真接口的详细使用说明 |
 
+运行示例：
+
+```bash
+# FAST.Farm 连续控制（需 FAST.Farm v5.0.0 + DISCON_WT1.dll）
+python examples/example_FASTFarm.py --case DafengH1 --steps 3 --wind_speed 10
+
+# FLORIS 在线控制（纯 Python，秒出结果）
+python examples/example_floris.py --case DafengH1 --steps 5 --wind_speed 10
 ```
-from wfcrl import environments as envs
-env = envs.make("Ablaincourt_Floris")
-```
-```
-Examples of test cases are given in the `examples` folder:
 
-| Script | Description |
-|--------|-------------|
-| `python examples/example_floris.py` | Simulate `Ablaincourt` layout on FLORIS |
-| `python examples/example_fastfarm.py` | Simulate any FAST.Farm case with the standalone interface |
-| `python examples/run_dafeng_baseline.py` | DafengH1 baseline simulation on FAST.Farm (24 turbines, standalone) |
-| `python examples/example_hycon_farm_control.py` | HyCon/ROSCO-style segmented farm control with FAST.Farm |
-| `python examples/example_online_control.py` | Online closed-loop optimization control with FAST.Farm |
+---
 
-> **Note:** The new standalone example scripts use `FastFarmStandaloneInterface` / `FastFarmOnlineInterface` (subprocess-based) and do **not** require MPI. The legacy MPI-based `FastFarmInterface` remains available for backward compatibility.
-
-More detailed examples can be found in the `demo.ipynb` notebook. See below under *Running Example Notebooks*.
-
-## Installation
+## 架构总览
 
 In the virtual environment of your choice:
 
 ```
-pip install -e .
+```
+wfcrl/
+├── config.py              # WindConfig, ControlInput, SimulationOutput
+├── interface.py           # SimulatorInterface + 三种实现
+│   ├── FastFarmInterface             # subprocess 每步重启
+│   ├── ContinuousFastFarmInterface   # 一次启动，流场连续（推荐）
+│   └── FlorisInterface               # FLORIS Python API
+├── simul_config.py        # SimulationConfig / FastFarmConfig / FlorisConfig
+├── simul_utils.py         # create_ff_case, create_dll, create_floris_case
+├── environments/
+│   ├── data_cases.py      # 预定义风场布局
+│   ├── registration.py    # Gymnasium / PettingZoo 注册
+│   └── multiagent_env.py  # PettingZoo 多智能体环境
+├── simulators/
+│   ├── fastfarm/
+│   │   ├── bin/            # FAST.Farm_x64_OMP.exe
+│   │   ├── servo_dll/      # DISCON_WT1.dll (WFCRL Bridge)
+│   │   ├── inputs/         # FAST.Farm 模板输入文件
+│   │   └── src/            # DISCON_bridge.f90 Fortran 源码
+│   └── floris/
+│       └── inputs/         # FLORIS 模板 / 风机库
+├── rewards.py             # 奖励函数
+├── mdp.py                 # MDP 定义
+├── wrappers.py            # Gymnasium wrappers
+└── jupyter_utils.py       # Jupyter kernel 工具
 ```
 
-### FAST.Farm Simulator (Windows)
+WFCRL supports **FAST.Farm v5.0.0**.
 
-WFCRL supports **FAST.Farm v5.0.0** (upgraded from v3.5.1).
+1. **下载 FAST.Farm** — 从 [OpenFAST v5.0.0 Release](https://github.com/OpenFAST/openfast/releases/tag/v5.0.0) 获取 `FAST.Farm_x64_OMP.exe`，放入 `wfcrl/simulators/fastfarm/bin/`
 
-1. **Download FAST.Farm v5.0.0** from the [OpenFAST v5.0.0 release page](https://github.com/OpenFAST/openfast/releases/tag/v5.0.0):
-   - `FAST.Farm_x64_OMP.exe` (or `FAST.Farm_x64.exe` for non-OpenMP)
-   - Place the executable in `wfcrl/simulators/fastfarm/bin/FAST.Farm_x64_OMP.exe`
-
-2. **Download DISCON v5.0.0 DLL** from the [same release page](https://github.com/OpenFAST/openfast/releases/tag/v5.0.0):
-   - `DISCON.dll` — NREL 5MW reference controller, pre-compiled for OpenFAST v5.0.0
-   - Place it in `wfcrl/simulators/fastfarm/servo_dll/DISCON_WT1.dll`
-
-3. **Install MS-MPI** (required only for the legacy MPI-based interface):
-   Download **BOTH** Windows MPI setup (.exe) and MPI SDK (.msi) from [Microsoft MPI](https://www.microsoft.com/en-us/download/details.aspx?id=100593)
-
-   Verify your installation by running `set MSMPI` in a command prompt:
-
-   ```
-   MSMPI_BENCHMARKS=C:\Program Files\Microsoft MPI\Benchmarks\
-   MSMPI_BIN=C:\Program Files\Microsoft MPI\Bin\
-   MSMPI_INC=C:\Program Files (x86)\Microsoft SDKs\MPI\Include\
-   MSMPI_LIB32=C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x86\
-   MSMPI_LIB64=C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\
+2. **编译 DISCON Bridge DLL** — 使用 TDM-GCC 编译 WFCRL 自定义桥接控制器：
+   ```bash
+   cd wfcrl/simulators/fastfarm/src
+   gfortran -shared -static -o ..\servo_dll\DISCON_WT1.dll DISCON_bridge.f90
    ```
 
-4. **Test the setup** (standalone, no MPI needed):
-
-   ```
-   python examples/example_fastfarm.py --case DafengH1 --steps 3
-   ```
-
-   Or run the full DafengH1 baseline:
-
-   ```
-   python examples/run_dafeng_baseline.py
+3. **验证安装**：
+   ```bash
+   python examples/example_FASTFarm.py --case DafengH1 --steps 2
    ```
 
-## Interfacing with FAST.Farm
+---
 
-WFCRL provides three interface levels for FAST.Farm. The **standalone interface** (subprocess-based) is the recommended approach for most use cases.
+## 接口使用
 
-A tutorial is also available in the `interface.ipynb` notebook (see *Running Example Notebooks*).
-
-### 1. Standalone Interface (`FastFarmStandaloneInterface`)
-
-The preferred way to run FAST.Farm. Uses `subprocess` (no MPI) — launches FAST.Farm, runs the full simulation, and parses `.outb` output files.
-
-**Basic usage:**
+### 1. FAST.Farm 连续接口（推荐 — 流场持续演化）
 
 ```python
-from wfcrl.environments.data_cases import named_cases_dictionary
-from wfcrl.interface import FastFarmStandaloneInterface
+from wfcrl.config import WindConfig, ControlInput
+from wfcrl.interface import ContinuousFastFarmInterface
+from wfcrl.simul_config import FastFarmConfig
 
-farm_case = named_cases_dictionary["DafengH1_"][0]
-config = farm_case.dict()
-config["max_iter"] = 10
-config["speed"] = 10.0
+config = FastFarmConfig(
+    case_name="DafengH1", num_turbines=24,
+    xcoords=[...], ycoords=[...],
+    dt=3.0, max_iter=10,
+    wind=WindConfig(speed=10, direction=270),
+)
 
-ff = FastFarmStandaloneInterface(config, output_dir="./my_sim")
-ff.setup()                          # Generate input files
-ff.set_yaw_pitch(yaw_deg=270.0, pitch_deg=0.0)  # Set fixed yaw/pitch
-measurements = ff.run()             # Run FAST.Farm and parse outputs
+ff = ContinuousFastFarmInterface(config)
+ff.setup()              # 生成输入文件 + 部署 DISCON bridge
+ff.reset(wind)
+ff.start()              # 后台启动 FAST.Farm（异步）
 
-# measurements contains:
-#   'time'     - time vector
-#   'power_mw' - per-turbine power (n_steps x n_turbines)
+for step in range(10):
+    controls = ControlInput.scalar(24, yaw_deg=5, pitch_deg=0)
+    output = ff.wait_step(controls)   # 阻塞直到 DISCON 返回测量
+    print(f"Farm power: {output.farm_power_mw[-1]:.2f} MW")
+
+final_output = ff.stop()   # 等待 FAST.Farm 完成 → 解析 .outb
+ff.close()
+final_output.to_csv("results.csv")
 ```
 
-**On Windows**, by default, the FAST.Farm executable is expected at:
-`wfcrl/simulators/fastfarm/bin/FAST.Farm_x64_OMP.exe`.
-
-### 2. Online / Step-by-Step Interface (`FastFarmOnlineInterface`)
-
-For **closed-loop optimization** — runs one `DT_low` time step at a time, so the controller can react to measurements before the next step.
-
-```python
-from wfcrl.interface import FastFarmOnlineInterface
-
-interface = FastFarmOnlineInterface(config, output_dir)
-interface.setup()
-
-for step in range(n_steps):
-    meas = interface.step(yaw_deg, pitch_deg)
-    # meas['power_mw']       -> per-turbine power (MW)
-    # meas['farm_power_mw']  -> total farm power (MW)
-    # meas['yaw_cmd']        -> applied yaw
-    # meas['pitch_cmd']      -> applied pitch
-    yaw_next, pitch_next = my_controller.optimize(meas)
-```
-
-### 3. Controller Base Class (`FarmControllerBase`)
-
-A base class for implementing farm-level controllers in the HyCon/ROSCO style:
-
-```python
-from wfcrl.interface import FarmControllerBase
-
-class MyController(FarmControllerBase):
-    def compute_controls(self, measurement_dict):
-        # measurement_dict contains 'power_mw', 'farm_power_mw', 'time', etc.
-        return {'yaw': ..., 'pitch': ...}
-
-controller = MyController(n_turbines)
-controls = controller.step(measurement_dict)
-```
-
-### 4. Legacy MPI Interface (`FastFarmInterface`)
-
-The original MPI-based interface is still available for backward compatibility. It uses `mpi4py` to spawn FAST.Farm as an MPI process.
+### 2. FAST.Farm 每步重启接口
 
 ```python
 from wfcrl.interface import FastFarmInterface
 
-interface = FastFarmInterface.from_case(case, fast_farm_executable=path_to_exe)
-interface.init(wind_speed=10.0)
-interface.update_command(yaw=np.zeros(num_turbines))
+ff = FastFarmInterface(config)
+ff.setup()
+ff.reset(wind)
+
+controls = ControlInput.scalar(24, yaw_deg=5, pitch_deg=0)
+output = ff.run([controls] * 10)
+ff.close()
 ```
 
-> **Note:** The legacy MPI interface requires MS-MPI and `mpi4py`. For new projects, prefer `FastFarmStandaloneInterface`.
+### 3. FLORIS 接口
 
-### Measurements
+```python
+from wfcrl.interface import FlorisInterface
+from wfcrl.simul_config import FlorisConfig
 
-At every iteration, all interfaces retrieve per-turbine measurements:
-- Wind speed and direction at the farm entrance
-- Turbine output power
-- Yaw, pitch, and torque
-- 6 blade load components (root bending moments)
+config = FlorisConfig(
+    case_name="DafengH1", num_turbines=24,
+    xcoords=[...], ycoords=[...],
+    dt=60.0, max_iter=10,
+    wind=WindConfig(speed=10, direction=270),
+)
 
-A detailed tutorial is available in the `interface.ipynb` notebook (see *Running Example Notebooks*).
+fl = FlorisInterface(config)
+fl.setup()
+fl.reset(wind)
 
-
-# Running Example Notebooks
-
-On Windows, to run the `interface.ipynb` and `demo.ipynb` examples, you will first need to install the WFCRL kernel:
-
-- Install `jupyter notebook` and `seaborn`:
-
+for step in range(10):
+    output = fl.step(ControlInput.scalar(24, yaw_deg=5))
+    print(f"Farm power: {output.farm_power_mw[-1]:.2f} MW")
+fl.close()
 ```
+
+### 4. 统一输出结构 (SimulationOutput)
+
+所有接口返回 `SimulationOutput` 对象：
+
+| 属性 | 形状 | 说明 |
+|------|------|------|
+| `time` | (n_steps,) | 时间向量 (s) |
+| `power_mw` | (n_steps, n_turbs) | 每台风机功率 (MW) |
+| `farm_power_mw` | (n_steps,) | 风场总功率 (MW) |
+| `yaw_deg` | (n_steps, n_turbs) | 偏航角 (度) |
+| `pitch_deg` | (n_steps, n_turbs) | 变桨角 (度) |
+| `wind_speed` | (n_steps, n_turbs) | 风速 (m/s) |
+| `torque_nm` | (n_steps, n_turbs) | 发电机转矩 (Nm) |
+| `rotor_speed_rpm` | (n_steps, n_turbs) | 风轮转速 (RPM) |
+| `blade_loads` | (n_steps, n_turbs, 3) | 叶根弯矩 |
+
+```python
+output.to_csv("results.csv")
+df = output.to_dataframe()
+```
+
+---
+
+## 运行 Jupyter Notebook
+
+```bash
 pip install notebook seaborn
+python -c "from wfcrl import jupyter_utils; jupyter_utils.create_ipykernel()"
+jupyter notebook examples/demo.ipynb
 ```
 
-- Install the jupyter kernel
+---
 
-```
-from wfcrl import jupyter_utils
-jupyter_utils.create_ipykernel()
-```
+## 相关文档
+
+- `docs/INTERFACE.md` — 统一仿真接口详细文档
+- `docs/BENCHMARK.md` — 基准测试说明
+- `DEVELOPMENT_LOG.md` — 开发记录
+- `wfcrl/simulators/fastfarm/src/DISCON_bridge.f90` — DISCON Fortran 桥接源码

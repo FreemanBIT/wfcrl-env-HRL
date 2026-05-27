@@ -14,10 +14,13 @@ class RandomSimulator(BaseWrapper):
         self.num_turbines = self.env.mdp.num_turbines
         self.mdp = self.env.mdp
         self.controls = self.env.controls
-        self.parameters_vector = self.env.mdp.interface.get_parameters()
+        # get_parameters() not yet implemented on new SimulatorInterface
+        self.parameters_vector = getattr(self.env.mdp.interface, 'get_parameters', lambda: None)()
 
     def reset(self, seed=None, options=None):
-        self.parameters_vector = self.env.mdp.interface.sample_parameters()
+        # sample_parameters() not yet implemented on new SimulatorInterface
+        if hasattr(self.env.mdp.interface, 'sample_parameters'):
+            self.parameters_vector = self.env.mdp.interface.sample_parameters()
         self.env.reset(seed, options)
 
 

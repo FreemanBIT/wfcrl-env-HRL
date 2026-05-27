@@ -507,7 +507,7 @@ fastfarm_DafengH1 = FastFarmCase(
     ycoords=ycoords,
     dt=3,
     buffer_window=1,
-    t_init=1,
+    t_init=100,
     set_wind_direction=True,
 )
 floris_DafengH1 = FlorisCase(

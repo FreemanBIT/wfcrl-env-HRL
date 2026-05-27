@@ -49,7 +49,7 @@ def create_floris_case(case: Dict, output_dir=None):
         config["farm"]["turbine_library_path"] = case.get("turbine_library_path", turbine_lib)
     elif case.get("turbine_library_path") is not None:
         config["farm"]["turbine_library_path"] = case["turbine_library_path"]
-    output_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_dir / "case.yaml", "w") as fp:
         yaml.safe_dump(config, fp)
     return str(output_dir / "case.yaml")
@@ -84,34 +84,35 @@ def write_inflow_info(inflow_file, wind_speed):
 def create_dll(fstf_file):
     fstf = FASTInputFile(fstf_file)
     base = Path(fstf_file).parent
-    path_to_sc_dll = (base / fstf["SC_FileName"].replace('"', "")).resolve()
 
-    # copy SC DLL only if it does not exist !
-    if path_to_sc_dll.exists():
-        warnings.warn(
-            f"A supercontroler DLL already exists in {path_to_sc_dll}."
-            "It will not be replaced."
-        )
-    else:
-        path_to_sc_dll.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(f"{SERVO_DIR.format('fastfarm')}/SC_DLL.dll", path_to_sc_dll)
+    # FAST.Farm v5.0.0 不再需要 SC_DLL（SuperController 已移除）
 
-    for ref_path in fstf["WindTurbines"][:, 3]:
-        fst = FASTInputFile((base / ref_path.replace('"', "")).resolve())
+    # 为每台风机部署 DISCON bridge DLL + DISCON.IN
+    for idx, ref_path in enumerate(fstf["WindTurbines"][:, 3]):
+        turbine_id = idx + 1
+        fst = FASTInputFile(str((base / ref_path.replace('"', "")).resolve()))
         servo_file_name = fst["ServoFile"]
-        servo = FASTInputFile((base / servo_file_name.replace('"', "")).resolve())
+        servo = FASTInputFile(str((base / servo_file_name.replace('"', "")).resolve()))
         servo_dll_filename = servo["DLL_FileName"]
         path_to_servo_dll = (base / servo_dll_filename.replace('"', "")).resolve()
-        # copy SC DLL only if it does not exist !
-        if path_to_servo_dll.exists():
-            warnings.warn(
-                f"A controler DLL already exists in {path_to_servo_dll}"
-                "It will not be replaced."
-            )
-        else:
-            shutil.copy(
-                f'{SERVO_DIR.format("fastfarm")}/DISCON_WT1.dll', path_to_servo_dll
-            )
+
+        # 总是覆盖 DISCON DLL（确保使用最新 bridge）
+        path_to_servo_dll.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(
+            f'{SERVO_DIR.format("fastfarm")}/DISCON_WT1.dll', path_to_servo_dll
+        )
+
+        # 写入 DISCON.IN（风机 ID）到 ServoData 目录
+        discon_in_path = path_to_servo_dll.parent / "DISCON.IN"
+        with open(discon_in_path, 'w') as f:
+            f.write(str(turbine_id) + '\n')
+
+        # 写入 per-turbine DISCON 文件到 FarmInputs/（cwd）
+        # 修改后的 DISCON_bridge.f90 使用 accINFILE（即 DLL_InFile 的值）
+        # 读取各风机独立的 ID 文件（如 DISCON_T1.IN → turbine_id=1）
+        farm_discon = Path(base) / f"DISCON_T{turbine_id}.IN"
+        with open(farm_discon, 'w') as f:
+            f.write(str(turbine_id) + '\n')
 
 
 def create_ff_case(case: Dict, output_dir=None):
@@ -280,8 +281,7 @@ def create_ff_case(case: Dict, output_dir=None):
     servo_template_raw = servo_template_raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
     servo_dll_filename_encoded = servo_dll_filename.encode('ascii')
 
-    # Copy supercontroller dll
-    shutil.copy2(f"{servoDir}/SC_DLL.dll", f"{output_dir}servo_dll/SC_DLL.dll")
+    # FAST.Farm v5.0.0: SC_DLL (SuperController) no longer used
 
     # Copy all other files
     shutil.copytree(
@@ -329,11 +329,14 @@ def create_ff_case(case: Dict, output_dir=None):
 
         servo_dll_filename_i = servo_dll_filename.replace("1", str(i + 1))
         servo_i_name = servo_file_name.replace("1", str(i + 1)).replace('"', '')
-        # Raw copy: replace DLL_FileName in servo file (preserves v5.0.0 format)
+        # Raw copy: replace DLL_FileName + DLL_InFile in servo file (preserves v5.0.0 format)
+        dll_infile_old = b'"DISCON.IN"'
+        dll_infile_new = f'"DISCON_T{i+1}.IN"'.encode('ascii')
         servo_raw = servo_template_raw.replace(
             servo_dll_filename_encoded,
             servo_dll_filename_i.encode('ascii')
         )
+        servo_raw = servo_raw.replace(dll_infile_old, dll_infile_new)
         with open(os.path.join(f"{output_dir}FarmInputs/", servo_i_name), 'wb') as _sw:
             _sw.write(servo_raw)
         shutil.copy2(

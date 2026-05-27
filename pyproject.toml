@@ -18,9 +18,14 @@ dependencies = {file = ["requirements.txt"]}
 [project.scripts]
 wfcrl-simulator = "wfcrl.scripts:install_simulator"
 
+[project.optional-dependencies]
+rl = ["gymnasium>=0.29", "pettingzoo>=1.24"]
+mpi = ["mpi4py>=3.1"]
+all = ["wfcrl[rl,mpi]"]
+
 [project]
 name = "WFCRL"
-version = "0.0.1"
+version = "0.0.2"
 authors = [
   { name="Inria - IFP Energies Nouvelles", email="claire.bizon-monroc@inria.fr" },
 ]
@@ -34,6 +39,7 @@ classifiers = [
     "Operating System :: Windows",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
 ]
 
 [project.urls]

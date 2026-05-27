@@ -1,59 +1,52 @@
+"""
+WindFarmMDP — 风场马尔可夫决策过程
+===================================
+实现风场控制的底层 MDP：
+- 状态：自由流风速/风向 + per-turbine yaw/pitch/torque
+- 动作：离散或连续的偏航/变桨/转矩增量
+
+controls 示例:
+    {"yaw": (-20, 20, 2), "pitch": (-10, 10, 1)}
+"""
+
+from __future__ import annotations
+
 import copy
 from collections import OrderedDict
-from typing import Dict, Iterable, Type, Union
+from typing import Dict, Iterable, Optional
 from warnings import warn
 
 import numpy as np
 from gymnasium import spaces
 
+from wfcrl.config import ControlInput, SimulationOutput, WindConfig
 from wfcrl.environments import FarmCase
-from wfcrl.interface import BaseInterface, MPI_Interface
+from wfcrl.interface import SimulatorInterface
 
 
-def clip_to_dict_space(element: dict, space: spaces.Dict):
+def clip_to_dict_space(element: dict, space: spaces.Dict) -> dict:
     for name, value in element.items():
         element[name] = np.clip(value, space[name].low, space[name].high)
     return element
 
 
 class WindFarmMDP:
-    """
-    Implements the underlying MDP of the wind farm
-    States: [velocity, direction, gamma_1, ..., gamma_M] vector of yaws
-    Actions: discrete or continous
-
-    controls: dictionary with {name of control from CONTROL_SET: bounds on actuator}
-    start_iter: iter at which to start control
-
-
-    controls example:
-        {
-            "yaw": (-20, 20, 2),
-            "pitch": (-10, 10, 1)
-        }
-    """
+    """风场 MDP。"""
 
     CONTROL_SET = ["yaw", "pitch", "torque"]
     POSSIBLE_STATE_ATTRIBUTES = [
-        "freewind_measurements",
-        "wind_speed",
-        "wind_direction",
-        "yaw",
-        "pitch",
-        "torque",
+        "freewind_measurements", "wind_speed", "wind_direction",
+        "yaw", "pitch", "torque",
     ]
     DEFAULT_BOUNDS = {
-        "wind_speed": [3, 28],
-        "wind_direction": [0, 360],
-        "yaw": [-40, 40],
-        "pitch": [0, 360],
-        "torque": [-1e5, 1e5],
+        "wind_speed": [3, 28], "wind_direction": [0, 360],
+        "yaw": [-40, 40], "pitch": [0, 45], "torque": [-1e5, 1e5],
     }
     ACTUATORS_RATE = {"yaw": 0.3, "pitch": 8}
 
     def __init__(
         self,
-        interface: Union[BaseInterface, Type[BaseInterface]],
+        interface: SimulatorInterface,
         farm_case: FarmCase,
         controls: dict,
         continuous_control: bool = True,
@@ -61,259 +54,203 @@ class WindFarmMDP:
         horizon: int = int(1e6),
     ):
         farm_case.max_iter = horizon
-        # if an interface is already instantiated
-        if isinstance(interface, BaseInterface):
-            self.interface = interface
-            warn(
-                "Interface already instantiated."
-                "Simulation arguments from `Farm case` will be ignored."
-            )
-        elif interface == MPI_Interface:
-            # MPI_Interface connects to an already running
-            # process so it does not accept
-            # simulation configuration
-            # Log warning here ?
-            interface_kwargs = farm_case.interface_kwargs
-            for key in farm_case.simul_params:
-                del interface_kwargs[key]
-            self.interface = interface(**interface_kwargs)
-        else:
-            path_to_simulator = farm_case.interface_kwargs.get("path_to_simulator", None)
-            interface_args = (
-                [farm_case] 
-                if path_to_simulator is None 
-                else [farm_case, path_to_simulator]
-            )
-            self.interface = interface.from_case(*interface_args)
+        self.interface = interface
         self.num_turbines = farm_case.num_turbines
         self.continuous_control = continuous_control
         self.horizon = horizon
         self.start_iter = start_iter
         self.farm_case = farm_case
+        self._current_wind: Optional[WindConfig] = None
+        self._step_count = 0
+        self._last_powers = np.zeros(self.num_turbines, dtype=np.float32)
 
-        # Check validity of controls
         self._check_controls(controls)
         self.controls = controls
         self.num_controls = len(controls)
-        # All non controlled observations are measured
-        # but only if they can be measured by the interface
+
         self.measures = [
-            obs
-            for obs in self.POSSIBLE_STATE_ATTRIBUTES
-            if (obs not in controls) and (obs in self.interface.measure_map)
+            obs for obs in self.POSSIBLE_STATE_ATTRIBUTES if obs not in controls
         ]
         self.state_attributes = list(self.controls.keys()) + self.measures
 
-        # Setup actions
+        # 动作空间
         if self.continuous_control:
-            self.action_space = spaces.Dict(
-                {
-                    name: spaces.Box(
-                        -bounds_and_step[2],
-                        bounds_and_step[2],
-                        shape=(self.num_turbines,),
-                    )
-                    for name, bounds_and_step in self.controls.items()
-                }
-            )
+            self.action_space = spaces.Dict({
+                name: spaces.Box(-bs[2], bs[2], shape=(self.num_turbines,), dtype=np.float32)
+                for name, bs in self.controls.items()
+            })
         else:
-            self.action_space = spaces.Dict(
-                {
-                    name: spaces.MultiDiscrete(
-                        # 3 = down, no change, up
-                        [3 for _ in range(self.num_turbines)],
-                    )
-                    for name, bounds_and_step in self.controls.items()
-                }
-            )
+            self.action_space = spaces.Dict({
+                name: spaces.MultiDiscrete([3] * self.num_turbines) for name in self.controls
+            })
 
-        # Setup state space
-        state_space_dict = OrderedDict()
-        bound_array = np.ones(self.num_turbines, dtype=np.float32)
-        low_ws, high_ws = self.DEFAULT_BOUNDS["wind_speed"]
-        (
-            low_wd,
-            high_wd,
-        ) = self.DEFAULT_BOUNDS["wind_direction"]
+        # 状态空间
+        state_dict = OrderedDict()
+        barr = np.ones(self.num_turbines, dtype=np.float32)
+        lws, hws = self.DEFAULT_BOUNDS["wind_speed"]
+        lwd, hwd = self.DEFAULT_BOUNDS["wind_direction"]
         for attr in self.state_attributes:
             if attr == "freewind_measurements":
-                low = np.array([low_ws, low_wd], dtype=np.float32)
-                high = np.array([high_ws, high_wd], dtype=np.float32)
+                lo = np.array([lws, lwd], dtype=np.float32)
+                hi = np.array([hws, hwd], dtype=np.float32)
             elif attr in controls:
-                low = bound_array * controls[attr][0]
-                high = bound_array * controls[attr][1]
+                lo = barr * controls[attr][0]
+                hi = barr * controls[attr][1]
             else:
-                low = bound_array * self.DEFAULT_BOUNDS[attr][0]
-                high = bound_array * self.DEFAULT_BOUNDS[attr][1]
-            state_space_dict[attr] = spaces.Box(
-                low,
-                high,
-                shape=low.shape,
-            )
-        self.state_space = spaces.Dict(state_space_dict)
+                lo = barr * self.DEFAULT_BOUNDS[attr][0]
+                hi = barr * self.DEFAULT_BOUNDS[attr][1]
+            state_dict[attr] = spaces.Box(lo, hi, shape=lo.shape, dtype=np.float32)
+        self.state_space = spaces.Dict(state_dict)
         self.start_state = None
 
-        # Set up constraints on actuation dict
         self._actuation_accumulator = {
-            control: np.zeros(self.num_turbines, dtype=np.float32)
-            for control in controls
+            c: np.zeros(self.num_turbines, dtype=np.float32) for c in controls
         }
 
-    def get_state_powers(self):
-        return self.interface.avg_powers()
+    # ========== 核心 API ==========
 
-    def get_accumulated_actions(self, agent=None):
-        return self._actuation_accumulator.copy()
-
-    def _cast_dict_array(self, state):
-        state_cast = OrderedDict()
-        for attr, value in state.items():
-            state_cast[attr] = value.astype(np.float32)
-        return state_cast
-
-    def _check_controls(self, control_dict: Dict):
-        for name, bounds_and_step in control_dict.items():
-            # Check that the chosen interface implements the controls
-            if name not in self.CONTROL_SET:
-                raise ValueError(
-                    f"Cannot control {name}. Allowed controls are {self.CONTROL_SET}"
-                )
-            if name not in self.interface.CONTROL_SET:
-                raise ValueError(
-                    f"Cannot control `{name}`. Interface {self.interface.__class__.__name__}"
-                    f" only allows for the following: {self.interface.CONTROL_SET}"
-                )
-            len_b = len(bounds_and_step)
-            if not (
-                isinstance(bounds_and_step, Iterable) and len_b >= 2 and len_b <= 3
-            ):
-                raise TypeError(
-                    f"Wrong bounds for actuator {name}:"
-                    "Bounds on actuators must be an iterable of the type"
-                    " [lower_bound, upper_bound] if control is continuous and"
-                    " [lower_bound, upper_bound, step_size] otherwise"
-                )
-            if not (bounds_and_step[0] < bounds_and_step[1]):
-                raise ValueError(
-                    f"Wrong bounds for actuator {name}: ensure that"
-                    " lower_bound < upper_bound"
-                )
-            if len_b == 2:
-                control_dict[name] = bounds_and_step + (1,)
-                warn(
-                    f"No step size was provided for actuator {name}. Step size will default to 1."
-                )
-            if not self.continuous_control:
-                if (len_b == 3) and bounds_and_step[2] <= 0:
-                    raise ValueError(
-                        f"Invalid step size provided for actuator {name}"
-                        " the step size must be stricly positive"
-                    )
-
-    def _check_state(self, state: Dict):
-        for attr, value in state.items():
-            if attr not in self.state_attributes:
-                raise ValueError(
-                    f"Unknwon attribute {attr} in state dict."
-                    f"Accepted attributed are: {self.state_attributes}"
-                )
-            if not isinstance(value, np.ndarray):
-                raise TypeError(
-                    f"State attribute {attr} must be a numpy array."
-                    f"Received {type(value)}"
-                )
-            if attr != "freewind_measurements" and not (
-                value.shape == (self.num_turbines,)
-            ):
-                raise TypeError(
-                    f"State attribute {attr} must be of shape (NUM_TURBINES,),"
-                    f"but received {value.shape}. NUM_TURBINES = {self.num_turbines})"
-                )
-
-    def reset(self, seed: int = None, options: dict = None):
-        # sample wind_speed and wind_direction
+    def reset(self, seed: int = None, options: dict = None) -> dict:
         rng = np.random.default_rng(seed)
-        wind_speed, wind_direction = None, None
-        if (options is not None) and "wind_speed" in options:
-            wind_speed = options["wind_speed"]
-        elif not (
-            self.farm_case.set_wind_speed or bool(self.farm_case.wind_time_series)
-        ):
-            wind_speed = 8 * rng.weibull(8)
-            wind_speed = np.clip(
-                wind_speed,
-                self.state_space["freewind_measurements"].low[0],
-                self.state_space["freewind_measurements"].high[0],
-            )
-        if (options is not None) and "wind_direction" in options:
-            wind_direction = options["wind_direction"]
-        elif not (
-            self.farm_case.set_wind_direction or bool(self.farm_case.wind_time_series)
-        ):
-            wind_direction = rng.normal(270, 20) % 360
-            wind_direction = np.clip(
-                wind_direction,
-                self.state_space["freewind_measurements"].low[1],
-                self.state_space["freewind_measurements"].high[1],
-            )
+        ws: float = 8.0
+        wd: float = 270.0
 
-        self.interface.init(wind_speed, wind_direction)
+        if options and "wind_speed" in options:
+            ws = float(options["wind_speed"])
+        elif not (self.farm_case.set_wind_speed or bool(getattr(self.farm_case, 'wind_time_series', None))):
+            ws = float(np.clip(8 * rng.weibull(8), *self.DEFAULT_BOUNDS["wind_speed"]))
+
+        if options and "wind_direction" in options:
+            wd = float(options["wind_direction"])
+        elif not (self.farm_case.set_wind_direction or bool(getattr(self.farm_case, 'wind_time_series', None))):
+            wd = float(rng.normal(270, 20) % 360)
+
+        self._current_wind = WindConfig(speed=ws, direction=wd)
+        self._step_count = 0
+        self.interface.reset(self._current_wind)
+
+        zero = ControlInput.zero(self.num_turbines)
         for _ in range(self.start_iter + 1):
-            self.interface.update_command()
-        start_state = OrderedDict(
-            {attr: self.interface.get_measure(attr) for attr in self.state_attributes}
-        )
-        self.start_state = clip_to_dict_space(start_state, self.state_space)
-        self._actuation_accumulator = {
-            control: np.zeros(self.num_turbines, dtype=np.float32)
-            for control in self.controls
-        }
+            self.interface.step(zero)
+
+        state = self._build_initial_state(zero)
+        self.start_state = clip_to_dict_space(state, self.state_space)
+        self._actuation_accumulator = {c: np.zeros(self.num_turbines, dtype=np.float32) for c in self.controls}
         return self.start_state
 
-    def step_interface(self, state: Dict):
-        step_dict = OrderedDict()
-        for control in self.controls:
-            step_dict[control] = state[control]
-        done = self.interface.update_command(**step_dict)
-        powers = self.get_state_powers()
-        for measure in self.measures:
-            state[measure] = self.interface.get_measure(measure)
-        loads = self.interface.get_measure("load")
-        if loads is not None:
-            loads /= 1e7
-        return state, powers / 1e6, loads, done
+    def step_interface(self, state: Dict) -> tuple:
+        ctrl = ControlInput(
+            yaw=np.asarray(state.get("yaw", np.zeros(self.num_turbines)), dtype=np.float64),
+            pitch=np.asarray(state.get("pitch", np.zeros(self.num_turbines)), dtype=np.float64),
+            torque=np.asarray(state.get("torque", np.zeros(self.num_turbines)), dtype=np.float64)
+            if "torque" in self.controls else None,
+        )
+        output = self.interface.step(ctrl)
+        return self._output_to_state(output)
 
-    def take_action(self, state: Dict, joint_action: Dict):
-        next_state = self.get_controlled_state_transition(state, joint_action)
-        next_state, powers, loads, done = self.step_interface(next_state)
-        return next_state, powers, loads, done
+    def take_action(self, state: Dict, joint_action: Dict) -> tuple:
+        ns = self.get_controlled_state_transition(state, joint_action)
+        return self.step_interface(ns)
 
-    def get_controlled_state_transition(self, state: Dict, joint_action: Dict):
-        # Deterministic transition
+    def get_controlled_state_transition(self, state: Dict, joint_action: Dict) -> Dict:
         if not isinstance(joint_action, dict):
-            raise TypeError("Joint action must be a dictionary")
-        state = clip_to_dict_space(self._cast_dict_array(state), self.state_space)
-        next_state = copy.deepcopy(state)
-        for control, command_joint_action in joint_action.items():
-            assert control in self.controls, f"Control of `{control}` is not activated"
-            command_joint_action = np.array(command_joint_action, np.float32)
+            raise TypeError("Joint action must be dict")
+        state = clip_to_dict_space(self._cast_dict(state), self.state_space)
+        ns = copy.deepcopy(state)
+        for ctrl, cmd in joint_action.items():
+            assert ctrl in self.controls
+            cmd = np.array(cmd, dtype=np.float32)
             if self.continuous_control:
-                command_joint_action = np.clip(
-                    command_joint_action,
-                    self.action_space[control].low,
-                    self.action_space[control].high,
-                )
+                cmd = np.clip(cmd, self.action_space[ctrl].low, self.action_space[ctrl].high)
             else:
-                # 0, 1, 2 => DOWN, NO CHANGE, UP
-                command_joint_action = (command_joint_action - 1) * self.controls[
-                    control
-                ][-1]
-            next_state[control] = np.clip(
-                state[control] + command_joint_action,
-                self.state_space[control].low,
-                self.state_space[control].high,
-            )
-            # track actuators trajectory for penalization purpose
-            if control in self._actuation_accumulator:
-                self._actuation_accumulator[control] += np.abs(command_joint_action)
-        return next_state
+                cmd = (cmd - 1) * self.controls[ctrl][-1]
+            ns[ctrl] = np.clip(state[ctrl] + cmd, self.state_space[ctrl].low, self.state_space[ctrl].high)
+            if ctrl in self._actuation_accumulator:
+                self._actuation_accumulator[ctrl] += np.abs(cmd)
+        return ns
+
+    # ========== 辅助 ==========
+
+    def get_state_powers(self) -> np.ndarray:
+        return self._last_powers
+
+    def get_accumulated_actions(self, agent=None) -> dict:
+        return self._actuation_accumulator.copy()
+
+    def _build_initial_state(self, ctrl: ControlInput) -> OrderedDict:
+        w = self._current_wind or WindConfig()
+        st = OrderedDict()
+        for attr in self.state_attributes:
+            if attr == "freewind_measurements":
+                st[attr] = np.array([w.speed, w.direction], dtype=np.float32)
+            elif attr == "wind_speed":
+                st[attr] = np.full(self.num_turbines, w.speed, dtype=np.float32)
+            elif attr == "wind_direction":
+                st[attr] = np.full(self.num_turbines, w.direction, dtype=np.float32)
+            elif attr == "yaw":
+                st[attr] = ctrl.yaw.astype(np.float32)
+            elif attr == "pitch":
+                st[attr] = ctrl.pitch.astype(np.float32)
+            elif attr == "torque":
+                st[attr] = (ctrl.torque if ctrl.torque is not None
+                            else np.zeros(self.num_turbines, dtype=np.float32))
+        return st
+
+    def _output_to_state(self, out: SimulationOutput) -> tuple:
+        pw = out.power_mw
+        powers = pw[-1, :] if pw.ndim == 2 else pw
+        self._last_powers = powers.astype(np.float32)
+
+        loads = None
+        if out.blade_loads is not None:
+            bl = out.blade_loads
+            loads = bl[-1, :, :] if bl.ndim == 3 else bl
+
+        def _last2d(arr, default):
+            if arr is None:
+                return np.full(self.num_turbines, default)
+            return arr[-1, :] if arr.ndim == 2 else np.atleast_1d(arr)
+
+        ws = _last2d(out.wind_speed, 8.0)
+        wd = _last2d(out.wind_direction, 270.0)
+        yaw = _last2d(out.yaw_deg, 0.0)
+        pitch = _last2d(out.pitch_deg, 0.0)
+        torque = _last2d(out.torque_nm, 0.0)
+
+        st = OrderedDict()
+        for attr in self.state_attributes:
+            if attr == "freewind_measurements":
+                st[attr] = np.array([np.mean(ws), np.mean(wd)], dtype=np.float32)
+            elif attr == "wind_speed":
+                st[attr] = ws.astype(np.float32)
+            elif attr == "wind_direction":
+                st[attr] = wd.astype(np.float32)
+            elif attr == "yaw":
+                st[attr] = yaw.astype(np.float32)
+            elif attr == "pitch":
+                st[attr] = pitch.astype(np.float32)
+            elif attr == "torque":
+                st[attr] = torque.astype(np.float32)
+
+        done = self._step_count >= self.horizon
+        self._step_count += 1
+        return st, powers.astype(np.float32), loads, done
+
+    def _cast_dict(self, state: Dict) -> OrderedDict:
+        sc = OrderedDict()
+        for attr, val in state.items():
+            sc[attr] = val.astype(np.float32)
+        return sc
+
+    def _check_controls(self, cd: Dict) -> None:
+        for name, bs in cd.items():
+            if name not in self.CONTROL_SET:
+                raise ValueError(f"Cannot control '{name}'. Allowed: {self.CONTROL_SET}")
+            if not (isinstance(bs, Iterable) and 2 <= len(bs) <= 3):
+                raise TypeError(f"Bounds for '{name}': [lower, upper] or [lower, upper, step]")
+            if bs[0] >= bs[1]:
+                raise ValueError(f"Bounds for '{name}': lower < upper")
+            if len(bs) == 2:
+                cd[name] = bs + (1,)
+                warn(f"No step size for '{name}'. Defaulting to 1.")
+            if not self.continuous_control and len(bs) == 3 and bs[2] <= 0:
+                raise ValueError(f"Step size for '{name}' must be > 0")

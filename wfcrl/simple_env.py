@@ -5,7 +5,7 @@ import gymnasium as gym
 import numpy as np
 
 from wfcrl.environments import FarmCase
-from wfcrl.interface import BaseInterface
+from wfcrl.interface import SimulatorInterface
 from wfcrl.mdp import WindFarmMDP
 from wfcrl.rewards import DoNothingReward, RewardShaper
 
@@ -15,7 +15,7 @@ class WindFarmEnv(gym.Env):
 
     def __init__(
         self,
-        interface: BaseInterface,
+        interface: SimulatorInterface,
         farm_case: FarmCase,
         controls: dict,
         continuous_control: bool = True,
@@ -69,7 +69,13 @@ class WindFarmEnv(gym.Env):
                 self.accumulated_actions[control] / self.mdp.ACTUATORS_RATE[control]
             )
             actuating_frac = actuating_time / self.num_moves / self.farm_case.dt
-            actions[control][actuating_frac >= 0.1] = 0.0
+            # Ensure actions[control] is a numpy array for boolean indexing
+            action_val = np.asarray(actions[control])
+            if action_val.ndim >= 1:
+                action_val[actuating_frac >= 0.1] = 0.0
+            elif actuating_frac >= 0.1:
+                action_val = np.float32(0.0)
+            actions[control] = action_val
 
         next_state, powers, loads, truncated = self.mdp.take_action(
             self._state, actions

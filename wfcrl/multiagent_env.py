@@ -7,7 +7,7 @@ from pettingzoo import AECEnv
 from pettingzoo.utils import agent_selector
 
 from wfcrl.environments import FarmCase
-from wfcrl.interface import BaseInterface
+from wfcrl.interface import SimulatorInterface
 from wfcrl.mdp import WindFarmMDP
 from wfcrl.rewards import DoNothingReward, RewardShaper
 
@@ -20,7 +20,7 @@ class MAWindFarmEnv(AECEnv):
 
     def __init__(
         self,
-        interface: BaseInterface,
+        interface: SimulatorInterface,
         farm_case: FarmCase,
         controls: dict,
         continuous_control: bool = True,
