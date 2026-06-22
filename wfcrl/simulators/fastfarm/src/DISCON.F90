@@ -69,8 +69,8 @@ INTEGER(IntKi), SAVE                 :: wfcrl_applied_step = -1
 LOGICAL, SAVE                        :: wfcrl_init_done = .FALSE.
 REAL(ReKi), SAVE                     :: wfcrl_ext_yaw = 0.0, wfcrl_ext_pitch = 0.0, wfcrl_ext_torque = 0.0
 REAL(ReKi)                          :: wfcrl_meas_time
-INTEGER(IntKi)                       :: wfcrl_io_stat, wfcrl_read_step, wfcrl_parse_id, wfcrl_i
-CHARACTER(256)                       :: wfcrl_line, wfcrl_token, wfcrl_tmp
+INTEGER(IntKi)                       :: wfcrl_io_stat, wfcrl_read_step, wfcrl_parse_id, wfcrl_i, wfcrl_c_len
+CHARACTER(256)                       :: wfcrl_line, wfcrl_token, wfcrl_tmp, wfcrl_dll_infile
 CHARACTER(32)                        :: wfcrl_tstr
 LOGICAL                              :: wfcrl_fexist, wfcrl_found
 ! ===== END WFCRL BRIDGE declarations =====
@@ -94,9 +94,15 @@ CALL ReadAvrSWAP(avrSWAP, LocalVar, CntrPar, ErrVar)
 
 ! ===== WFCRL BRIDGE: Read turbine ID and external commands =====
 IF (.NOT. wfcrl_init_done) THEN
-    INQUIRE(FILE='DISCON.IN', EXIST=wfcrl_fexist)
+    ! Read turbine ID from accINFILE (DISCON_T{i}.IN, passed via DLL_InFile)
+    wfcrl_dll_infile = ''
+    DO wfcrl_c_len = 1, 255
+        IF (accINFILE(wfcrl_c_len) == C_NULL_CHAR) EXIT
+        wfcrl_dll_infile(wfcrl_c_len:wfcrl_c_len) = accINFILE(wfcrl_c_len)
+    END DO
+    INQUIRE(FILE=TRIM(wfcrl_dll_infile), EXIST=wfcrl_fexist)
     IF (wfcrl_fexist) THEN
-        OPEN(93, FILE='DISCON.IN', STATUS='OLD'); READ(93,*,IOSTAT=wfcrl_io_stat) wfcrl_turbine_id; CLOSE(93)
+        OPEN(93, FILE=TRIM(wfcrl_dll_infile), STATUS='OLD'); READ(93,*,IOSTAT=wfcrl_io_stat) wfcrl_turbine_id; CLOSE(93)
         IF (wfcrl_io_stat /= 0) wfcrl_turbine_id = 1
     ELSE
         wfcrl_turbine_id = 1
@@ -214,9 +220,10 @@ IF (wfcrl_applied_step >= 0) THEN
     IF (ABS(wfcrl_ext_torque) > 0.01) THEN
         LocalVar%GenTq = wfcrl_ext_torque
     END IF
-    ! Override yaw via NacHeading (degrees)
+    ! Override yaw via NacHeading (degrees) + avrSWAP(48) yaw rate (rad/s)
     IF (ABS(wfcrl_ext_yaw) > 0.01) THEN
         LocalVar%NacHeading = wfcrl_ext_yaw
+        avrSWAP(48) = (wfcrl_ext_yaw * 0.01745329252 - avrSWAP(37)) * 0.2
     END IF
 END IF
 ! ===== END WFCRL BRIDGE: control override =====
@@ -238,8 +245,8 @@ wfcrl_meas_time = avrSWAP(2)
 WRITE(wfcrl_tstr, '(I0)') wfcrl_turbine_id
 OPEN(96, FILE='measurements_T'//TRIM(wfcrl_tstr)//'.txt', STATUS='REPLACE')
 WRITE(96,'(A,I0,A,F10.4)') 'step=',wfcrl_applied_step,' t=',wfcrl_meas_time
-WRITE(96,'(A,F12.2,A,F12.4,A,F12.4)') ' genpwr=',LocalVar%VS_GenPwr/1000.0, &
-    ' genspd=',LocalVar%GenSpeed*9.5493,' gentq=',LocalVar%GenTq/1000.0
+WRITE(96,'(A,F12.2,A,F12.4,A,F12.2)') ' genpwr=',LocalVar%VS_GenPwr/1000.0, &
+    ' genspd=',LocalVar%GenSpeed*9.5493,' gentq=',LocalVar%GenTq
 WRITE(96,'(A,F12.4,A,F12.4)') ' rotspd=',LocalVar%RotSpeed*9.5493, &
     ' wind_x=',LocalVar%HorWindV
 WRITE(96,'(A,F10.4,A,F10.4)') ' blpitch=',LocalVar%BlPitchCMeas*57.29578, &

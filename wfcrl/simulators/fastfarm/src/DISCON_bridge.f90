@@ -21,6 +21,14 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
   INTEGER(4), SAVE :: my_id = 0, applied_step = -1, init_done = 0
   REAL(4),    SAVE :: prev_yaw = 0.0, prev_pitch = 0.0, prev_torque = 0.0
   INTEGER(4), SAVE :: call_count = 0
+  ! 内部控制参数 (ROSCO 等效)
+  REAL(4), PARAMETER :: GEN_SPD_CUTIN = 7.33
+  REAL(4), PARAMETER :: GEN_SPD_RATED = 122.9
+  REAL(4), PARAMETER :: T_RATED = 43093.55
+  REAL(4), PARAMETER :: K_OPT = 2.853
+  REAL(4), PARAMETER :: P_RATED = 5.2966E6
+  REAL(4), SAVE :: pitch_integral = 0.0
+  REAL(4) :: torque_cmd, pitch_cmd_internal, speed_err
 
   ! 每次调用都写标记文件（调试：确认 DLL 被调用）
   call_count = call_count + 1
@@ -65,18 +73,45 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
   root_moop1 = avrSWap(31) ! RootMOoP (kNm)
   root_mzb1  = avrSWap(32) ! RootMzb (kNm)
 
-  ! --- 设置默认控制器输出 ---
+  ! --- 内部控制计算 (ROSCO 等效: 转矩-转速曲线 + 变桨 PI) ---
+  ! NREL 5MW 参数见顶部声明区
+  ! Torque: Region 2/3 control
+  IF (gen_spd > GEN_SPD_CUTIN) THEN
+    torque_cmd = K_OPT * gen_spd * gen_spd   ! Region 2: K * ω²
+    torque_cmd = MIN(torque_cmd, T_RATED)    ! limit to rated
+    IF (gen_spd > GEN_SPD_RATED) THEN
+      torque_cmd = P_RATED / gen_spd          ! Region 3: constant power
+      torque_cmd = MIN(torque_cmd, T_RATED)
+    END IF
+  ELSE
+    torque_cmd = 0.0                          ! below cut-in
+  END IF
+
+  ! Pitch: PI controller above rated
+  speed_err = gen_spd - GEN_SPD_RATED
+  IF (speed_err > 0.5) THEN  ! above rated with deadband
+    pitch_integral = pitch_integral + speed_err * 0.001
+    pitch_integral = MAX(pitch_integral, 0.0)  ! anti-windup
+    pitch_cmd_internal = 2.0 * speed_err + 0.5 * pitch_integral
+    pitch_cmd_internal = MAX(0.0, MIN(pitch_cmd_internal, 90.0))
+  ELSE
+    ! Below rated: decay integral, pitch = 0
+    pitch_integral = pitch_integral * 0.95
+    pitch_cmd_internal = 0.0
+  END IF
+
+  ! --- 设置默认控制器输出 (由内部控制器计算) ---
   ! Correct OpenFAST Bladed DLL output indices:
   ! avrSWap(42-44) = blade 1-3 pitch demand (rad)
   ! avrSWap(45)    = collective pitch demand (rad)
   ! avrSWap(47)    = generator torque demand (Nm)
   ! avrSWap(48)    = yaw rate demand (rad/s)
-  avrSWap(42) = 0.0       ! pitch cmd blade 1 (rad)
-  avrSWap(43) = 0.0       ! pitch cmd blade 2 (rad)
-  avrSWap(44) = 0.0       ! pitch cmd blade 3 (rad)
-  avrSWap(45) = 0.0       ! collective pitch (rad)
-  avrSWap(47) = 43093.55  ! generator torque (Nm)
-  avrSWap(48) = 0.0       ! yaw rate (rad/s)
+  avrSWap(42) = pitch_cmd_internal * 0.0174533  ! pitch cmd blade 1 (rad)
+  avrSWap(43) = pitch_cmd_internal * 0.0174533  ! blade 2
+  avrSWap(44) = pitch_cmd_internal * 0.0174533  ! blade 3
+  avrSWap(45) = pitch_cmd_internal * 0.0174533  ! collective pitch (rad)
+  avrSWap(47) = torque_cmd                      ! generator torque (Nm)
+  avrSWap(48) = 0.0                             ! yaw rate (rad/s)
 
   ! --- 写入测量文件 ---
   WRITE(tstr, '(I0)') turbine_id
@@ -125,16 +160,22 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
 
   ! --- 应用控制 (通过 avrSWap 输出到 ServoDyn) ---
   applied_step = read_step
-  avrSWap(42) = cmd_pitch * 0.0174533   ! pitch cmd blade 1 (rad)
-  avrSWap(43) = cmd_pitch * 0.0174533   ! blade 2
-  avrSWap(44) = cmd_pitch * 0.0174533   ! blade 3
-  avrSWap(45) = cmd_pitch * 0.0174533   ! collective pitch (rad)
-  IF (cmd_torque > 0.01) THEN
-    avrSWap(47) = cmd_torque             ! generator torque (Nm)
+  ! --- 应用外部指令覆盖 (仅当 controls.txt 显式指定时才覆盖) ---
+  applied_step = read_step
+  ! Pitch override: only if |cmd_pitch| > 0.001°
+  IF (ABS(cmd_pitch) > 0.001) THEN
+    avrSWap(42) = cmd_pitch * 0.0174533   ! pitch cmd blade 1 (rad)
+    avrSWap(43) = cmd_pitch * 0.0174533   ! blade 2
+    avrSWap(44) = cmd_pitch * 0.0174533   ! blade 3
+    avrSWap(45) = cmd_pitch * 0.0174533   ! collective pitch (rad)
   END IF
-  ! Apply yaw via yaw rate (avrSWap(48), rad/s)
+  ! Torque override: only if cmd_torque > 0.01 Nm
+  IF (cmd_torque > 0.01) THEN
+    avrSWap(47) = cmd_torque              ! generator torque (Nm)
+  END IF
+  ! Yaw override: always applied via proportional rate (rad/s)
   ! nac_yaw = current yaw from avrSWap(37) in rad, cmd_yaw in degrees
-  avrSWap(48) = (cmd_yaw * 0.0174533 - nac_yaw) * 0.2  ! proportional rate
+  avrSWap(48) = (cmd_yaw * 0.0174533 - nac_yaw) * 0.2
   prev_yaw = cmd_yaw  ! track yaw for next call
   prev_pitch = cmd_pitch
   prev_torque = cmd_torque

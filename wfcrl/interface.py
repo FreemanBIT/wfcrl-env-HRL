@@ -824,6 +824,7 @@ class ContinuousFastFarmInterface(FastFarmInterface):
 
         self._add_outlist()
         self._fix_inflow_setup()
+        self._fix_initial_yaw()
 
         # 部署 DISCON bridge DLL + DISCON.IN
         create_dll(self._fstf_file)
@@ -833,10 +834,57 @@ class ContinuousFastFarmInterface(FastFarmInterface):
 
         print(f"ContinuousFastFarmInterface ready: {self.n_turbines} turbines")
 
+    def _fix_initial_yaw(self) -> None:
+        """根据入流风向设置各风机 ED 文件的初始 NacYaw，
+        避免 t=0 时 WakeDynamics 检测到 90° 偏航误差而中止。"""
+        if self._fstf_file is None or self._farm_base is None:
+            return
+        wdir = self._current_wind.direction if self._current_wind else self.config.wind.direction
+        # OpenFAST 坐标: 0°=东(+X), 90°=北(+Y)
+        initial_yaw = (270 - wdir) % 360
+
+        fstf = FASTInputFile(self._fstf_file)
+        wt_refs = [row[3].replace('"', "") for row in fstf["WindTurbines"]]
+        for wt_ref in wt_refs:
+            wt_path = os.path.join(self._farm_base, wt_ref)
+            if not os.path.exists(wt_path):
+                continue
+            wt = FASTInputFile(wt_path)
+            ed_rel = wt["EDFile"].replace('"', "")
+            ed_path = os.path.join(self._farm_base, ed_rel)
+            if not os.path.exists(ed_path):
+                continue
+            ed = FASTInputFile(ed_path)
+            ed["NacYaw"] = initial_yaw
+            ed.write(ed_path)
+            # 修复换行符
+            with open(ed_path, "rb") as f:
+                raw = f.read()
+            raw = raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+            with open(ed_path, "wb") as f:
+                f.write(raw)
+
+    def _write_initial_controls(self) -> None:
+        """在 FAST.Farm 启动前写入初始 controls.txt，
+        使 DLL 从第一次调用就获得正确偏航命令。"""
+        if self._controls_file is None:
+            return
+        wdir = self._current_wind.direction if self._current_wind else self.config.wind.direction
+        initial_yaw = (270 - wdir) % 360  # OpenFAST 坐标
+        lines = ["step=0"]
+        for t in range(self.n_turbines):
+            lines.append(f"T{t+1} yaw={initial_yaw:.3f} pitch=0.000 torque=0.0")
+        lines.append("END")
+        with open(self._controls_file, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+
     def start(self) -> None:
         """后台启动 FAST.Farm（非阻塞）。"""
         if self._farm_base is None:
             raise RuntimeError("Call setup() first")
+
+        # 预写初始 controls.txt（step=0），使 DLL 第一时间获得正确偏航
+        self._write_initial_controls()
 
         # 将 FAST.Farm 输出重定向到日志文件（防止 pipe 缓冲区满导致死锁）
         log_path = os.path.join(self.config.output_dir or ".", "fastfarm_continuous.log")

@@ -30,8 +30,8 @@ from wfcrl.environments.data_cases import named_cases_dictionary
 from wfcrl.simul_config import FastFarmConfig
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--case", default="DafengH1")
-parser.add_argument("--steps", type=int, default=3)
+parser.add_argument("--case", default="Turb3_Row1")
+parser.add_argument("--steps", type=int, default=80)
 parser.add_argument("--wind_speed", type=float, default=10.0)
 parser.add_argument("--wind_direction", type=float, default=270.0)
 args = parser.parse_args()
@@ -74,33 +74,29 @@ print(f"\nStarting FAST.Farm (single process, continuous flow)...")
 ff.start()       # 后台启动 FAST.Farm
 
 # 在线控制循环
-power_at_step = 0.0
-prev_power = 0.0
-yaw_val = 0.0
-direction = 1.0
+yaw_amplitude = 20.0       # 正弦偏振幅值 (°)
+yaw_period = 8             # 正弦周期 (步数)
+optimal_yaw = (270 - wind.direction) % 360  # 最优对风绝对角度 (OpenFAST坐标: 0°=东, 90°=北)
 step_powers = []
 step_yaws = []
 
 for step in range(args.steps):
-    # --- 控制算法（可替换为 RL / MPC / 查表）---
-    if prev_power > 0 and step > 0:
-        if power_at_step < prev_power * 0.98:
-            direction *= -1
-    yaw_val += direction * 5.0
-    yaw_val = np.clip(yaw_val, -25, 25)
+    # --- 基于入流风向的正弦偏航扫描 ---
+    yaw_offset = yaw_amplitude * np.sin(2 * np.pi * step / yaw_period)
+    yaw_offset = np.clip(yaw_offset, -25, 25)   # 偏航偏移限幅 ±25°
+    yaw_val = optimal_yaw + yaw_offset           # 绝对偏航命令
     pitch_cmd = 0.0
 
     controls = ControlInput.scalar(n_turbs, yaw_deg=yaw_val, pitch_deg=pitch_cmd)
     output = ff.wait_step(controls)
 
     power_at_step = float(output.farm_power_mw[-1]) if output.farm_power_mw is not None else 0.0
-    prev_power = power_at_step
     step_powers.append(power_at_step)
     step_yaws.append(yaw_val)
 
     pitch_display = output.pitch_deg[-1, 0] if output.pitch_deg is not None else 0.0
 
-    print(f"  Step {step+1:3d}/{args.steps}: yaw={yaw_val:+.1f} deg | "
+    print(f"  Step {step+1:3d}/{args.steps}: yaw={yaw_val:+.1f} deg (offset={yaw_offset:+.1f}) | "
           f"farm_power={power_at_step:.2f} MW | "
           f"pitch={pitch_display:.1f} deg")
 
@@ -124,7 +120,8 @@ if final_output is not None and final_output.power_mw is not None and final_outp
     ax = axes[0]
     ax.plot(t_arr, ffp, "b-", lw=2, label="Farm Power")
     ax.set_ylabel("Farm Power (MW)", fontsize=13)
-    ax.set_title(f"{args.case} — FAST.Farm Control (Wind: {wind.speed} m/s, {wind.direction}°)",
+    ax.set_title(f"{args.case} — FAST.Farm Yaw Sweep (Wind: {wind.speed} m/s, {wind.direction}°, "
+                 f"amp={yaw_amplitude}°/period={yaw_period}step)",
                  fontsize=14, fontweight="bold")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=11)
