@@ -11,20 +11,12 @@ set "FLAGS=-ffree-line-length-0 -static-libgcc -static-libgfortran -static -fdef
 
 echo Compiling ROSCO + WFCRL Bridge...
 echo Sources: %CD%
-"%GF%" -c %FLAGS% SysGnuWin.f90
-"%GF%" -c %FLAGS% ROSCO_Types.f90
-"%GF%" -c %FLAGS% Constants.f90
-"%GF%" -c %FLAGS% Functions.f90
-"%GF%" -c %FLAGS% Filters.f90
-"%GF%" -c %FLAGS% ControllerBlocks.f90
-"%GF%" -c %FLAGS% ROSCO_Helpers.f90
-"%GF%" -c %FLAGS% ROSCO_IO.f90
-"%GF%" -c %FLAGS% ReadSetParameters.f90
-"%GF%" -c %FLAGS% Controllers.f90
-"%GF%" -c %FLAGS% ExtControl.f90
-"%GF%" -c %FLAGS% ZeroMQInterface.f90
-"%GF%" -c %FLAGS% DISCON.F90
-"%GF%" -shared -static -o "..\servo_dll\DISCON_WT1.dll" *.o %FLAGS%
+"%GF%" -shared -static %FLAGS% -o "..\servo_dll\DISCON_WT1.dll" ^
+  Constants.f90 ROSCO_Types.f90 SysGnuWin.f90 ^
+  Filters.f90 Functions.f90 ControllerBlocks.f90 ^
+  ROSCO_Helpers.f90 ReadSetParameters.f90 ROSCO_IO.f90 ^
+  Controllers.f90 ExtControl.f90 ZeroMQInterface.f90 ^
+  DISCON.F90
 
 if %ERRORLEVEL% == 0 (
     echo [OK] DISCON_WT1.dll compiled successfully

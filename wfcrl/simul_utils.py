@@ -85,7 +85,7 @@ def create_dll(fstf_file):
     fstf = FASTInputFile(fstf_file)
     base = Path(fstf_file).parent
 
-    # 为每台风机部署 DISCON bridge DLL + 风机 ID 文件
+    # 为每台风机部署 DISCON bridge DLL + ROSCO 参数文件
     for idx, ref_path in enumerate(fstf["WindTurbines"][:, 3]):
         turbine_id = idx + 1
         fst = FASTInputFile(str((base / ref_path.replace('"', "")).resolve()))
@@ -93,18 +93,32 @@ def create_dll(fstf_file):
         servo = FASTInputFile(str((base / servo_file_name.replace('"', "")).resolve()))
         servo_dll_filename = servo["DLL_FileName"]
         path_to_servo_dll = (base / servo_dll_filename.replace('"', "")).resolve()
+        servo_dir = path_to_servo_dll.parent
 
         # 总是覆盖 DISCON DLL（确保使用最新 bridge）
-        path_to_servo_dll.parent.mkdir(parents=True, exist_ok=True)
+        servo_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(
             f'{SERVO_DIR.format("fastfarm")}/DISCON_WT1.dll', path_to_servo_dll
         )
 
-        # 写入 per-turbine 风机 ID 文件到 FarmInputs/（cwd）
-        # DISCON_bridge.f90 通过 accINFILE 读取此文件中的风机 ID
+        # 写入 per-turbine ROSCO 参数文件到 ServoDyn .dat 同目录 (FarmInputs/)
+        # ROSCO 通过 accINFILE (DLL_InFile) 读取，路径相对 ServoDyn 输入文件
+        # 第一行: 风机 ID（供 WFCRL bridge 读取）
+        # 后续行: ROSCO v2.9.0 控制器参数
         farm_discon = Path(base) / f"DISCON_T{turbine_id}.IN"
-        with open(farm_discon, 'w') as f:
-            f.write(str(turbine_id) + '\n')
+        template_path = Path(SERVO_DIR.format("fastfarm")) / "DISCON_ROSCO_TEMPLATE.IN"
+        if template_path.exists():
+            with open(template_path, 'r') as ft:
+                template_lines = ft.readlines()
+            # 替换第一行风机 ID
+            if template_lines:
+                template_lines[0] = f"{turbine_id}\n"
+            with open(farm_discon, 'w') as f:
+                f.writelines(template_lines)
+        else:
+            # 回退: 仅写风机 ID（但 ROSCO 仍需完整参数文件，故应确保模板存在）
+            with open(farm_discon, 'w') as f:
+                f.write(str(turbine_id) + '\n')
 
 
 def create_ff_case(case: Dict, output_dir=None):

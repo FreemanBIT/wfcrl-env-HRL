@@ -45,6 +45,8 @@ def get_default_control(controls):
         cd["pitch"] = dc.pitch
     if "torque" in controls:
         cd["torque"] = dc.torque
+    if "power" in controls:
+        cd["power"] = dc.power
     return cd
 
 

@@ -33,14 +33,15 @@ def clip_to_dict_space(element: dict, space: spaces.Dict) -> dict:
 class WindFarmMDP:
     """风场 MDP。"""
 
-    CONTROL_SET = ["yaw", "pitch", "torque"]
+    CONTROL_SET = ["yaw", "pitch", "mode", "power", "min_pitch"]
     POSSIBLE_STATE_ATTRIBUTES = [
         "freewind_measurements", "wind_speed", "wind_direction",
-        "yaw", "pitch", "torque",
+        "yaw", "pitch", "mode", "power", "min_pitch",
     ]
     DEFAULT_BOUNDS = {
         "wind_speed": [3, 28], "wind_direction": [0, 360],
-        "yaw": [-40, 40], "pitch": [0, 45], "torque": [-1e5, 1e5],
+        "yaw": [-40, 40], "pitch": [0, 45],
+        "mode": [0, 4], "power": [0, 10], "min_pitch": [0, 45],
     }
     ACTUATORS_RATE = {"yaw": 0.3, "pitch": 8}
 
@@ -139,13 +140,27 @@ class WindFarmMDP:
 
     def step_interface(self, state: Dict) -> tuple:
         ctrl = ControlInput(
+            mode=np.asarray(state.get("mode", np.zeros(self.num_turbines, dtype=np.int32)), dtype=np.int32),
             yaw=np.asarray(state.get("yaw", np.zeros(self.num_turbines)), dtype=np.float64),
             pitch=np.asarray(state.get("pitch", np.zeros(self.num_turbines)), dtype=np.float64),
-            torque=np.asarray(state.get("torque", np.zeros(self.num_turbines)), dtype=np.float64)
-            if "torque" in self.controls else None,
+            power=np.asarray(state.get("power", np.zeros(self.num_turbines)), dtype=np.float64)
+            if "power" in self.controls else None,
+            min_pitch=np.asarray(state.get("min_pitch", np.zeros(self.num_turbines)), dtype=np.float64)
+            if "min_pitch" in self.controls else None,
         )
         output = self.interface.step(ctrl)
-        return self._output_to_state(output)
+        next_state, powers, loads, done = self._output_to_state(output)
+        # 控制量（非测量量）需从输入状态传递，保证状态一致性
+        if "power" in self.controls and "power" in next_state:
+            next_state["power"] = state.get("power",
+                np.zeros(self.num_turbines, dtype=np.float32))
+        if "min_pitch" in self.controls and "min_pitch" in next_state:
+            next_state["min_pitch"] = state.get("min_pitch",
+                np.zeros(self.num_turbines, dtype=np.float32))
+        if "mode" in self.controls and "mode" in next_state:
+            next_state["mode"] = state.get("mode",
+                np.zeros(self.num_turbines, dtype=np.int32))
+        return next_state, powers, loads, done
 
     def take_action(self, state: Dict, joint_action: Dict) -> tuple:
         ns = self.get_controlled_state_transition(state, joint_action)
@@ -193,6 +208,14 @@ class WindFarmMDP:
             elif attr == "torque":
                 st[attr] = (ctrl.torque if ctrl.torque is not None
                             else np.zeros(self.num_turbines, dtype=np.float32))
+            elif attr == "power":
+                st[attr] = (ctrl.power if ctrl.power is not None
+                            else np.zeros(self.num_turbines, dtype=np.float32))
+            elif attr == "min_pitch":
+                st[attr] = (ctrl.min_pitch if ctrl.min_pitch is not None
+                            else np.zeros(self.num_turbines, dtype=np.float32))
+            elif attr == "mode":
+                st[attr] = ctrl.mode.astype(np.int32)
         return st
 
     def _output_to_state(self, out: SimulationOutput) -> tuple:
@@ -230,6 +253,12 @@ class WindFarmMDP:
                 st[attr] = pitch.astype(np.float32)
             elif attr == "torque":
                 st[attr] = torque.astype(np.float32)
+            elif attr == "power":
+                st[attr] = np.zeros(self.num_turbines, dtype=np.float32)
+            elif attr == "min_pitch":
+                st[attr] = np.zeros(self.num_turbines, dtype=np.float32)
+            elif attr == "mode":
+                st[attr] = np.zeros(self.num_turbines, dtype=np.int32)
 
         done = self._step_count >= self.horizon
         self._step_count += 1

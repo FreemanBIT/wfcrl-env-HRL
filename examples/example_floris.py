@@ -1,16 +1,17 @@
 """
-FLORIS 在线控制示例
-====================
+FLORIS 在线控制示例 (3-Mode Farm Control)
+==========================================
 使用 FlorisInterface 进行稳态风场在线控制。
-每步配置偏航角，调用 FLORIS Python API 计算尾流和功率。
 
-注意:
-    - FLORIS 仅支持 yaw 控制（不支持 pitch/torque）
-    - 使用稳态风 (WindType.STEADY)
+控制模式 (--mode):
+  0: 偏航控制 (yaw)
+  1: 诱导因子控制 (curtailment ratio)
+  2: 诱导因子 + 偏航控制
 
 用法:
-    python examples/example_floris.py
-    python examples/example_floris.py --steps 10 --wind_speed 12
+    python examples/example_floris.py --mode 0
+    python examples/example_floris.py --mode 1 --ratio 0.7
+    python examples/example_floris.py --mode 2 --ratio 0.5 --yaw_amp 25
 """
 import argparse, os, sys, time
 import numpy as np
@@ -27,10 +28,16 @@ from wfcrl.environments.data_cases import named_cases_dictionary
 from wfcrl.simul_config import FlorisConfig
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--case", default="DafengH1")
+parser.add_argument("--case", default="Turb3_Row1")
 parser.add_argument("--steps", type=int, default=100)
 parser.add_argument("--wind_speed", type=float, default=10.0)
 parser.add_argument("--wind_direction", type=float, default=270.0)
+parser.add_argument("--mode", type=int, default=0, choices=[0, 1, 2],
+                    help="0=yaw, 1=induction(curtail), 2=induction+yaw")
+parser.add_argument("--ratio", type=float, default=1.0,
+                    help="Curtailment ratio 0~1 (modes 1,2). 1.0=full power")
+parser.add_argument("--yaw_amp", type=float, default=25.0,
+                    help="Yaw amplitude in deg (modes 0,2)")
 args = parser.parse_args()
 
 key = args.case + "_"
@@ -55,18 +62,22 @@ config = FlorisConfig(
 )
 
 ts = time.time()
+mode_names = ["Yaw Only", "Induction", "Induction+Yaw"]
 out_dir = os.path.join(os.path.dirname(__file__), "..",
-    "__simul__", "floris", f"{args.case}_Floris_{ts:.0f}")
+    "__simul__", "floris", f"{args.case}_Mode{args.mode}_{ts:.0f}")
 os.makedirs(out_dir, exist_ok=True)
 config.output_dir = out_dir
 
 print("=" * 70)
-print("FLORIS Online Control")
+print(f"FLORIS 3-Mode Control — Mode {args.mode}: {mode_names[args.mode]}")
 print("=" * 70)
 print(f"Case: {args.case} | Turbines: {n_turbs}")
 print(f"Wind: {args.wind_speed} m/s, {args.wind_direction} deg")
 print(f"FLORIS DT: {FLORIS_DT}s | Steps: {floris_steps}")
 print(f"Total simulated time: {total_sim_time:.0f}s")
+print(f"Mode: {args.mode} ({mode_names[args.mode]})")
+if args.mode in (1, 2):
+    print(f"Curtail ratio: {args.ratio:.2f}")
 print(f"Output: {out_dir}")
 print("=" * 70)
 
@@ -76,31 +87,36 @@ fl.setup()
 fl.reset(wind)
 
 # 在线控制循环
-power_at_step = 0.0
-prev_power = 0.0
-yaw_val = 0.0
-direction = 1.0
 all_outputs = []
 step_yaws = []
+step_ratios = []
 
 for step in range(floris_steps):
-    # 与 FASTFarm 示例相同的启发式控制逻辑
-    if prev_power > 0 and step > 0:
-        if power_at_step < prev_power * 0.98:
-            direction *= -1
-    yaw_val += direction * 5.0
-    yaw_val = np.clip(yaw_val, -25, 25)
+    # Yaw: sinusoidal sweep
+    yaw_val = args.yaw_amp * np.sin(2 * np.pi * step / max(1, floris_steps / 4))
+    ratio_val = args.ratio
 
-    controls = ControlInput.scalar(n_turbs, yaw_deg=yaw_val, pitch_deg=0.0)
+    if args.mode == 0:
+        controls = ControlInput.mode0_yaw(n_turbs, yaw_val)
+    elif args.mode == 1:
+        controls = ControlInput.mode1_power(n_turbs, ratio_val)
+    elif args.mode == 2:
+        controls = ControlInput.mode4_power_yaw(n_turbs, ratio_val, 0.0, yaw_val)
+
     output = fl.step(controls)
 
-    power_at_step = float(output.farm_power_mw[-1]) if output.farm_power_mw is not None else 0.0
-    prev_power = power_at_step
+    farm_pw = float(output.farm_power_mw[-1]) if output.farm_power_mw is not None else 0.0
     all_outputs.append(output)
     step_yaws.append(yaw_val)
+    step_ratios.append(ratio_val)
 
-    print(f"  Step {step+1:3d}/{floris_steps}: yaw={yaw_val:+.1f} deg | "
-          f"farm_power={power_at_step:.2f} MW")
+    parts = [f"Step {step+1:3d}/{floris_steps}"]
+    if args.mode in (0, 2):
+        parts.append(f"yaw={yaw_val:+.1f}°")
+    if args.mode in (1, 2):
+        parts.append(f"ratio={ratio_val:.2f}")
+    parts.append(f"farm_pwr={farm_pw:.2f}MW")
+    print(" | ".join(parts))
 
 fl.close()
 

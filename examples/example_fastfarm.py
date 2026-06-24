@@ -1,19 +1,21 @@
 """
-FAST.Farm 连续闭环控制示例
-===========================
-使用 ContinuousFastFarmInterface 实现真正的连续流场在线控制。
-FAST.Farm 启动一次，通过 DISCON bridge DLL 每个 timestep 交换控制/测量。
+FAST.Farm 连续闭环控制示例 (5-Mode Farm Protocol)
+=================================================
+使用 ContinuousFastFarmInterface + ROSCO WFCRL Bridge 实现场控。
 
-相比 FastFarmInterface（每步重启 FAST.Farm，流场均重置）：
-- ContinuousFastFarmInterface：一次启动，流场持续演化（物理正确）
-
-要求:
-    - DISCON_WT1.dll 已编译（WFCRL Bridge）
-    - FAST.Farm v5.0.0 可执行文件
+控制模式 (--mode):
+  0: 纯偏航增量控制 (yaw delta)
+  1: 功率目标 + 最小变桨约束 (power + min pitch)
+  2: 纯变桨绝对值控制 (pitch absolute)
+  3: 变桨绝对值 + 偏航增量 (pitch + yaw)
+  4: 功率目标 + 最小变桨约束 + 偏航增量 (power + min pitch + yaw)
 
 用法:
-    python examples/example_FASTFarm.py
-    python examples/example_FASTFarm.py --steps 10 --wind_speed 12
+    python examples/example_FASTFarm.py --mode 0 --steps 10 --wind_speed 10
+    python examples/example_FASTFarm.py --mode 1 --power 4.0 --min_pitch 5.0 --steps 20
+    python examples/example_FASTFarm.py --mode 2 --pitch 10 --steps 20
+    python examples/example_FASTFarm.py --mode 3 --pitch 10 --yaw_amp 20 --steps 20
+    python examples/example_FASTFarm.py --mode 4 --power 3.0 --min_pitch 3.0 --yaw_amp 15 --steps 20
 """
 import argparse, os, sys, time
 import numpy as np
@@ -29,13 +31,37 @@ from wfcrl.interface import ContinuousFastFarmInterface
 from wfcrl.environments.data_cases import named_cases_dictionary
 from wfcrl.simul_config import FastFarmConfig
 
-parser = argparse.ArgumentParser()
+# --- CLI ---
+parser = argparse.ArgumentParser(
+    description="FAST.Farm 5-Mode Farm Control Example",
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+    epilog="""
+Mode details:
+  0: yaw delta sweep (sinusoidal)
+  1: power target + min pitch constraint (step test)
+  2: pitch absolute (sinusoidal sweep)
+  3: pitch absolute + yaw delta
+  4: power + min pitch + yaw delta
+""")
 parser.add_argument("--case", default="Turb3_Row1")
-parser.add_argument("--steps", type=int, default=80)
+parser.add_argument("--steps", type=int, default=20, help="Number of control steps")
 parser.add_argument("--wind_speed", type=float, default=10.0)
 parser.add_argument("--wind_direction", type=float, default=270.0)
+parser.add_argument("--mode", type=int, default=0, choices=[0,1,2,3,4],
+                    help="Farm control mode (0-4)")
+parser.add_argument("--power", type=float, default=4.0,
+                    help="Power target in MW (modes 1,4)")
+parser.add_argument("--min_pitch", type=float, default=0.0,
+                    help="Min pitch constraint in deg (modes 1,4)")
+parser.add_argument("--pitch", type=float, default=5.0,
+                    help="Pitch command in deg (modes 2,3)")
+parser.add_argument("--yaw_amp", type=float, default=15.0,
+                    help="Yaw delta amplitude in deg (modes 0,3,4)")
+parser.add_argument("--yaw_period", type=int, default=8,
+                    help="Yaw delta period in steps")
 args = parser.parse_args()
 
+# --- Case setup ---
 key = args.case + "_"
 if key not in named_cases_dictionary:
     avail = [k.rstrip("_") for k in named_cases_dictionary]
@@ -53,54 +79,97 @@ config = FastFarmConfig(
 
 ts = time.time()
 out_dir = os.path.join(os.path.dirname(__file__), "..",
-    "__simul__", "fastfarm", "continuous", f"{args.case}_Continuous_{ts:.0f}")
+    "__simul__", "fastfarm", "continuous",
+    f"{args.case}_Mode{args.mode}_{ts:.0f}")
 os.makedirs(out_dir, exist_ok=True)
 config.output_dir = out_dir
 
+mode_names = ["Yaw Only", "Power+MinPitch", "Pitch Only",
+              "Pitch+Yaw", "Power+MinPitch+Yaw"]
 print("=" * 70)
-print("FAST.Farm Continuous Closed-Loop Control")
+print(f"FAST.Farm 5-Mode Farm Control — Mode {args.mode}: {mode_names[args.mode]}")
 print("=" * 70)
 print(f"Case: {args.case} | Turbines: {n_turbs} | Steps: {args.steps}")
 print(f"Wind: {args.wind_speed} m/s, {args.wind_direction} deg")
+print(f"Mode: {args.mode} ({mode_names[args.mode]})")
 print(f"Output: {out_dir}")
 print("=" * 70)
 
-# 创建连续接口
+# --- Create interface ---
 ff = ContinuousFastFarmInterface(config)
-ff.setup()       # 生成完整 .fstf + 部署 DISCON bridge DLL
+ff.setup()
 ff.reset(wind)
 
-print(f"\nStarting FAST.Farm (single process, continuous flow)...")
-ff.start()       # 后台启动 FAST.Farm
+print(f"\nStarting FAST.Farm...")
+ff.start()
 
-# 在线控制循环
-yaw_amplitude = 20.0       # 正弦偏振幅值 (°)
-yaw_period = 8             # 正弦周期 (步数)
-optimal_yaw = (270 - wind.direction) % 360  # 最优对风绝对角度 (OpenFAST坐标: 0°=东, 90°=北)
+# --- Control loop ---
 step_powers = []
 step_yaws = []
+step_pitches = []
+optimal_yaw = (270 - wind.direction) % 360  # OpenFAST: 0°=East(+X), +CCW
 
 for step in range(args.steps):
-    # --- 基于入流风向的正弦偏航扫描 ---
-    yaw_offset = yaw_amplitude * np.sin(2 * np.pi * step / yaw_period)
-    yaw_offset = np.clip(yaw_offset, -25, 25)   # 偏航偏移限幅 ±25°
-    yaw_val = optimal_yaw + yaw_offset           # 绝对偏航命令
+    yaw_cmd = optimal_yaw  # default: face wind
     pitch_cmd = 0.0
+    power_cmd = 0.0
+    min_pitch_cmd = 0.0
 
-    controls = ControlInput.scalar(n_turbs, yaw_deg=yaw_val, pitch_deg=pitch_cmd)
+    if args.mode in (0, 3, 4):
+        # Sinusoidal yaw sweep around optimal (absolute yaw, OpenFAST coords)
+        yaw_offset = args.yaw_amp * np.sin(2 * np.pi * step / args.yaw_period)
+        yaw_offset = np.clip(yaw_offset, -25.0, 25.0)
+        yaw_cmd = optimal_yaw + yaw_offset
+
+    if args.mode == 1:
+        power_cmd = args.power
+        min_pitch_cmd = args.min_pitch
+
+    if args.mode == 2:
+        # Sinusoidal pitch sweep
+        pitch_cmd = args.pitch * (1.0 + 0.5 * np.sin(2 * np.pi * step / 10))
+        pitch_cmd = np.clip(pitch_cmd, 0.0, 30.0)
+
+    if args.mode == 3:
+        pitch_cmd = args.pitch
+
+    if args.mode == 4:
+        power_cmd = args.power
+        min_pitch_cmd = args.min_pitch
+
+    # Dispatch to factory methods
+    if args.mode == 0:
+        controls = ControlInput.mode0_yaw(n_turbs, yaw_cmd)
+    elif args.mode == 1:
+        controls = ControlInput.mode1_power(n_turbs, power_cmd, min_pitch_cmd)
+    elif args.mode == 2:
+        controls = ControlInput.mode2_pitch(n_turbs, pitch_cmd)
+    elif args.mode == 3:
+        controls = ControlInput.mode3_pitch_yaw(n_turbs, pitch_cmd, yaw_cmd)
+    elif args.mode == 4:
+        controls = ControlInput.mode4_power_yaw(n_turbs, power_cmd, min_pitch_cmd, yaw_cmd)
+
     output = ff.wait_step(controls)
 
-    power_at_step = float(output.farm_power_mw[-1]) if output.farm_power_mw is not None else 0.0
-    step_powers.append(power_at_step)
-    step_yaws.append(yaw_val)
+    farm_pw = float(output.farm_power_mw[-1]) if output.farm_power_mw is not None else 0.0
+    step_powers.append(farm_pw)
+    step_yaws.append(yaw_cmd)
+    step_pitches.append(pitch_cmd)
 
-    pitch_display = output.pitch_deg[-1, 0] if output.pitch_deg is not None else 0.0
+    # Status line
+    parts = [f"Step {step+1:3d}/{args.steps}"]
+    if args.mode in (0, 3, 4):
+        parts.append(f"yaw={yaw_cmd:+.1f}°")
+    if args.mode in (1, 4):
+        parts.append(f"P_tgt={power_cmd:.1f}MW")
+        if min_pitch_cmd > 0:
+            parts.append(f"minPit={min_pitch_cmd:.1f}°")
+    if args.mode in (2, 3):
+        parts.append(f"pitch={pitch_cmd:.1f}°")
+    parts.append(f"farm_pwr={farm_pw:.2f}MW")
+    print(" | ".join(parts))
 
-    print(f"  Step {step+1:3d}/{args.steps}: yaw={yaw_val:+.1f} deg (offset={yaw_offset:+.1f}) | "
-          f"farm_power={power_at_step:.2f} MW | "
-          f"pitch={pitch_display:.1f} deg")
-
-# 停止并获取完整输出
+# --- Stop ---
 print("\nWaiting for FAST.Farm to finish...")
 final_output = ff.stop()
 ff.close()
@@ -112,21 +181,19 @@ if final_output is not None and final_output.power_mw is not None and final_outp
     ffp = final_output.farm_power_mw
     print(f"Farm power range: {ffp.min():.2f} - {ffp.max():.2f} MW")
 
-    # ====== 功率时序画图 ======
+    # --- Plot ---
     t_arr = final_output.time
     fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
 
-    # 全场功率
     ax = axes[0]
     ax.plot(t_arr, ffp, "b-", lw=2, label="Farm Power")
     ax.set_ylabel("Farm Power (MW)", fontsize=13)
-    ax.set_title(f"{args.case} — FAST.Farm Yaw Sweep (Wind: {wind.speed} m/s, {wind.direction}°, "
-                 f"amp={yaw_amplitude}°/period={yaw_period}step)",
+    ax.set_title(f"{args.case} — Mode {args.mode}: {mode_names[args.mode]} "
+                 f"(Wind: {wind.speed} m/s, {wind.direction}°)",
                  fontsize=14, fontweight="bold")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=11)
 
-    # 单机功率（前 6 台）
     ax = axes[1]
     pw = final_output.power_mw
     n_plot = min(6, n_turbs)

@@ -37,6 +37,7 @@ output.to_csv("results.csv")
 
 from __future__ import annotations
 
+import copy
 import os
 import re
 import subprocess as _sp
@@ -51,6 +52,7 @@ import yaml
 from floris import FlorisModel
 from openfast_toolbox.io.fast_input_file import FASTInputFile
 from openfast_toolbox.io import FASTOutputFile
+from scipy.optimize import fsolve
 
 from wfcrl.config import ControlInput, SimulationOutput, WindConfig, WindType
 from wfcrl.simul_config import FastFarmConfig, FlorisConfig, SimulationConfig
@@ -655,6 +657,17 @@ class FlorisInterface(SimulatorInterface):
             self.config.to_legacy_dict(), output_dir=output_dir,
         )
         self._fi = FlorisModel(self._simul_file)
+        # 保存基准 config dict，供 curtailment 重建 FlorisModel
+        import yaml as _yaml
+        with open(self._simul_file, 'r') as _f:
+            self._base_config_dict = _yaml.safe_load(_f)
+        if 'turbine_library_path' not in self._base_config_dict.get('farm', {}):
+            # FLORIS can resolve built-in turbines without explicit path
+            pass
+        self._base_power_thrust_table = copy.deepcopy(
+            self._fi.core.farm.turbine_definitions[0]['power_thrust_table']
+        )
+        self._last_ratios = None
 
     def reset(self, wind: WindConfig) -> None:
         self._current_wind = wind
@@ -673,20 +686,120 @@ class FlorisInterface(SimulatorInterface):
         self._fi.set(wind_speeds=[ws], wind_directions=[wd])
         self._fi.run()
 
+    # ========== Curtailment helpers (FLORIS induction factor control) ==========
+
+    @staticmethod
+    def _get_a_from_ct(ct: float) -> float:
+        """Ct -> axial induction factor a."""
+        ct = float(np.clip(ct, 0.0, 0.999))
+        return 0.5 * (1.0 - np.sqrt(1.0 - ct))
+
+    @staticmethod
+    def _solve_new_a(a_old: float, ratio: float) -> float:
+        """给定旧 a 和限功率比 ratio，求解新 a (上限 1/3)。"""
+        cp_old = 4.0 * a_old * (1.0 - a_old) ** 2
+        if cp_old <= 0.0:
+            return 0.0
+        cp_new = float(ratio) * cp_old
+        def _func(a):
+            return 4.0 * a * (1.0 - a) ** 2 - cp_new
+        try:
+            a_new = fsolve(_func, x0=a_old * ratio)[0]
+            return float(np.clip(a_new, 0.0, 1.0 / 3.0))
+        except Exception:
+            return float(np.clip(a_old * ratio, 0.0, 1.0 / 3.0))
+
+    @classmethod
+    def _apply_curtailment(cls, base_table: dict, ratio: float) -> dict:
+        """对 power_thrust_table 施加限功率比，返回新表。"""
+        new_table = copy.deepcopy(base_table)
+        powers = np.array(new_table['power'], dtype=np.float64)
+        cts = np.array(new_table['thrust_coefficient'], dtype=np.float64)
+        new_powers = powers * ratio
+        new_cts = np.zeros_like(cts)
+        for i, ct in enumerate(cts):
+            if ct > 0.0:
+                a_old = cls._get_a_from_ct(float(ct))
+                a_new = cls._solve_new_a(a_old, ratio)
+                new_cts[i] = 4.0 * a_new * (1.0 - a_new)
+        new_table['power'] = new_powers.tolist()
+        new_table['thrust_coefficient'] = new_cts.tolist()
+        return new_table
+
+    def _apply_turbine_curtailment(self, ratios: np.ndarray) -> None:
+        """写 curtailed turbine yaml → turbine_library_path → 重建 FlorisModel。"""
+        if self._last_ratios is not None and np.allclose(self._last_ratios, ratios, atol=0.001):
+            return
+
+        base_table = self._base_power_thrust_table
+        if base_table is None:
+            td0 = self._fi.core.farm.turbine_definitions[0]
+            self._base_power_thrust_table = copy.deepcopy(td0['power_thrust_table'])
+            base_table = self._base_power_thrust_table
+
+        td0_full = copy.deepcopy(self._fi.core.farm.turbine_definitions[0])
+        base_turb_name = td0_full.get('turbine_type', 'nrel_5MW')
+        new_cfg = copy.deepcopy(self._base_config_dict)
+
+        # 在 output_dir 下建立临时 turbine 库
+        lib_dir = os.path.join(self.config.output_dir or '.', '_turbine_lib')
+        os.makedirs(lib_dir, exist_ok=True)
+        import yaml as _yaml
+
+        new_types = []
+        for i in range(self.n_turbines):
+            r = float(np.clip(ratios[i], 0.01, 1.0))
+            tname = f"{base_turb_name}_cr{i}"
+            td_i = copy.deepcopy(td0_full)
+            td_i['power_thrust_table'] = self._apply_curtailment(base_table, r)
+            td_i['turbine_type'] = tname
+            # 移除不可序列化的 Python 对象字段（如 pathlib.Path）
+            for _bad_key in list(td_i.keys()):
+                _v = td_i[_bad_key]
+                if not isinstance(_v, (str, int, float, bool, list, dict, type(None))):
+                    del td_i[_bad_key]
+            # 写 turbine yaml
+            tbl_path = os.path.join(lib_dir, f"{tname}.yaml")
+            with open(tbl_path, 'w') as _tf:
+                _yaml.dump(td_i, _tf)
+            new_types.append(tname)
+
+        new_cfg['farm']['turbine_type'] = new_types
+        new_cfg['farm']['turbine_library_path'] = lib_dir
+
+        self._fi = FlorisModel(new_cfg)
+        self._last_ratios = np.asarray(ratios, dtype=np.float64).copy()
+
+    # ========== step() — 3-mode dispatch (FLORIS) ==========
+
     def step(self, controls: ControlInput) -> SimulationOutput:
         if self._fi is None:
             raise RuntimeError("Call setup() and reset() before step()")
-        if controls.pitch is not None and np.any(controls.pitch != 0):
-            warnings.warn("FLORIS does not support pitch control. Ignoring.")
-        if controls.torque is not None and np.any(controls.torque != 0):
-            warnings.warn("FLORIS does not support torque control. Ignoring.")
 
         ws, wd = next(self._wind_generator)
         wd = wd % 360
-        yaw = controls.yaw.reshape(1, -1).astype(np.float64)
+
+        # Determine control mode
+        mode = int(controls.mode[0]) if (
+            controls.mode is not None and len(controls.mode) > 0
+        ) else 0
+
+        # --- Induction factor (curtailment), modes 1 & 2 ---
+        if mode in (1, 2):
+            ratio = controls.power if controls.power is not None else np.ones(self.n_turbines)
+            ratio = np.asarray(ratio, dtype=np.float64).ravel()[:self.n_turbines]
+            ratio = np.clip(ratio, 0.01, 1.0)
+            self._apply_turbine_curtailment(ratio)
+        elif mode == 0 and getattr(self, '_last_ratios', None) is not None:
+            # 恢复全功率 turbine 定义
+            self._apply_turbine_curtailment(np.ones(self.n_turbines))
+
+        # --- Yaw, modes 0 & 2 ---
+        yaw = controls.yaw.reshape(1, -1).astype(np.float64) if controls.yaw is not None else np.zeros((1, self.n_turbines))
         self._fi.set(wind_speeds=[ws], wind_directions=[wd], yaw_angles=yaw)
         self._fi.run()
 
+        # --- Collect output ---
         power_mw = self._fi.get_turbine_powers().flatten().reshape(1, -1) / 1e6
         ws_arr, wd_arr = self._local_wind_measurements()
         yaw_arr = self._fi.core.farm.yaw_angles.squeeze().reshape(1, -1)
@@ -710,7 +823,7 @@ class FlorisInterface(SimulatorInterface):
             yaw_deg=yaw_arr,
             thrust_n=thrust,
             blade_loads=blade_loads,
-            metadata={"step": self._step_idx, "dt": self.config.dt, "simulator": "FLORIS"},
+            metadata={"step": self._step_idx, "dt": self.config.dt, "simulator": "FLORIS", "mode": mode},
         )
         self._step_idx += 1
         self._cumulative_time += self.config.dt
@@ -720,6 +833,9 @@ class FlorisInterface(SimulatorInterface):
         self._step_idx = 0
         self._cumulative_time = 0.0
         self._fi = None
+        self._base_power_thrust_table = None
+        self._last_ratios = None
+        self._base_power_thrust_table = None
 
     # ========== 内部方法 ==========
 
@@ -865,15 +981,13 @@ class ContinuousFastFarmInterface(FastFarmInterface):
                 f.write(raw)
 
     def _write_initial_controls(self) -> None:
-        """在 FAST.Farm 启动前写入初始 controls.txt，
-        使 DLL 从第一次调用就获得正确偏航命令。"""
+        """在 FAST.Farm 启动前写入初始 controls.txt（5-mode protocol）。
+        初始用 mode=0 零偏航增量，让 ROSCO 自行对风。"""
         if self._controls_file is None:
             return
-        wdir = self._current_wind.direction if self._current_wind else self.config.wind.direction
-        initial_yaw = (270 - wdir) % 360  # OpenFAST 坐标
         lines = ["step=0"]
         for t in range(self.n_turbines):
-            lines.append(f"T{t+1} yaw={initial_yaw:.3f} pitch=0.000 torque=0.0")
+            lines.append(f"T{t+1} mode=0 yaw=0.000 pitch=0.000 power=0.000 minpitch=0.000")
         lines.append("END")
         with open(self._controls_file, 'w') as f:
             f.write('\n'.join(lines) + '\n')
@@ -956,16 +1070,19 @@ class ContinuousFastFarmInterface(FastFarmInterface):
     # ========== 内部方法 ==========
 
     def _write_controls_file(self, controls: ControlInput) -> None:
-        """写 controls.txt。格式: step=N / T{id} yaw=X pitch=Y torque=Z / END"""
+        """写 controls.txt (5-mode farm protocol)。
+        格式: step=N / T{id} mode=M yaw=X pitch=Y power=Z minpitch=W / END"""
         if self._controls_file is None:
             return
 
         lines = [f"step={self._step_idx}"]
         for t in range(self.n_turbines):
+            m = int(controls.mode[t]) if t < len(controls.mode) else 0
             y = controls.yaw[t] if t < len(controls.yaw) else 0.0
             p = controls.pitch[t] if t < len(controls.pitch) else 0.0
-            tq = controls.torque[t] if controls.torque is not None and t < len(controls.torque) else 0.0
-            lines.append(f"T{t+1} yaw={y:.3f} pitch={p:.3f} torque={tq:.1f}")
+            pw = controls.power[t] if controls.power is not None and t < len(controls.power) else 0.0
+            mp = controls.min_pitch[t] if controls.min_pitch is not None and t < len(controls.min_pitch) else 0.0
+            lines.append(f"T{t+1} mode={m} yaw={y:.3f} pitch={p:.3f} power={pw:.3f} minpitch={mp:.3f}")
         lines.append("END")
 
         with open(self._controls_file, 'w') as f:

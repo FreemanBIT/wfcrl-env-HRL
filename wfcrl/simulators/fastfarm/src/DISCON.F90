@@ -67,12 +67,18 @@ CHARACTER(*),                   PARAMETER      :: RoutineName = 'ROSCO'
 INTEGER(IntKi), SAVE                 :: wfcrl_turbine_id = 0
 INTEGER(IntKi), SAVE                 :: wfcrl_applied_step = -1
 LOGICAL, SAVE                        :: wfcrl_init_done = .FALSE.
-REAL(ReKi), SAVE                     :: wfcrl_ext_yaw = 0.0, wfcrl_ext_pitch = 0.0, wfcrl_ext_torque = 0.0
+! Farm control protocol: 0-yaw, 1-power+minPitch, 2-pitch, 3-pitch+yaw, 4-power+minPitch+yaw
+INTEGER(IntKi), SAVE                 :: wfcrl_mode = -1
+REAL(ReKi), SAVE                     :: wfcrl_cmd_yaw = 0.0          ! yaw absolute (deg)
+REAL(ReKi), SAVE                     :: wfcrl_cmd_pitch = 0.0       ! pitch absolute (deg)
+REAL(ReKi), SAVE                     :: wfcrl_cmd_power = 0.0       ! power target (MW)
+REAL(ReKi), SAVE                     :: wfcrl_cmd_min_pitch = 0.0   ! min pitch limit (deg)
 REAL(ReKi)                          :: wfcrl_meas_time
 INTEGER(IntKi)                       :: wfcrl_io_stat, wfcrl_read_step, wfcrl_parse_id, wfcrl_i, wfcrl_c_len
 CHARACTER(256)                       :: wfcrl_line, wfcrl_token, wfcrl_tmp, wfcrl_dll_infile
 CHARACTER(32)                        :: wfcrl_tstr
 LOGICAL                              :: wfcrl_fexist, wfcrl_found
+REAL(ReKi)                          :: wfcrl_tmp_val
 ! ===== END WFCRL BRIDGE declarations =====
 
 RootName = TRANSFER(avcOUTNAME, RootName)
@@ -110,7 +116,7 @@ IF (.NOT. wfcrl_init_done) THEN
     wfcrl_init_done = .TRUE.
 END IF
 
-! Read external yaw/pitch/torque from controls.txt
+! Read farm commands from controls.txt (5-mode protocol)
 INQUIRE(FILE='controls.txt', EXIST=wfcrl_fexist)
 IF (wfcrl_fexist) THEN
     OPEN(95, FILE='controls.txt', STATUS='OLD', ACTION='READ')
@@ -134,9 +140,11 @@ IF (wfcrl_fexist) THEN
                         wfcrl_tmp = wfcrl_token(2:)
                         READ(wfcrl_tmp, *, IOSTAT=wfcrl_io_stat) wfcrl_parse_id
                         IF (wfcrl_parse_id == wfcrl_turbine_id) THEN
-                            wfcrl_i = INDEX(wfcrl_line, 'yaw=');    IF (wfcrl_i > 0) THEN; wfcrl_tmp = wfcrl_line(wfcrl_i+4:); READ(wfcrl_tmp,*) wfcrl_ext_yaw; END IF
-                            wfcrl_i = INDEX(wfcrl_line, 'pitch=');  IF (wfcrl_i > 0) THEN; wfcrl_tmp = wfcrl_line(wfcrl_i+6:); READ(wfcrl_tmp,*) wfcrl_ext_pitch; END IF
-                            wfcrl_i = INDEX(wfcrl_line, 'torque='); IF (wfcrl_i > 0) THEN; wfcrl_tmp = wfcrl_line(wfcrl_i+7:); READ(wfcrl_tmp,*) wfcrl_ext_torque; END IF
+                            wfcrl_i = INDEX(wfcrl_line, 'mode=');     IF (wfcrl_i > 0) THEN; wfcrl_tmp = wfcrl_line(wfcrl_i+5:); READ(wfcrl_tmp,*) wfcrl_tmp_val; wfcrl_mode = INT(wfcrl_tmp_val); END IF
+                            wfcrl_i = INDEX(wfcrl_line, 'yaw=');      IF (wfcrl_i > 0) THEN; wfcrl_tmp = wfcrl_line(wfcrl_i+4:); READ(wfcrl_tmp,*) wfcrl_cmd_yaw; END IF
+                            wfcrl_i = INDEX(wfcrl_line, 'pitch=');    IF (wfcrl_i > 0) THEN; wfcrl_tmp = wfcrl_line(wfcrl_i+6:); READ(wfcrl_tmp,*) wfcrl_cmd_pitch; END IF
+                            wfcrl_i = INDEX(wfcrl_line, 'power=');    IF (wfcrl_i > 0) THEN; wfcrl_tmp = wfcrl_line(wfcrl_i+6:); READ(wfcrl_tmp,*) wfcrl_cmd_power; END IF
+                            wfcrl_i = INDEX(wfcrl_line, 'minpitch='); IF (wfcrl_i > 0) THEN; wfcrl_tmp = wfcrl_line(wfcrl_i+9:); READ(wfcrl_tmp,*) wfcrl_cmd_min_pitch; END IF
                             wfcrl_found = .TRUE.
                             EXIT
                         END IF
@@ -154,6 +162,30 @@ END IF
 IF (ErrVar%aviFAIL >= 0) THEN
     CALL SetParameters(avrSWAP, accINFILE, SIZE(avcMSG), CntrPar, LocalVar, objInst, PerfData, RootName, ErrVar)
 ENDIF
+
+! ===== WFCRL BRIDGE: Inject farm commands into ROSCO parameters =====
+IF (wfcrl_applied_step >= 0 .AND. wfcrl_mode >= 0) THEN
+    ! Modes 1 & 4: Power tracking with min pitch constraint
+    IF (wfcrl_mode == 1 .OR. wfcrl_mode == 4) THEN
+        IF (wfcrl_cmd_power > 0.01) THEN
+            CntrPar%VS_ConstPower = 1
+            CntrPar%VS_RtPwr = wfcrl_cmd_power * 1.0E6  ! MW -> W
+        END IF
+        IF (wfcrl_cmd_min_pitch > 0.001) THEN
+            CntrPar%PS_Mode = 1
+            CntrPar%PS_BldPitchMin_N = 1
+            IF (.NOT. ALLOCATED(CntrPar%PS_BldPitchMin)) ALLOCATE(CntrPar%PS_BldPitchMin(1))
+            IF (.NOT. ALLOCATED(CntrPar%PS_WindSpeeds))  ALLOCATE(CntrPar%PS_WindSpeeds(1))
+            CntrPar%PS_WindSpeeds(1)  = 0.0
+            CntrPar%PS_BldPitchMin(1) = wfcrl_cmd_min_pitch * 3.14159265 / 180.0  ! deg -> rad
+        END IF
+    END IF
+    ! Modes with yaw: disable ROSCO internal yaw; WFCRL handles it
+    IF (wfcrl_mode == 0 .OR. wfcrl_mode == 3 .OR. wfcrl_mode == 4) THEN
+        CntrPar%Y_ControlMode = 0
+    END IF
+END IF
+! ===== END WFCRL BRIDGE: parameter injection =====
 
 ! Call external controller, if desired
 IF (CntrPar%Ext_Mode > 0 .AND. ErrVar%aviFAIL >= 0) THEN
@@ -204,26 +236,28 @@ ELSEIF ((LocalVar%iStatus == -1) .AND. (CntrPar%ZMQ_Mode > 0)) THEN
         CALL UpdateZeroMQ(LocalVar, CntrPar, ErrVar)
 END IF
 
-! ===== WFCRL BRIDGE: Override pitch/torque/yaw with external commands =====
-IF (wfcrl_applied_step >= 0) THEN
-    ! Override pitch via PitCom array (radians)
-    IF (ABS(wfcrl_ext_pitch) > 0.001) THEN
-        LocalVar%BlPitch(1) = wfcrl_ext_pitch * 3.14159265 / 180.0
-        LocalVar%BlPitch(2) = wfcrl_ext_pitch * 3.14159265 / 180.0
-        LocalVar%BlPitch(3) = wfcrl_ext_pitch * 3.14159265 / 180.0
-        LocalVar%BlPitchCMeas = wfcrl_ext_pitch * 3.14159265 / 180.0
-        LocalVar%PitCom(1) = wfcrl_ext_pitch * 3.14159265 / 180.0
-        LocalVar%PitCom(2) = wfcrl_ext_pitch * 3.14159265 / 180.0
-        LocalVar%PitCom(3) = wfcrl_ext_pitch * 3.14159265 / 180.0
+! ===== WFCRL BRIDGE: Apply post-control overrides based on mode =====
+IF (wfcrl_applied_step >= 0 .AND. wfcrl_mode >= 0) THEN
+    ! Pitch override (modes 2, 3: absolute pitch command, direct overwrite)
+    IF ((wfcrl_mode == 2 .OR. wfcrl_mode == 3) .AND. ABS(wfcrl_cmd_pitch) > 0.001) THEN
+        LocalVar%PitCom(1) = wfcrl_cmd_pitch * 3.14159265 / 180.0
+        LocalVar%PitCom(2) = wfcrl_cmd_pitch * 3.14159265 / 180.0
+        LocalVar%PitCom(3) = wfcrl_cmd_pitch * 3.14159265 / 180.0
+        LocalVar%BlPitch(1)  = wfcrl_cmd_pitch * 3.14159265 / 180.0
+        LocalVar%BlPitch(2)  = wfcrl_cmd_pitch * 3.14159265 / 180.0
+        LocalVar%BlPitch(3)  = wfcrl_cmd_pitch * 3.14159265 / 180.0
+        LocalVar%BlPitchCMeas = wfcrl_cmd_pitch * 3.14159265 / 180.0
+        avrSWAP(42) = wfcrl_cmd_pitch * 3.14159265 / 180.0
+        avrSWAP(43) = wfcrl_cmd_pitch * 3.14159265 / 180.0
+        avrSWAP(44) = wfcrl_cmd_pitch * 3.14159265 / 180.0
+        avrSWAP(45) = wfcrl_cmd_pitch * 3.14159265 / 180.0
     END IF
-    ! Override generator torque (Nm)
-    IF (ABS(wfcrl_ext_torque) > 0.01) THEN
-        LocalVar%GenTq = wfcrl_ext_torque
-    END IF
-    ! Override yaw via NacHeading (degrees) + avrSWAP(48) yaw rate (rad/s)
-    IF (ABS(wfcrl_ext_yaw) > 0.01) THEN
-        LocalVar%NacHeading = wfcrl_ext_yaw
-        avrSWAP(48) = (wfcrl_ext_yaw * 0.01745329252 - avrSWAP(37)) * 0.2
+    ! Yaw absolute override (modes 0, 3, 4: absolute yaw angle)
+    ! Convention: yaw in degrees, OpenFAST NacHeading coordinates (0°=+X East, +CCW)
+    IF ((wfcrl_mode == 0 .OR. wfcrl_mode == 3 .OR. wfcrl_mode == 4) &
+        .AND. ABS(wfcrl_cmd_yaw) > 0.01) THEN
+        LocalVar%NacHeading = wfcrl_cmd_yaw
+        avrSWAP(48) = (wfcrl_cmd_yaw * 3.14159265 / 180.0 - avrSWAP(37)) * 0.2
     END IF
 END IF
 ! ===== END WFCRL BRIDGE: control override =====
@@ -244,7 +278,7 @@ ErrVar%ErrMsg = ''
 wfcrl_meas_time = avrSWAP(2)
 WRITE(wfcrl_tstr, '(I0)') wfcrl_turbine_id
 OPEN(96, FILE='measurements_T'//TRIM(wfcrl_tstr)//'.txt', STATUS='REPLACE')
-WRITE(96,'(A,I0,A,F10.4)') 'step=',wfcrl_applied_step,' t=',wfcrl_meas_time
+WRITE(96,'(A,I0,A,F10.4,A,I0)') 'step=',wfcrl_applied_step,' t=',wfcrl_meas_time,' mode=',wfcrl_mode
 WRITE(96,'(A,F12.2,A,F12.4,A,F12.2)') ' genpwr=',LocalVar%VS_GenPwr/1000.0, &
     ' genspd=',LocalVar%GenSpeed*9.5493,' gentq=',LocalVar%GenTq
 WRITE(96,'(A,F12.4,A,F12.4)') ' rotspd=',LocalVar%RotSpeed*9.5493, &

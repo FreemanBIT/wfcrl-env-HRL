@@ -21,6 +21,7 @@ class DefaultControl:
     yaw = (-40, 40, 5)
     pitch = (0, 45, 1)
     torque = (-2e4, 2e4, 1e3)
+    power = (0, 10, 0.5)
 
 
 @dataclass

@@ -12,7 +12,7 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
   REAL(C_FLOAT),   INTENT(INOUT) :: avrData(*)
 
   INTEGER(4) :: turbine_id, io_status, i, read_step, c_len
-  REAL(4)    :: cmd_yaw, cmd_pitch, cmd_torque
+  REAL(4)    :: cmd_yaw, cmd_pitch, cmd_torque, cmd_power
   REAL(4)    :: current_time, gen_pwr, gen_spd, gen_tq, rot_spd, blade1_pitch, nac_yaw
   REAL(4)    :: wind_x, root_mip1, root_moop1, root_mzb1
   CHARACTER(256) :: line, token, dll_in_file
@@ -20,6 +20,7 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
   LOGICAL        :: fexist, found
   INTEGER(4), SAVE :: my_id = 0, applied_step = -1, init_done = 0
   REAL(4),    SAVE :: prev_yaw = 0.0, prev_pitch = 0.0, prev_torque = 0.0
+  REAL(4),    SAVE :: prev_power = 0.0, power_err_integral = 0.0
   INTEGER(4), SAVE :: call_count = 0
   ! 内部控制参数 (ROSCO 等效)
   REAL(4), PARAMETER :: GEN_SPD_CUTIN = 7.33
@@ -27,8 +28,12 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
   REAL(4), PARAMETER :: T_RATED = 43093.55
   REAL(4), PARAMETER :: K_OPT = 2.853
   REAL(4), PARAMETER :: P_RATED = 5.2966E6
+  ! 功率跟踪 PI 参数
+  REAL(4), PARAMETER :: KP_POWER = 1.0E-6   ! 功率误差比例增益 (Nm/W)
+  REAL(4), PARAMETER :: KI_POWER = 5.0E-7   ! 功率误差积分增益 (Nm/(W*s))
   REAL(4), SAVE :: pitch_integral = 0.0
   REAL(4) :: torque_cmd, pitch_cmd_internal, speed_err
+  REAL(4) :: pwr_err, t_ff, t_correction
 
   ! 每次调用都写标记文件（调试：确认 DLL 被调用）
   call_count = call_count + 1
@@ -147,10 +152,13 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
       READ(token(2:), *, IOSTAT=io_status) turbine_id
       IF (turbine_id == my_id) THEN
         cmd_yaw = prev_yaw; cmd_pitch = prev_pitch; cmd_torque = prev_torque
+        cmd_power = prev_power
         i = INDEX(line, 'yaw=');    IF (i > 0) READ(line(i+4:), *) cmd_yaw
         i = INDEX(line, 'pitch=');  IF (i > 0) READ(line(i+6:), *) cmd_pitch
         i = INDEX(line, 'torque='); IF (i > 0) READ(line(i+7:), *) cmd_torque
+        i = INDEX(line, 'power=');  IF (i > 0) READ(line(i+6:), *) cmd_power
         prev_yaw = cmd_yaw; prev_pitch = cmd_pitch; prev_torque = cmd_torque
+        prev_power = cmd_power
         found = .TRUE.; EXIT
       END IF
     END IF
@@ -160,8 +168,6 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
 
   ! --- 应用控制 (通过 avrSWap 输出到 ServoDyn) ---
   applied_step = read_step
-  ! --- 应用外部指令覆盖 (仅当 controls.txt 显式指定时才覆盖) ---
-  applied_step = read_step
   ! Pitch override: only if |cmd_pitch| > 0.001°
   IF (ABS(cmd_pitch) > 0.001) THEN
     avrSWap(42) = cmd_pitch * 0.0174533   ! pitch cmd blade 1 (rad)
@@ -169,15 +175,38 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
     avrSWap(44) = cmd_pitch * 0.0174533   ! blade 3
     avrSWap(45) = cmd_pitch * 0.0174533   ! collective pitch (rad)
   END IF
-  ! Torque override: only if cmd_torque > 0.01 Nm
-  IF (cmd_torque > 0.01) THEN
+
+  ! --- 功率跟踪控制 (优先于直接转矩指令) ---
+  ! 当 cmd_power > 0.01 MW 时启用功率闭环跟踪：
+  !   前馈: T_ff = P_target(W) / max(ω, 0.1)
+  !   反馈: PI 修正基于 (P_measured - P_target) 误差
+  !   最终转矩 clamp 到 [0, T_RATED]
+  IF (cmd_power > 0.01) THEN
+    ! 前馈转矩: P(MW) → W, 除以转速
+    t_ff = cmd_power * 1.0E6 / MAX(gen_spd, 0.1)
+    ! 功率误差 (W)
+    pwr_err = gen_pwr - cmd_power * 1.0E6
+    ! 积分项 (DT_low ≈ 0.05s 为典型伺服时间步长)
+    power_err_integral = power_err_integral + pwr_err * 0.05
+    power_err_integral = MAX(-1.0E7, MIN(power_err_integral, 1.0E7))
+    ! PI 修正
+    t_correction = KP_POWER * pwr_err + KI_POWER * power_err_integral
+    ! 合成并限幅
+    torque_cmd = t_ff + t_correction
+    torque_cmd = MAX(0.0, MIN(torque_cmd, T_RATED))
+    avrSWap(47) = torque_cmd
+  ELSE IF (cmd_torque > 0.01) THEN
+    ! 无功率指令时，使用直接转矩覆盖
     avrSWap(47) = cmd_torque              ! generator torque (Nm)
   END IF
+  ! 否则保持内部控制器计算的 torque_cmd (已在前面写入 avrSWap(47))
+
   ! Yaw override: always applied via proportional rate (rad/s)
   ! nac_yaw = current yaw from avrSWap(37) in rad, cmd_yaw in degrees
   avrSWap(48) = (cmd_yaw * 0.0174533 - nac_yaw) * 0.2
   prev_yaw = cmd_yaw  ! track yaw for next call
   prev_pitch = cmd_pitch
   prev_torque = cmd_torque
+  prev_power = cmd_power
 
 END SUBROUTINE DISCON
