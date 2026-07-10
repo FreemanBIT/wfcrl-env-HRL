@@ -9,3 +9,7 @@ build/*
 WFCRL.egg-info/*
 kernel-wfcrl/*
 __simul__/*
+results/*
+FarmInputs/*
+*.bts
+*.exe

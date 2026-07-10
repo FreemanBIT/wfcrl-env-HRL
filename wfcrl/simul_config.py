@@ -220,12 +220,20 @@ class FastFarmConfig(SimulationConfig):
     dt_low: Optional[float] = None
     fstf_overrides: dict = field(default_factory=dict)
     wind_time_series_file: Optional[str] = None
+    # 是否对湍流(.bts)启用 Mod_AmbWind=3（多盒 Low + HighT{n}）。
+    # 稳态(WindType=1)下该开关无影响（OpenFAST 文档明确）。
+    use_mod_ambwind3: bool = False
 
     def __post_init__(self):
         super().__post_init__()
         # 从 WindConfig 同步 wind_file
         if self.wind.wind_file and not self.wind_time_series_file:
             self.wind_time_series_file = self.wind.wind_file
+
+    def to_legacy_dict(self) -> dict:
+        d = super().to_legacy_dict()
+        d["use_mod_ambwind3"] = bool(self.use_mod_ambwind3)
+        return d
 
 
 # =========================================================================

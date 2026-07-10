@@ -1,0 +1,47 @@
+# grid_steady.yaml — 稳态风快速对比工况网格
+# =============================================
+# 目的：在湍流盒(.bts)生成/仿真较慢时，先用**稳态风**(WindType=1)快速拿到
+# 一个 FAST.Farm vs FLORIS 的诱导(降额) / 偏航 控制对比结果。
+#
+# 与湍流版的区别：
+#   * 不扫湍流度（不需要任何 .bts 文件）。FAST.Farm 用 InflowWind WindType=1
+#     的均匀稳态风，由 fastFarmBoxExtent 自动生成自洽的低/高分辨率网格，
+#     **不存在 .bts 横向越界问题**。
+#   * 复用已建好的 FLORIS LUT：稳态工况按 (风速, 风向偏移, 间距) 在 LUT 中
+#     最近邻查询，TI 维度固定取 lut_reference_ti（见下）。
+#   * 稳态尾流达到平衡快，t_settle / 控制步数可显著减小 → 单算例更快。
+#
+# 风向语义：同主工程。offset 加到 270°(沿列轴)；实际气象风向 = 270 + offset。
+
+# ---- 主扫描维度（稳态：不含 TI）----
+wind_speeds_ms: [6.0, 8.0, 10.0]
+wind_direction_offsets_deg: [-20.0, -10.0, 0.0, 10.0, 20.0]
+spacings_D: [2.0, 4.0, 6.0, 8.0]
+# 笛卡尔积 = 3 × 5 × 4 = 60 工况（FLORIS 与 FAST.Farm 同一套）。
+
+# ---- 复用 FLORIS LUT 时的参考湍流度 ----
+# 已建 LUT 是按 TI ∈ {0.05,0.10,0.15} 优化的。稳态回放没有真实 TI，
+# 这里指定用哪个 TI 切片的最优控制来下发。0.10 居中，较具代表性。
+# 若想看 LUT 对 TI 的敏感性，可分别设 0.05 / 0.10 / 0.15 各跑一轮对比。
+lut_reference_ti: 0.10
+
+# ---- 仿真时长/步长 ----
+floris:
+  dt: 60.0
+  max_iter: 3        # 稳态：少数步即可
+
+fastfarm:
+  dt: 3.0            # 控制步长 (s)
+  # 总仿真时长 = t_settle + n_control_steps * dt
+  # 稳态尾流平衡快，但仍需让尾流“走过”整列风机。最慢工况 = 最大间距 + 最低风速：
+  #   传播时间 ~ (n_gap * spacing_m) / U = (2 * 8 * 126) / 6 ≈ 336 s。
+  # 稳态下取 360 s 覆盖最不利组合；小间距/大风速工况其实可更短，
+  # 但统一取 360 s 简单稳妥。如需提速，可按工况自适应（见 README）。
+  t_settle_s: 360.0
+  n_control_steps: 20    # 稳态窗口控制步数（取后段均值即可，无需像湍流那样多）
+
+# ---- 冒烟子集：先跑通一个再扩展 ----
+smoke_subset:
+  wind_speeds_ms: [6.0]
+  wind_direction_offsets_deg: [0.0]
+  spacings_D: [4.0]

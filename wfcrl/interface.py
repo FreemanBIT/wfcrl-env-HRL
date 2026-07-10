@@ -64,6 +64,84 @@ from wfcrl.simul_utils import (
 
 
 # =========================================================================
+# 风向 ↔ 机舱朝向 的统一换算（关键：与 PropagationDir 约定一致）
+# =========================================================================
+# InflowWind 用 PropagationDir = (风向 + 90) % 360 旋转来流（稳态/湍流一致）。
+# 为使转子**对准来流**，机舱绝对朝向 NacYaw 必须等于 (风向 + 90)，而**不是**
+# 旧代码里的 (270 - 风向) —— 后者在风向偏移时会让转子相对来流多偏 2×偏移量，
+# 在 ±20° 工况下产生 ~40° 基准失准，触发 chi≈110°+ 的偏斜与
+# "Rotor diameter must be greater than zero" 中止。
+# NacYaw 必须落在 ElastoDyn 要求的 (-180,180]。
+
+def _set_fast_scalar(path: str, key: str, value: str) -> None:
+    """在 OpenFAST 输入文件中就地修改一个标量参数（按注释列的参数名匹配）。
+
+    OpenFAST 行格式为：`   <value>   <KEY>   - description`。本函数按第二列的
+    KEY 精确匹配该行，替换第一列的值，保留其余内容与 CRLF。仅改**首个**匹配行。
+    用原文本编辑而非 FASTInputFile.write()，以免丢失文件里已追加的 OutList 通道。
+    """
+    if not os.path.exists(path):
+        return
+    with open(path, "rb") as f:
+        raw = f.read()
+    text = raw.decode("ascii", errors="replace").replace("\r\n", "\n")
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        # 参数行：值 + 空白 + KEY + 空白/行尾（KEY 作为独立 token 出现在第二列）
+        toks = line.split()
+        if len(toks) >= 2 and toks[1] == key:
+            # 用新值替换第一 token，尽量保留原有列宽风格
+            # 重建：<value><原分隔><KEY> ... 其余保留
+            # 简单稳妥：把该行第一 token 换成 value
+            idx0 = line.find(toks[0])
+            new_line = line[:idx0] + value + line[idx0 + len(toks[0]):]
+            lines[i] = new_line
+            break
+    out = "\n".join(lines).encode("ascii", errors="replace")
+    out = out.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    with open(path, "wb") as f:
+        f.write(out)
+
+
+class FastFarmAborted(RuntimeError):
+    """FAST.Farm 进程在仿真过程中意外退出/崩溃/挂起时抛出。
+
+    上层（回放驱动）捕获它后可立即：(1) 停止本工况，(2) 保存已推进出的部分结果，
+    (3) 快速切换到下一个工况，而不必逐步空等超时。
+    """
+    pass
+
+
+def _wrap180(x: float) -> float:
+    """归一化角度到 (-180, 180]。"""
+    return ((float(x) + 180.0) % 360.0) - 180.0
+
+
+def nacyaw_face_wind(wind_direction_deg: float) -> float:
+    """转子对准来流时的绝对机舱朝向（度，∈(-180,180]）。
+
+    与 InflowWind PropagationDir=(wd+90) 约定一致：NacYaw_base = wrap180(wd+90)。
+    """
+    return 0.0
+
+
+def nacyaw_from_misalignment(wind_direction_deg: float, yaw_misalign_deg: float) -> float:
+    """由“相对来流的偏航失准角”换算成绝对 NacYaw（度，∈(-180,180]）。
+
+    FLORIS/LUT 的 yaw 是相对来流的失准角；FAST.Farm/ED 需要绝对机舱朝向。
+    """
+    return _wrap180(float(yaw_misalign_deg))
+
+
+def misalignment_from_nacyaw(wind_direction_deg: float, nacyaw_abs_deg: float) -> float:
+    """由绝对 NacYaw 反算“相对来流的偏航失准角”（度，∈(-180,180]）。
+
+    用于把 FAST.Farm 回读的绝对机舱角换算回与 FLORIS 一致的失准角口径。
+    """
+    return _wrap180(float(nacyaw_abs_deg))
+
+
+# =========================================================================
 # SimulatorInterface — 统一接口抽象基类
 # =========================================================================
 
@@ -415,8 +493,82 @@ class FastFarmInterface(SimulatorInterface):
 
     # ========== 内部方法 ==========
 
+    # 各通道应写入的模块 OutList（ElastoDyn / ServoDyn / InflowWind）。
+    # 关键：ElastoDyn 通道（YawPzn/BldPitch1/RotSpeed/RootM*）必须写进 ED 的 OutList，
+    # 写在 .fst 顶层会被忽略 —— 这正是之前 CSV 里没有测量 yaw/pitch 的原因。
+    _ED_OUTS = ["YawPzn", "BldPitch1", "RotSpeed", "RootMIP1", "RootMOoP1", "RootMzb1"]
+    _SRV_OUTS = ["GenPwr", "GenTq"]
+    _IFW_OUTS = ["Wind1VelX", "Wind1VelY", "Wind1VelZ"]
+
+    @staticmethod
+    def _inject_outlist_channels(module_path: str, channels) -> None:
+        """把 channels 注入某模块输入文件的 OutList 段（若尚未存在）。
+
+        在包含 'OutList' 的行之后、'END' 段之前插入 "\"Ch\"  Ch" 行。
+        已存在的通道不重复添加。保持 CRLF。
+        """
+        if not os.path.exists(module_path):
+            return
+        with open(module_path, "rb") as f:
+            raw = f.read()
+        text = raw.decode("ascii", errors="replace")
+        text = text.replace("\r\n", "\n")
+        lines = text.split("\n")
+
+        # 找 OutList 段头：该行的**参数名列**（第一个 token，或紧跟数值后的 token）
+        # 是 'OutList'。OpenFAST 里这行形如：
+        #   "              OutList      - The next line(s) ... OutListParameters.xlsx ..."
+        # 特征：包含独立 token 'OutList'，且**不是**以引号开头的通道行，
+        # 也**不是** END 行。用 token 精确匹配避免误命中 END/说明文字。
+        outlist_idx = None
+        for i, l in enumerate(lines):
+            s = l.strip()
+            if s.startswith('"') or s.upper().startswith("END"):
+                continue
+            toks = s.split()
+            if toks and toks[0] == "OutList":
+                outlist_idx = i
+                break
+        if outlist_idx is None:
+            return  # 该模块没有 OutList 段，跳过
+
+        # 找该段的 END（第一个以 END 开头的行，在 outlist_idx 之后）
+        end_idx = None
+        for i in range(outlist_idx + 1, len(lines)):
+            if lines[i].strip().upper().startswith("END"):
+                end_idx = i
+                break
+        if end_idx is None:
+            end_idx = len(lines)
+
+        # 现有通道名集合（该段内已引用的）
+        existing = set()
+        for i in range(outlist_idx + 1, end_idx):
+            s = lines[i].strip()
+            if s.startswith('"'):
+                nm = s.split('"')
+                if len(nm) >= 2:
+                    existing.add(nm[1].strip())
+
+        # 待插入的新通道
+        to_add = [c for c in channels if c not in existing]
+        if not to_add:
+            return
+        insert_lines = [f'"{c}"    {c}' for c in to_add]
+        lines = lines[:end_idx] + insert_lines + lines[end_idx:]
+
+        out = "\n".join(lines).encode("ascii", errors="replace")
+        out = out.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        with open(module_path, "wb") as f:
+            f.write(out)
+
     def _add_outlist(self) -> None:
-        """在所有风机 .fst 文件末尾无条件追加 OutList 通道列表。"""
+        """把测量通道注入各风机的**模块** OutList（ElastoDyn/ServoDyn/InflowWind）。
+
+        这样 .outb 才会包含**执行结果**：实测机舱偏航(YawPzn)、变桨(BldPitch1)、
+        转速、功率、转矩、叶根载荷、风速。之前把通道写在 .fst 顶层会被忽略，
+        导致 CSV 缺少测量 yaw/pitch。
+        """
         if self._fstf_file is None or self._farm_base is None:
             return
         fstf = FASTInputFile(self._fstf_file)
@@ -425,32 +577,25 @@ class FastFarmInterface(SimulatorInterface):
             wt_path = os.path.join(self._farm_base, wt_ref)
             if not os.path.exists(wt_path):
                 continue
-            with open(wt_path, "rb") as f:
-                raw = f.read()
-            text = raw.decode("ascii", errors="replace")
-            lines = text.rstrip().split("\n")
-
-            # 移除旧 END of input file（避免重复）
-            lines = [l for l in lines if not l.strip().upper().startswith("END")]
-
-            # 检查是否已有我们的通道
-            has_our_channels = any(
-                line.strip().startswith('"GenPwr"')
-                for line in lines
-            )
-            if has_our_channels:
-                continue
-
-            # 在末尾追加 OutList 通道（不重复 OUTPUT 头部参数）
-            for ch in DEFAULT_OUTLIST_CHANNELS:
-                lines.append(f'"{ch}"    {ch}')
-            lines.append("")
-            lines.append("END of input file")
-
-            out = "\n".join(lines).encode("ascii", errors="replace")
-            out = out.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
-            with open(wt_path, "wb") as f:
-                f.write(out)
+            wt = FASTInputFile(wt_path)
+            # ElastoDyn
+            ed_rel = wt["EDFile"].replace('"', "")
+            self._inject_outlist_channels(
+                os.path.join(self._farm_base, ed_rel), self._ED_OUTS)
+            # ServoDyn
+            try:
+                srv_rel = wt["ServoFile"].replace('"', "")
+                self._inject_outlist_channels(
+                    os.path.join(self._farm_base, srv_rel), self._SRV_OUTS)
+            except Exception:
+                pass
+            # InflowWind（路径可能相对 FarmInputs）
+            try:
+                ifw_rel = wt["InflowFile"].replace('"', "")
+                ifw_path = os.path.join(self._farm_base, ifw_rel)
+                self._inject_outlist_channels(ifw_path, self._IFW_OUTS)
+            except Exception:
+                pass
 
     def _fix_inflow_setup(self) -> None:
         if self._farm_base is None:
@@ -459,7 +604,13 @@ class FastFarmInterface(SimulatorInterface):
         if not os.path.exists(ip):
             return
         wdir = self._current_wind.direction if self._current_wind else self.config.wind.direction
-        prop_dir = (wdir + 90) % 360
+
+        # 风场旋转法下 PropagationDir 必须恒为 0（风沿 +X）。
+        # layout_for_case() 已把风机列旋转 -offset 使入流沿 +X；
+        # 若同时设 PropagationDir=(wd+90) 会和布局旋转叠加，导致 Grid4D 在
+        # 错误坐标系中采样，运行中报 "Outside the grid bounds".
+        # wd=0 时 (270+90)%360=0 偶然正确，故头对风不报错，偏差工况则崩溃。
+        prop_dir = 0.0
         inflow = FASTInputFile(ip)
         inflow["PropagationDir"] = prop_dir
         inflow.write(ip)
@@ -477,6 +628,16 @@ class FastFarmInterface(SimulatorInterface):
         speed = self._current_wind.speed if self._current_wind else self.config.wind.speed
         write_inflow_info(ip, float(speed))
 
+    def _is_mod_ambwind3(self) -> bool:
+        """读取 .fstf 判断是否 Mod_AmbWind=3。"""
+        try:
+            if self._fstf_file and os.path.exists(self._fstf_file):
+                f = FASTInputFile(self._fstf_file)
+                return int(f["Mod_AmbWind"]) == 3
+        except Exception:
+            pass
+        return False
+
     def _write_wind_config(self, wind: WindConfig) -> None:
         if self._farm_base is None:
             return
@@ -488,7 +649,8 @@ class FastFarmInterface(SimulatorInterface):
         inflow["HWindSpeed"] = wind.speed
         inflow["RefHt"] = wind.reference_height
         inflow["PLExp"] = wind.shear_exponent
-        prop_dir = (wind.direction + 90) % 360
+        # 风场旋转法：PropagationDir 恒为 0，风向已由 layout_for_case 几何旋转体现。
+        prop_dir = 0.0
         inflow["PropagationDir"] = prop_dir
 
         if wind.wind_type == WindType.TURBSIM_BTS and wind.wind_file:
@@ -531,7 +693,11 @@ class FastFarmInterface(SimulatorInterface):
                 continue
             ed = FASTInputFile(ed_path)
             if controls.yaw is not None and i < len(controls.yaw):
-                ed["NacYaw"] = float(controls.yaw[i])
+                # controls.yaw 是“相对来流的偏航失准角”(FLORIS 约定)；ED 的 NacYaw
+                # 是绝对机舱朝向。换算见 nacyaw_from_misalignment（与 PropagationDir 一致）。
+                wdir = (self._current_wind.direction
+                        if self._current_wind else self.config.wind.direction)
+                ed["NacYaw"] = nacyaw_from_misalignment(wdir, float(controls.yaw[i]))
             if controls.pitch is not None and i < len(controls.pitch):
                 pv = float(controls.pitch[i])
                 ed["BlPitch(1)"] = pv
@@ -587,6 +753,13 @@ class FastFarmInterface(SimulatorInterface):
                 wind_speed = np.abs(wind_x)
 
         yaw_deg = parsed.get("yaw")
+        # .outb 的 YawPzn 是绝对机舱朝向(度)；换算回相对来流失准角，与 FLORIS 口径一致。
+        # 风场旋转法下 PropagationDir=0，失准角 = 绝对 NacYaw（见 misalignment_from_nacyaw）。
+        if yaw_deg is not None:
+            _wdir = (self._current_wind.direction
+                     if self._current_wind else self.config.wind.direction)
+            _arr = np.asarray(yaw_deg, dtype=float)
+            yaw_deg = np.array([misalignment_from_nacyaw(_wdir, float(v)) for v in _arr.ravel()]).reshape(_arr.shape)
         pitch_deg = parsed.get("pitch")
         torque_nm = parsed.get("generator_torque")
         rotor_speed_rpm = parsed.get("rotor_speed")
@@ -950,18 +1123,30 @@ class ContinuousFastFarmInterface(FastFarmInterface):
 
         print(f"ContinuousFastFarmInterface ready: {self.n_turbines} turbines")
 
-    def _fix_initial_yaw(self) -> None:
-        """根据入流风向设置各风机 ED 文件的初始 NacYaw，
-        避免 t=0 时 WakeDynamics 检测到 90° 偏航误差而中止。"""
+    def set_fixed_yaw(self, yaw_misalign_deg) -> None:
+        """设置各风机的**固定偏航失准角**（相对来流，度）并锁定偏航自由度。
+
+        为什么用"锁定 DOF + 固定 NacYaw"而不是 DLL 偏航速率控制：
+        --------------------------------------------------------------------
+        本研究是**静态 LUT**对比——每台风机保持一个恒定偏航失准角，与 FLORIS
+        稳态偏航语义完全一致（FLORIS 偏航也是固定失准角、无动态）。
+
+        原模板 ServoDyn 的 YCMode=0（无偏航控制），DLL 写的偏航速率指令
+        avrSWap(48) 被 ServoDyn **完全忽略** —— 这正是"yaw 结果和 baseline 一样"
+        的根因。这里直接把每台风机 NacYaw 设为目标失准角并**锁定偏航 DOF
+        （YawDOF=False）**，机舱在整个仿真精确保持该角度、零整定、与 FLORIS 一致。
+        """
         if self._fstf_file is None or self._farm_base is None:
             return
         wdir = self._current_wind.direction if self._current_wind else self.config.wind.direction
-        # OpenFAST 坐标: 0°=东(+X), 90°=北(+Y)
-        initial_yaw = (270 - wdir) % 360
+
+        arr = np.atleast_1d(np.asarray(yaw_misalign_deg, dtype=float))
+        if arr.size == 1:
+            arr = np.full(self.n_turbines, float(arr[0]))
 
         fstf = FASTInputFile(self._fstf_file)
         wt_refs = [row[3].replace('"', "") for row in fstf["WindTurbines"]]
-        for wt_ref in wt_refs:
+        for i, wt_ref in enumerate(wt_refs):
             wt_path = os.path.join(self._farm_base, wt_ref)
             if not os.path.exists(wt_path):
                 continue
@@ -970,22 +1155,25 @@ class ContinuousFastFarmInterface(FastFarmInterface):
             ed_path = os.path.join(self._farm_base, ed_rel)
             if not os.path.exists(ed_path):
                 continue
-            ed = FASTInputFile(ed_path)
-            ed["NacYaw"] = initial_yaw
-            ed.write(ed_path)
-            # 修复换行符
-            with open(ed_path, "rb") as f:
-                raw = f.read()
-            raw = raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
-            with open(ed_path, "wb") as f:
-                f.write(raw)
+            mis = float(arr[i]) if i < arr.size else 0.0
+            nacyaw_abs = nacyaw_from_misalignment(wdir, mis)  # 绝对机舱朝向 ∈(-180,180]
+            # 用**原文本替换**改写 NacYaw / YawDOF，避免 FASTInputFile.write() 丢掉
+            # 之前注入 ED OutList 的测量通道（YawPzn/BldPitch1 等）。
+            _set_fast_scalar(ed_path, "NacYaw", f"{nacyaw_abs:.4f}")
+            _set_fast_scalar(ed_path, "YawDOF", "False")
+        self._fixed_yaw_applied = arr.copy()
+
+    def _fix_initial_yaw(self) -> None:
+        """兼容旧接口：默认所有风机偏航对准来流（失准角 0）、锁定偏航 DOF。
+        真正的 per-turbine 偏航由 set_fixed_yaw() 在 start() 前设置。"""
+        self.set_fixed_yaw(0.0)
 
     def _write_initial_controls(self) -> None:
         """在 FAST.Farm 启动前写入初始 controls.txt（5-mode protocol）。
         初始用 mode=0 零偏航增量，让 ROSCO 自行对风。"""
         if self._controls_file is None:
             return
-        lines = ["step=0"]
+        lines = ["step=-1"]
         for t in range(self.n_turbines):
             lines.append(f"T{t+1} mode=0 yaw=0.000 pitch=0.000 power=0.000 minpitch=0.000")
         lines.append("END")
@@ -1035,23 +1223,50 @@ class ContinuousFastFarmInterface(FastFarmInterface):
         self._cumulative_time += self.config.dt
         return output
 
-    def stop(self) -> SimulationOutput:
-        """发停止信号，等进程结束，解析 .outb 获取完整输出。"""
-        if self._process is None:
-            raise RuntimeError("No running process")
+    def stop(self, *, allow_partial: bool = True) -> SimulationOutput:
+        """发停止信号，等进程结束，解析 .outb 获取完整输出。
 
-        # 写 END 标记
-        if self._controls_file:
-            with open(self._controls_file, 'w') as f:
-                f.write('step=-1\nEND\n')
+        allow_partial=True 时，即使进程已 abort/退出，也尽量解析已写出的 .outb
+        （部分时序），使上层仍能保存部分结果 CSV，而不是整个工况丢失。
+        """
+        if self._process is not None:
+            # 写 END 标记（若进程还活着，让它优雅收尾）
+            if self._controls_file and self._process.poll() is None:
+                try:
+                    with open(self._controls_file, 'w') as f:
+                        f.write('step=-1\nEND\n')
+                except OSError:
+                    pass
+            # 等进程结束；已 abort 的会立即返回。设超时避免永久阻塞。
+            try:
+                self._process.wait(timeout=60)
+            except Exception:
+                try:
+                    self._process.terminate()
+                    self._process.wait(timeout=10)
+                except Exception:
+                    pass
+            self._process = None
 
-        self._process.wait()
-        self._process = None
         if hasattr(self, '_proc_log') and self._proc_log is not None:
-            self._proc_log.close()
+            try:
+                self._proc_log.close()
+            except Exception:
+                pass
             self._proc_log = None
 
-        return self._parse_step_output()
+        # 解析 .outb（可能是完整或部分）。解析失败时按需返回空输出而非抛出。
+        try:
+            return self._parse_step_output()
+        except Exception as e:  # noqa
+            if allow_partial:
+                warnings.warn(f"stop(): 解析 .outb 失败，返回空输出：{e}")
+                return SimulationOutput(
+                    time=np.array([self._cumulative_time]),
+                    power_mw=np.zeros((1, self.n_turbines)),
+                    metadata={"warning": f"outb parse failed: {e}"},
+                )
+            raise
 
     def close(self) -> None:
         if self._process is not None:
@@ -1076,9 +1291,14 @@ class ContinuousFastFarmInterface(FastFarmInterface):
             return
 
         lines = [f"step={self._step_idx}"]
+        # controls.yaw 是“相对来流的偏航失准角”(FLORIS 约定)；DISCON_bridge.f90
+        # 的 cmd_yaw 被当作**绝对**机舱朝向目标，故换算与 ED 一致（与 PropagationDir 一致）。
+        wdir = (self._current_wind.direction
+                if self._current_wind else self.config.wind.direction)
         for t in range(self.n_turbines):
             m = int(controls.mode[t]) if t < len(controls.mode) else 0
-            y = controls.yaw[t] if t < len(controls.yaw) else 0.0
+            y_misalign = controls.yaw[t] if t < len(controls.yaw) else 0.0
+            y = nacyaw_from_misalignment(wdir, float(y_misalign))   # 绝对 NacYaw 目标 ∈(-180,180]
             p = controls.pitch[t] if t < len(controls.pitch) else 0.0
             pw = controls.power[t] if controls.power is not None and t < len(controls.power) else 0.0
             mp = controls.min_pitch[t] if controls.min_pitch is not None and t < len(controls.min_pitch) else 0.0
@@ -1088,7 +1308,7 @@ class ContinuousFastFarmInterface(FastFarmInterface):
         with open(self._controls_file, 'w') as f:
             f.write('\n'.join(lines) + '\n')
 
-    def _read_measurements_with_poll(self, timeout: float = 120.0) -> SimulationOutput:
+    def _read_measurements_with_poll(self, timeout: float = 45.0) -> SimulationOutput:
         """
         轮询读取 DISCON 输出的测量文件。
 
@@ -1160,13 +1380,23 @@ class ContinuousFastFarmInterface(FastFarmInterface):
             data = _read_all()
             if data is not None:
                 break
+            # 关键（快速失败）：检查 FAST.Farm 进程是否已退出/崩溃。
+            # 否则一旦 FAST.Farm abort，本步会空等满 timeout，后续每一步都再等一次
+            # → 整个工况卡死很久。检测到进程退出立即抛异常，让上层保存已有结果并跳到下一工况。
+            if self._process is not None and self._process.poll() is not None:
+                rc = self._process.returncode
+                raise FastFarmAborted(
+                    f"FAST.Farm process exited (returncode={rc}) at step={self._step_idx} "
+                    f"while waiting for measurements (likely internal abort; see "
+                    f"fastfarm_continuous.log)."
+                )
             time.sleep(0.1)
 
         if data is None:
-            return SimulationOutput(
-                time=np.array([self._cumulative_time]),
-                power_mw=np.zeros((1, n)),
-                metadata={"step": self._step_idx, "warning": "timeout waiting for DISCON"},
+            # 超时但进程仍在：也当作失败快速抛出，避免逐步累积等待。
+            raise FastFarmAborted(
+                f"Timed out ({timeout:.0f}s) waiting for DISCON measurements at "
+                f"step={self._step_idx} (process may be hung or aborting)."
             )
 
         # 初始化数组（缺失的风机保持 0）
@@ -1178,12 +1408,20 @@ class ContinuousFastFarmInterface(FastFarmInterface):
         rotor_speed = np.zeros(n)
         blade_loads = np.zeros((n, 3))
 
+        # 报告的 nacyaw 是 OpenFAST 绝对机舱朝向(度)；换算回相对来流失准角，
+        # 与 FLORIS 口径一致。换算与下发对称（与 PropagationDir 一致）。
+        _wdir = (self._current_wind.direction
+                 if self._current_wind else self.config.wind.direction)
+
+        def _to_misalign(nac_abs_deg: float) -> float:
+            return misalignment_from_nacyaw(_wdir, nac_abs_deg)
+
         # 填充所有风机数据：已有的用各自测量值，缺失的保持 0
         for t_id, vals in data.items():
             i = t_id - 1
             power_mw[i] = vals.get('genpwr', 0.0) / 1000.0       # Fortran writes kW → MW
             wind_speed[i] = vals.get('wind_x', 0.0)
-            yaw_deg[i] = vals.get('nacyaw', 0.0)                # Fortran writes rad*57.3 = degrees
+            yaw_deg[i] = _to_misalign(vals.get('nacyaw', 0.0))   # 绝对→相对来流失准角
             pitch_deg[i] = vals.get('blpitch', 0.0)              # Fortran writes rad*57.3 = degrees
             torque_nm[i] = vals.get('gentq', 0.0)                # avrSWap(23) = GenTqMeas (Nm)
             rotor_speed[i] = vals.get('rotspd', 0.0)

@@ -435,6 +435,13 @@ class SimulationOutput:
     thrust_n: Optional[np.ndarray] = None
     blade_loads: Optional[np.ndarray] = None
     farm_power_mw: Optional[np.ndarray] = None
+    # ---- 控制输入（下发给仿真器的指令，便于在 timeseries 中核对）----
+    # yaw_cmd_deg     : 偏航控制指令（相对来流的失准角，deg）
+    # ratio           : 限电比例 = 目标功率 / 贪婪功率（1.0 = 不限电）
+    # power_target_mw : 目标功率（MW），降额控制时有意义
+    yaw_cmd_deg: Optional[np.ndarray] = None
+    ratio: Optional[np.ndarray] = None
+    power_target_mw: Optional[np.ndarray] = None
     metadata: dict = field(default_factory=dict)
 
     def __post_init__(self):
@@ -451,7 +458,8 @@ class SimulationOutput:
         # 确保 2d
         for attr in ("power_mw", "wind_speed", "wind_direction", "yaw_deg",
                       "pitch_deg", "torque_nm", "rotor_speed_rpm",
-                      "generator_torque_nm", "thrust_n"):
+                      "generator_torque_nm", "thrust_n",
+                      "yaw_cmd_deg", "ratio", "power_target_mw"):
             val = getattr(self, attr)
             if val is not None and val.ndim == 1:
                 setattr(self, attr, val.reshape(1, -1))
@@ -484,6 +492,10 @@ class SimulationOutput:
             ("torque_nm", self.torque_nm),
             ("rotor_speed_rpm", self.rotor_speed_rpm),
             ("thrust_n", self.thrust_n),
+            # ---- 控制输入列 ----
+            ("yaw_cmd_deg", self.yaw_cmd_deg),
+            ("ratio", self.ratio),
+            ("power_target_mw", self.power_target_mw),
         ]:
             if arr is not None:
                 for t in range(arr.shape[-1]):

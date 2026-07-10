@@ -1,0 +1,52 @@
+# 工况网格定义 (Stage 2) — induction_vs_yaw_study
+# ================================================
+# 与用户最终验证目标对齐：不同风速 × 不同对风偏差 × 不同湍流度 × 不同间距。
+# 笛卡尔积 = 3 × 5 × 3 × 4 = 180 工况。FLORIS 与 FAST.Farm 用同一套工况。
+#
+# 风向 wind_direction_offsets_deg 的语义：相对来流轴向(沿 +X 列轴)的对风偏差(deg)。
+#   实际下发给仿真器的气象风向 = 270 + offset（见 cases.py）。
+#   0° 表示来流完全沿列轴（最大尾流耦合），±值表示对风偏差。
+#
+# 入流 .bts：用户已生成 风速{6,8,10} × TI{0.05,0.10,0.15} 共 9 个，命名
+#   inflow_{速度:02d}ms_TI{TI*100:02d}.bts（如 inflow_06ms_TI05.bts），
+#   放在 wfcrl/simulators/fastfarm/inputs/template/FarmInputs/。
+#   TI 是 FAST.Farm 的真实入流维度。对风偏差与间距不需要额外 .bts
+#   （由 InflowWind PropagationDir 与高分辨率盒裁剪处理）。
+
+# ---- 主扫描维度 ----
+wind_speeds_ms: [6.0, 8.0, 10.0]
+wind_direction_offsets_deg: [0.0] #[-20.0, -10.0, 0.0, 10.0, 20.0]
+turbulence_intensities: [0.05, 0.10, 0.15]
+spacings_D: [2.0, 4.0, 6.0, 8.0]
+
+# ---- 仿真时长/步长 ----
+floris:
+  dt: 60.0          # FLORIS 稳态步长 (s)
+  max_iter: 3       # 稳态：少数步即可（每步相同设定）
+
+fastfarm:
+  dt: 3.0           # 控制步长 (s)
+  # 总仿真时长 = t_settle + n_control_steps * dt
+  # 注意：间距增大到 8D 时尾流传播更久，t_settle 需相应增大。
+  # 经验下限 ~ 最大间距跨度 / 风速 = (2*8*126) / 6 ~ 336 s（最慢工况）。
+  # 这里给 360 s 以覆盖最不利组合（最大间距 + 最低风速）。
+  t_settle_s: 360.0 #360.0  # 稳态窗口前的过渡时间 (s)
+  n_control_steps: 50   # 稳态窗口控制步数（取后 50% 求均值）
+
+# ---- 冒烟子集：先跑通再扩展 ----
+smoke_subset:
+  wind_speeds_ms: [8.0]
+  wind_direction_offsets_deg: [0.0]
+  turbulence_intensities: [0.10]
+  spacings_D: [2.0]
+
+# ---- 降额优化搜索范围（每台机功率设定点，归一到额定/贪婪的比例）----
+derating_search:
+  ratio_min: 0.4        # 最低降到贪婪的 40%
+  ratio_grid_step: 0.05 # 网格扫描步长（粗扫），细化用优化器
+
+# ---- 偏航优化搜索范围 ----
+yaw_search:
+  yaw_min_deg: -30.0
+  yaw_max_deg: 30.0
+  fix_last_turbine_zero: true   # 末机偏航无收益，固定 0 降维
