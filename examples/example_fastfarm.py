@@ -3,6 +3,11 @@ FAST.Farm 连续闭环控制示例 (5-Mode Farm Protocol)
 =================================================
 使用 ContinuousFastFarmInterface + ROSCO WFCRL Bridge 实现场控。
 
+基于新 WFCRL 架构 (v0.3+):
+- wfcrl.simulator 替代 wfcrl.interface
+- wfcrl.config.simulator 替代 wfcrl.simul_config
+- wfcrl.config.layout 替代 data_cases 硬编码布局
+
 控制模式 (--mode):
   0: 纯偏航增量控制 (yaw delta)
   1: 功率目标 + 最小变桨约束 (power + min pitch)
@@ -17,7 +22,7 @@ FAST.Farm 连续闭环控制示例 (5-Mode Farm Protocol)
     python examples/example_FASTFarm.py --mode 3 --pitch 10 --yaw_amp 20 --steps 20
     python examples/example_FASTFarm.py --mode 4 --power 3.0 --min_pitch 3.0 --yaw_amp 15 --steps 20
 """
-import argparse, os, sys, time
+import argparse, os, re, sys, time
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -27,9 +32,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from wfcrl.config import WindConfig, ControlInput
-from wfcrl.interface import ContinuousFastFarmInterface
-from wfcrl.environments.data_cases import named_cases_dictionary
-from wfcrl.simul_config import FastFarmConfig
+from wfcrl.config.layout import LayoutRegistry
+from wfcrl.config.simulator import FastFarmConfig
+from wfcrl.engine import ContinuousFastFarmInterface
 
 # --- CLI ---
 parser = argparse.ArgumentParser(
@@ -43,7 +48,8 @@ Mode details:
   3: pitch absolute + yaw delta
   4: power + min pitch + yaw delta
 """)
-parser.add_argument("--case", default="Turb3_Row1")
+parser.add_argument("--case", default="Turb3_Row1",
+                    help="Layout name (builtin name, or TurbN_Row1 for generic row)")
 parser.add_argument("--steps", type=int, default=20, help="Number of control steps")
 parser.add_argument("--wind_speed", type=float, default=10.0)
 parser.add_argument("--wind_direction", type=float, default=270.0)
@@ -61,26 +67,35 @@ parser.add_argument("--yaw_period", type=int, default=8,
                     help="Yaw delta period in steps")
 args = parser.parse_args()
 
-# --- Case setup ---
-key = args.case + "_"
-if key not in named_cases_dictionary:
-    avail = [k.rstrip("_") for k in named_cases_dictionary]
-    print(f"Unknown case. Available: {avail}"); sys.exit(1)
+# --- Layout resolution via LayoutRegistry ---
+registry = LayoutRegistry.from_builtin()
 
-base_case = named_cases_dictionary[key][0]
-n_turbs = base_case.num_turbines
+# 尝试直接匹配内置布局名
+if args.case in registry:
+    layout = registry.get(args.case)
+# 尝试通用行布局模式 TurbN_Row1
+elif (match := re.match(r"Turb(\d+)_Row1$", args.case)):
+    n_turbs = int(match.group(1))
+    layout = registry.get_row_layout(n_turbs)
+else:
+    avail = [*registry.list_names(), "TurbN_Row1"]
+    print(f"Unknown case '{args.case}'. Available: {avail}")
+    sys.exit(1)
+
+n_turbs = layout.num_turbines
+print(f"Layout: {layout.name} ({n_turbs} turbines)")
 
 wind = WindConfig(speed=args.wind_speed, direction=args.wind_direction)
 config = FastFarmConfig(
-    case_name=args.case, num_turbines=n_turbs,
-    xcoords=base_case.xcoords, ycoords=base_case.ycoords,
+    case_name=layout.name, num_turbines=n_turbs,
+    xcoords=layout.xcoords, ycoords=layout.ycoords,
     dt=3.0, max_iter=args.steps, wind=wind,
 )
 
 ts = time.time()
 out_dir = os.path.join(os.path.dirname(__file__), "..",
     "__simul__", "fastfarm", "continuous",
-    f"{args.case}_Mode{args.mode}_{ts:.0f}")
+    f"{layout.name}_Mode{args.mode}_{ts:.0f}")
 os.makedirs(out_dir, exist_ok=True)
 config.output_dir = out_dir
 
@@ -89,7 +104,7 @@ mode_names = ["Yaw Only", "Power+MinPitch", "Pitch Only",
 print("=" * 70)
 print(f"FAST.Farm 5-Mode Farm Control — Mode {args.mode}: {mode_names[args.mode]}")
 print("=" * 70)
-print(f"Case: {args.case} | Turbines: {n_turbs} | Steps: {args.steps}")
+print(f"Layout: {layout.name} | Turbines: {n_turbs} | Steps: {args.steps}")
 print(f"Wind: {args.wind_speed} m/s, {args.wind_direction} deg")
 print(f"Mode: {args.mode} ({mode_names[args.mode]})")
 print(f"Output: {out_dir}")
@@ -188,7 +203,7 @@ if final_output is not None and final_output.power_mw is not None and final_outp
     ax = axes[0]
     ax.plot(t_arr, ffp, "b-", lw=2, label="Farm Power")
     ax.set_ylabel("Farm Power (MW)", fontsize=13)
-    ax.set_title(f"{args.case} — Mode {args.mode}: {mode_names[args.mode]} "
+    ax.set_title(f"{layout.name} — Mode {args.mode}: {mode_names[args.mode]} "
                  f"(Wind: {wind.speed} m/s, {wind.direction}°)",
                  fontsize=14, fontweight="bold")
     ax.grid(True, alpha=0.3)

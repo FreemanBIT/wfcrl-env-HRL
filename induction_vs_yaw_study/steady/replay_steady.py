@@ -20,7 +20,7 @@ from induction_vs_yaw_study.replay.schedule import (
     build_control_input, control_inputs_for_recording,
 )
 
-from wfcrl.interface import ContinuousFastFarmInterface, FastFarmAborted
+from wfcrl.engine import ContinuousFastFarmInterface, FastFarmAborted
 from wfcrl.config import SimulationOutput
 
 
@@ -142,7 +142,7 @@ def replay_floris_steady(
     FLORIS 稳态回放：跑少数稳态步、下发同源控制，合并输出。
     与主工程 replay_floris 完全一致的步进/合并约定，只是换用稳态配置。
     """
-    from wfcrl.interface import FlorisInterface, SimulatorInterface
+    from wfcrl.engine import FlorisInterface, SimulatorInterface
 
     cfg = make_floris_config_steady(case, output_dir=output_dir)
     fl = FlorisInterface(cfg)

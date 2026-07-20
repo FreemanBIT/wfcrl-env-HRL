@@ -30,14 +30,15 @@ import yaml
 from induction_vs_yaw_study import constants as C
 
 from wfcrl.config import WindConfig, WindType
-from wfcrl.simul_config import FastFarmConfig, FlorisConfig
+from wfcrl.config import FastFarmConfig, FlorisConfig
 
 
 # 工程根目录（用于定位 .bts 模板）
 _WFCRL_ROOT = Path(__file__).resolve().parents[2]
-_FF_FARMINPUTS = (
-    _WFCRL_ROOT / "wfcrl" / "simulators" / "fastfarm" / "inputs" / "template" / "FarmInputs"
-)
+_FF_FARMINPUTS = Path(os.environ.get(
+    "WFCRL_FARMINPUTS_DIR",
+    str(_WFCRL_ROOT / "FarmInputs"),
+))
 
 # =========================================================================
 # 入流 .bts 命名与映射 —— (风速, 湍流度) 二维键

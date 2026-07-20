@@ -15,7 +15,7 @@
 
 # ---- 主扫描维度 ----
 wind_speeds_ms: [6.0, 8.0, 10.0]
-wind_direction_offsets_deg: [0.0] #[-20.0, -10.0, 0.0, 10.0, 20.0]
+wind_direction_offsets_deg: [-20.0, -10.0, 0.0, 10.0, 20.0]
 turbulence_intensities: [0.05, 0.10, 0.15]
 spacings_D: [2.0, 4.0, 6.0, 8.0]
 
@@ -35,10 +35,10 @@ fastfarm:
 
 # ---- 冒烟子集：先跑通再扩展 ----
 smoke_subset:
-  wind_speeds_ms: [8.0]
+  wind_speeds_ms: [10.0]
   wind_direction_offsets_deg: [0.0]
   turbulence_intensities: [0.10]
-  spacings_D: [2.0]
+  spacings_D: [4.0]
 
 # ---- 降额优化搜索范围（每台机功率设定点，归一到额定/贪婪的比例）----
 derating_search:

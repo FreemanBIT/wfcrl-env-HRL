@@ -3,6 +3,11 @@ FLORIS 在线控制示例 (3-Mode Farm Control)
 ==========================================
 使用 FlorisInterface 进行稳态风场在线控制。
 
+基于新 WFCRL 架构 (v0.3+):
+- wfcrl.simulator 替代 wfcrl.interface
+- wfcrl.config.simulator 替代 wfcrl.simul_config
+- wfcrl.config.layout 替代 data_cases 硬编码布局
+
 控制模式 (--mode):
   0: 偏航控制 (yaw)
   1: 诱导因子控制 (curtailment ratio)
@@ -13,7 +18,7 @@ FLORIS 在线控制示例 (3-Mode Farm Control)
     python examples/example_floris.py --mode 1 --ratio 0.7
     python examples/example_floris.py --mode 2 --ratio 0.5 --yaw_amp 25
 """
-import argparse, os, sys, time
+import argparse, os, re, sys, time
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -23,12 +28,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from wfcrl.config import WindConfig, ControlInput
-from wfcrl.interface import FlorisInterface, SimulatorInterface
-from wfcrl.environments.data_cases import named_cases_dictionary
-from wfcrl.simul_config import FlorisConfig
+from wfcrl.config.layout import LayoutRegistry
+from wfcrl.config.simulator import FlorisConfig
+from wfcrl.engine import FlorisInterface, SimulatorInterface
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--case", default="Turb3_Row1")
+parser.add_argument("--case", default="Turb3_Row1",
+                    help="Layout name (builtin name, or TurbN_Row1 for generic row)")
 parser.add_argument("--steps", type=int, default=100)
 parser.add_argument("--wind_speed", type=float, default=10.0)
 parser.add_argument("--wind_direction", type=float, default=270.0)
@@ -40,38 +46,45 @@ parser.add_argument("--yaw_amp", type=float, default=25.0,
                     help="Yaw amplitude in deg (modes 0,2)")
 args = parser.parse_args()
 
-key = args.case + "_"
-if key not in named_cases_dictionary:
-    avail = [k.rstrip("_") for k in named_cases_dictionary]
-    print(f"Unknown case. Available: {avail}"); sys.exit(1)
+# --- Layout resolution via LayoutRegistry ---
+registry = LayoutRegistry.from_builtin()
 
-# FLORIS 案例（data_cases 第二个元素）
-base_case = named_cases_dictionary[key][1]
-n_turbs = base_case.num_turbines
+if args.case in registry:
+    layout = registry.get(args.case)
+elif (match := re.match(r"Turb(\d+)_Row1$", args.case)):
+    n_turbs = int(match.group(1))
+    layout = registry.get_row_layout(n_turbs)
+else:
+    avail = [*registry.list_names(), "TurbN_Row1"]
+    print(f"Unknown case '{args.case}'. Available: {avail}")
+    sys.exit(1)
+
+n_turbs = layout.num_turbines
+print(f"Layout: {layout.name} ({n_turbs} turbines)")
 
 # FLORIS dt 通常 >= 60s，对齐 FAST.Farm 示例的总仿真时长
-FLORIS_DT = max(60.0, float(base_case.dt))
+FLORIS_DT = 60.0
 total_sim_time = args.steps * 3.0  # 对齐 FASTFarm 的 dt=3.0 × steps
 floris_steps = max(1, int(np.round(total_sim_time / FLORIS_DT)))
 
 wind = WindConfig(speed=args.wind_speed, direction=args.wind_direction)
 config = FlorisConfig(
-    case_name=args.case, num_turbines=n_turbs,
-    xcoords=base_case.xcoords, ycoords=base_case.ycoords,
+    case_name=layout.name, num_turbines=n_turbs,
+    xcoords=layout.xcoords, ycoords=layout.ycoords,
     dt=FLORIS_DT, max_iter=floris_steps, wind=wind,
 )
 
 ts = time.time()
 mode_names = ["Yaw Only", "Induction", "Induction+Yaw"]
 out_dir = os.path.join(os.path.dirname(__file__), "..",
-    "__simul__", "floris", f"{args.case}_Mode{args.mode}_{ts:.0f}")
+    "__simul__", "floris", f"{layout.name}_Mode{args.mode}_{ts:.0f}")
 os.makedirs(out_dir, exist_ok=True)
 config.output_dir = out_dir
 
 print("=" * 70)
 print(f"FLORIS 3-Mode Control — Mode {args.mode}: {mode_names[args.mode]}")
 print("=" * 70)
-print(f"Case: {args.case} | Turbines: {n_turbs}")
+print(f"Layout: {layout.name} | Turbines: {n_turbs}")
 print(f"Wind: {args.wind_speed} m/s, {args.wind_direction} deg")
 print(f"FLORIS DT: {FLORIS_DT}s | Steps: {floris_steps}")
 print(f"Total simulated time: {total_sim_time:.0f}s")
@@ -138,7 +151,7 @@ if final_output is not None and final_output.power_mw is not None and final_outp
     ax = axes[0]
     ax.plot(t_arr, ffp, "r-o", lw=2, ms=5, label="Farm Power")
     ax.set_ylabel("Farm Power (MW)", fontsize=13)
-    ax.set_title(f"{args.case} — FLORIS Control (Wind: {wind.speed} m/s, {wind.direction}°)",
+    ax.set_title(f"{layout.name} — FLORIS Control (Wind: {wind.speed} m/s, {wind.direction}°)",
                  fontsize=14, fontweight="bold")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=11)

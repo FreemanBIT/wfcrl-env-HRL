@@ -13,3 +13,4 @@ results/*
 FarmInputs/*
 *.bts
 *.exe
+.hermes/*

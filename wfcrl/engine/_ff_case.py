@@ -18,11 +18,12 @@ from openfast_toolbox.fastfarm import (
 )
 from openfast_toolbox.io.fast_input_file import FASTInputFile
 
-LOCAL_DIR = Path(__file__).resolve().parent
+LOCAL_DIR = Path(__file__).resolve().parent.parent  # wfcrl/simulator/ → wfcrl/
 
 TEMPLATE_DIR = str(LOCAL_DIR / "simulators/{}/inputs/template/") + "/"
 CASE_DIR = str(LOCAL_DIR / "simulators/{}/inputs/") + "/"
 SERVO_DIR = str(LOCAL_DIR / "simulators/{}/servo_dll/") + "/"
+FARMINPUTS_DIR = os.environ.get("WFCRL_FARMINPUTS_DIR", r"D:\HR_Project\wfcrl-env-HRL\FarmInputs")
 
 
 def clean_folder(path):
@@ -291,10 +292,10 @@ def create_ff_case(case: Dict, output_dir=None):
             inflow["FileName_BTS"] = '"./"'
             inflow["PropagationDir"] = 0.0
         else:
-            inflow["FileName_BTS"] = f'"{case["wind_time_series"]}"'
+            inflow["FileName_BTS"] = f'"{os.path.join(FARMINPUTS_DIR, case["wind_time_series"])}"'
         # TurbSim .bts file to be used in FAST.Farm simulation, needs to exist.
         BTS_filename = os.path.join(
-            f"{template_dir}FarmInputs/", case["wind_time_series"]
+            FARMINPUTS_DIR, case["wind_time_series"]
         )
         # --- Get box extents
         FFTS = fastFarmTurbSimExtent(
@@ -318,7 +319,7 @@ def create_ff_case(case: Dict, output_dir=None):
         # 背景：原写法用模板 fstf['dY_Low']（≈10 m）作为横向间距，导致
         #   dY_box = dY_Low*ny/(ny-1) ≈ 10.13 > dY_Low_desired（U=6 时 ~9.58），
         # openfast_toolbox.fastFarmBoxExtent 内部 floor(desired/dY_box)=0 → 抛
-        #   "The Y-resolution of the box is too large ... Reduce the DY of the box"。
+        #   "The Y-resolution of the box (dY_Box) is too large ... Reduce the DY of the box"。
         # 修复：用一个**显式**的、足够小的横向/垂向间距（<=9.0 m，对 6/8/10 m/s
         # 的 desired 均满足）来铺 y/z 网格，并保证横向范围覆盖（旋转后的）风机
         # 列展宽 + 尾流蜿蜒余量。
@@ -368,7 +369,7 @@ def create_ff_case(case: Dict, output_dir=None):
     # --- Write Fast Farm file with layout and Low and High res extent
     # Write directly from template to preserve v5.0.0 file format
 
-    # ===== 关键修复：在 TurbSim 盒子内部“干净重建”低分辨率 Y 网格 =====
+    # ===== 关键修复：在 TurbSim 盒子内部"干净重建"低分辨率 Y 网格 =====
     #
     # 两类报错都源自低分辨率域横向与 .bts 盒子边界的关系：
     #   (1) openfast_toolbox 内部:
@@ -380,13 +381,13 @@ def create_ff_case(case: Dict, output_dir=None):
     #       "GF wind array boundaries violated: Grid too small in Y direction.
     #        Y=-370.8; Y boundaries = [-370, 370]"
     #       —— toolbox 把低分辨率域一直铺到盒子边缘,Y0_Low 取整后最外侧节点
-    #          落到边界外 0.x m。仅靠“微调 Y0_Low”很脆弱(取整/节点列差异会漏)。
+    #          落到边界外 0.x m。仅靠"微调 Y0_Low"很脆弱(取整/节点列差异会漏)。
     #
     # 这里改为最稳健的做法:已知盒子真实半宽与 toolbox 选定的 dY_Low 后,
-    # 从零重建一个“居中、对称、严格落在盒子内部、并尽量占满盒子”的低分辨率
+    # 从零重建一个"居中、对称、严格落在盒子内部、并尽量占满盒子"的低分辨率
     # Y 网格,彻底摆脱 FFTS 原始 Y0_Low/NY_Low 的取整瑕疵。X/Z/高分辨率盒等
     # 其余量保持 toolbox 原值不动。
-    # Mod_AmbWind=3 下，Low.bts 就是按低分辨率网格生成的，不存在“外部盒子边界”
+    # Mod_AmbWind=3 下，Low.bts 就是按低分辨率网格生成的，不存在"外部盒子边界"
     # 约束，故无需对 Y 网格做收缩夹紧（夹紧仅对 Mod2 单盒情形有意义）。
     _skip_clamp_mod3 = bool(case.get("use_mod_ambwind3", False)) and (
         case["wind_time_series"] is not None
@@ -413,11 +414,11 @@ def create_ff_case(case: Dict, output_dir=None):
         D_loc = D
 
         # ---------------------------------------------------------------
-        # 关键认识（本轮修复）：本工程用“风场旋转法”处理非零风向 —— 风机列
+        # 关键认识（本轮修复）：本工程用"风场旋转法"处理非零风向 —— 风机列
         # 绕质心旋转 -offset，使入流沿 +X。于是**外侧风机的 Y 坐标不再是 0**，
         # 在 8D/20° 这类大间距大偏差工况可达 ±345 m（列展宽 5.47D）。
         #
-        # 旧夹紧代码基于“机位均在 Y=0”的错误假设，把高分辨率盒**整体平移**回
+        # 旧夹紧代码基于"机位均在 Y=0"的错误假设，把高分辨率盒**整体平移**回
         # 盒子内部。当风机本身已接近/超出盒子横向范围时，这一平移把盒子推离转
         # 子中心，导致叶片节点落到高分辨率盒之外：
         #   "Grid4DField_GetVel: Outside the grid bounds:(−9.87, 48.74, 62.51);
@@ -436,7 +437,7 @@ def create_ff_case(case: Dict, output_dir=None):
         yc_list = [float(v) for v in ycoords]  # 旋转后的风机 Y（含 ±345 等）
         need_high = max(abs(yc) + halfspan_high for yc in yc_list) if yc_list else halfspan_high
 
-        # (2) 低分辨率域所需范围：覆盖“风机列展宽 + 尾流走廊”，并给蜿蜒采样留 ~1D
+        # (2) 低分辨率域所需范围：覆盖"风机列展宽 + 尾流走廊"，并给蜿蜒采样留 ~1D
         turb_span_y = (max(yc_list) - min(yc_list)) if yc_list else 0.0
         need_low = turb_span_y / 2.0 + 2.0 * D_loc          # 走廊
         need_meander = 1.0 * D_loc                          # 蜿蜒采样余量
@@ -589,9 +590,7 @@ def create_ff_case(case: Dict, output_dir=None):
                 f"Mod_AmbWind=3 box generation failed: {_e}. "
                 f"源盒={BTS_filename}"
             )
-    else:
-        for file in glob.glob(f"{template_dir}FarmInputs/*.bts"):
-            shutil.copy2(file, f"{output_dir}FarmInputs/")
+    # .bts files are NOT copied — InflowWind.dat points directly to FARMINPUTS_DIR
     for file in glob.glob(f"{template_dir}FarmInputs/*.dat"):
         shutil.copy2(file, f"{output_dir}FarmInputs/")
     # Write InflowWind
@@ -624,7 +623,7 @@ def create_ff_case(case: Dict, output_dir=None):
     for i, file in enumerate(fst_files):
         # Raw copy: replace ServoFile name and write directly (preserves v5.0.0 params)
         fst_raw = template_fst_raw.replace(
-            servo_file_name.encode('ascii'), 
+            servo_file_name.encode('ascii'),
             servo_file_name.replace("1", str(i + 1)).encode('ascii')
         )
 

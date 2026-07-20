@@ -1,52 +1,15 @@
-"""
-WFCRL — Wind Farm Control Reinforcement Learning
+"""WFCRL — Wind Farm Control Reinforcement Learning.
 
-接口和配置：
-- config.py        : WindConfig, ControlInput, SimulationOutput, WindType
-- simul_config.py  : SimulationConfig, FastFarmConfig, FlorisConfig
-- interface.py     : FastFarmInterface, FlorisInterface, SimulatorInterface
+Unified interface for wind farm simulation (FAST.Farm / FLORIS) and
+RL environment creation (Gymnasium / PettingZoo).
 
-RL 环境（可选依赖：gymnasium, pettingzoo）：
-- environments/    : FarmCase, data_cases, registration
-- mdp.py           : WindFarmMDP
-- multiagent_env.py: MAWindFarmEnv
-- simple_env.py    : WindFarmEnv
+Re-exported via wfcrl.compat for backward compatibility.
+New code should import from subpackages directly:
 
-工具：
-- simul_utils.py   : FAST.Farm/FLORIS 输入文件生成
+    from wfcrl.config import WindConfig, ControlInput
+    from wfcrl.engine import ContinuousFastFarmInterface
+    from wfcrl.envs import WindFarmEnv
 """
 
-from wfcrl.config import (
-    ControlInput,
-    SimulationOutput,
-    WindConfig,
-    WindSegment,
-    WindType,
-)
-from wfcrl.simul_config import (
-    FastFarmConfig,
-    FlorisConfig,
-    SimulationConfig,
-)
-from wfcrl.interface import (
-    FastFarmInterface,
-    FlorisInterface,
-    SimulatorInterface,
-)
-
-__all__ = [
-    # Config
-    "WindType",
-    "WindConfig",
-    "WindSegment",
-    "ControlInput",
-    "SimulationOutput",
-    # Simulation config
-    "SimulationConfig",
-    "FastFarmConfig",
-    "FlorisConfig",
-    # Interface
-    "SimulatorInterface",
-    "FastFarmInterface",
-    "FlorisInterface",
-]
+from wfcrl.compat import *  # noqa: F401, F403
+from wfcrl.compat import __all__  # noqa: F401

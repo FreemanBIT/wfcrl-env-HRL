@@ -1,9 +1,19 @@
+"""
+Gymnasium / PettingZoo Wrapper
+===============================
+提供日志记录和仿真器随机化包装器。
+"""
+
 from gymnasium import Env, Wrapper
 from pettingzoo import AECEnv
 from pettingzoo.utils.wrappers import BaseWrapper
 
 
 class RandomSimulator(BaseWrapper):
+    """
+    PettingZoo AEC wrapper — 在 reset 时对仿真器参数进行随机化采样。
+    """
+
     def __init__(self, env: AECEnv):
         super().__init__(env)
 
@@ -25,6 +35,10 @@ class RandomSimulator(BaseWrapper):
 
 
 class AECLogWrapper(BaseWrapper):
+    """
+    PettingZoo AEC wrapper — 记录 observation / reward / load / power 历史。
+    """
+
     def __init__(self, env: AECEnv):
         super().__init__(env)
 
@@ -62,6 +76,10 @@ class AECLogWrapper(BaseWrapper):
 
 
 class LogWrapper(Wrapper):
+    """
+    Gymnasium wrapper — 记录 observation / reward / load / power 历史。
+    """
+
     def __init__(self, env: Env):
         super().__init__(env)
 

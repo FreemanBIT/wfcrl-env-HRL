@@ -19,9 +19,11 @@ from warnings import warn
 import numpy as np
 from gymnasium import spaces
 
-from wfcrl.config import ControlInput, SimulationOutput, WindConfig
-from wfcrl.environments import FarmCase
-from wfcrl.interface import SimulatorInterface
+from wfcrl.config.control import ControlInput
+from wfcrl.config.output import SimulationOutput
+from wfcrl.config.types import WindConfig
+from wfcrl.compat_data import FarmCase
+from wfcrl.engine.base import SimulatorInterface
 
 
 def clip_to_dict_space(element: dict, space: spaces.Dict) -> dict:

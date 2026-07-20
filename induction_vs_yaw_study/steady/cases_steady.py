@@ -34,7 +34,7 @@ from induction_vs_yaw_study import constants as C
 from induction_vs_yaw_study.cases.three_nrel5mw import layout_for_spacing, layout_for_case
 
 from wfcrl.config import WindConfig, WindType
-from wfcrl.simul_config import FastFarmConfig, FlorisConfig
+from wfcrl.config import FastFarmConfig, FlorisConfig
 
 
 # =========================================================================

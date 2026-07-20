@@ -16,7 +16,7 @@ from induction_vs_yaw_study.replay.schedule import (
     build_control_input, control_inputs_for_recording,
 )
 
-from wfcrl.interface import FlorisInterface, SimulatorInterface
+from wfcrl.engine import FlorisInterface, SimulatorInterface
 
 
 def replay_floris(

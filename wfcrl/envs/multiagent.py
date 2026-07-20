@@ -1,18 +1,59 @@
+"""
+MAWindFarmEnv — 多智能体风场控制 PettingZoo AEC 环境
+======================================================
+基于 PettingZoo AECEnv 的多智能体 RL 环境。
+
+职责
+----
+1.  每个风机作为一个独立智能体
+2.  合作式奖励（所有智能体共享全局奖励）
+3.  支持连续/离散动作空间
+4.  执行器约束：基于累计执行时间裁剪动作
+5.  遵循 PettingZoo AEC 协议
+"""
+
+from __future__ import annotations
+
 import functools
 from collections import OrderedDict
+from typing import Dict, Optional
 
 import numpy as np
 from gymnasium import spaces
 from pettingzoo import AECEnv
 from pettingzoo.utils import agent_selector
 
-from wfcrl.environments import FarmCase
-from wfcrl.interface import SimulatorInterface
-from wfcrl.mdp import WindFarmMDP
-from wfcrl.rewards import DoNothingReward, RewardShaper
+from wfcrl.envs.base import BaseWindFarmEnv
+from wfcrl.envs.rewards import DoNothingReward, RewardShaper
+from wfcrl.compat_data import FarmCase
+from wfcrl.engine.base import SimulatorInterface
+from wfcrl.mdp.mdp import WindFarmMDP
 
 
-class MAWindFarmEnv(AECEnv):
+class MAWindFarmEnv(BaseWindFarmEnv, AECEnv):
+    """
+    多智能体风场控制环境 (PettingZoo AEC API)。
+
+    Parameters
+    ----------
+    interface : SimulatorInterface
+        仿真器接口实例。
+    farm_case : FarmCase
+        风场用例描述（布局、时间步长等）。
+    controls : dict
+        控制配置字典。
+    continuous_control : bool
+        是否使用连续控制空间。默认 True。
+    reward_shaper : RewardShaper
+        奖励塑形函数。默认 DoNothingReward。
+    start_iter : int
+        初始预热步数。默认 0。
+    max_num_steps : int
+        每个 episode 的最大步数。默认 500。
+    load_coef : float
+        载荷惩罚系数。默认 0.1。
+    """
+
     metadata = {
         "name": "multiagent-windfarm",
         "is_parallelizable": True,
@@ -27,7 +68,7 @@ class MAWindFarmEnv(AECEnv):
         reward_shaper: RewardShaper = DoNothingReward(),
         start_iter: int = 0,
         max_num_steps: int = 500,
-        load_coef: float = 0.1
+        load_coef: float = 0.1,
     ):
         self.mdp = WindFarmMDP(
             interface=interface,
@@ -39,7 +80,7 @@ class MAWindFarmEnv(AECEnv):
         )
         self.continuous_control = continuous_control
         self.max_num_steps = max_num_steps
-        self._state = None
+        self._state: Optional[dict] = None
         self.num_turbines = self.mdp.num_turbines
         self.reward_shaper = reward_shaper
         self.controls = controls
@@ -56,6 +97,8 @@ class MAWindFarmEnv(AECEnv):
         )
         self._build_agent_spaces()
 
+    # ========== PettingZoo AEC API ==========
+
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent):
         return self._obs_spaces[agent]
@@ -68,7 +111,7 @@ class MAWindFarmEnv(AECEnv):
         return self._state
 
     def _build_agent_spaces(self):
-        # Retrieve observation and action spaces for all agents
+        """构建每个智能体的观察和动作空间。"""
         self._obs_spaces = {}
         self._action_spaces = {}
         for i, agent in enumerate(self.possible_agents):
@@ -87,33 +130,15 @@ class MAWindFarmEnv(AECEnv):
                     key: space[i] for key, space in self.mdp.action_space.items()
                 }
 
-    def _join_actions(self, agent_actions):
-        joint_action = {
-            control: np.zeros(self.num_turbines, dtype=np.float32)
-            for control in self.mdp.controls
-        }
-        for j, (agent, action) in enumerate(agent_actions.items()):
-            for control in action:
-                val = action[control]
-                # Handle both scalar values (e.g. np.float32) and 1-element arrays
-                if isinstance(val, np.ndarray):
-                    joint_action[control][j] = val.item() if val.ndim >= 1 else val
-                else:
-                    joint_action[control][j] = val
-        # TODO: add proper handling of logging
-        # (debug level) print(f"Created joint action {joint_action}")
-        return joint_action
-
     def observe(self, agent):
         """
-        Observe should return the observation of the specified agent. This function
-        should return a sane observation (though not necessarily the most up to date possible)
-        at any time after reset() is called.
+        返回指定智能体的局部观察。
+
+        局部观察 = 全局状态中移去 freewind_measurements 后，
+        每个数组取对应该智能体的元素。
         """
         global_state = self.state()
         agent_state = OrderedDict()
-        # no freewind in local states !
-        # agent_state["freewind_measurements"] = global_state["freewind_measurements"]
         for key, partial_state in global_state.items():
             if key != "freewind_measurements":
                 agent_state[key] = partial_state[self.agent_name_mapping[agent]]
@@ -121,17 +146,10 @@ class MAWindFarmEnv(AECEnv):
 
     def reset(self, seed=None, options=None):
         """
-        Reset initializes the following attributes
-        - agents
-        - rewards
-        - _cumulative_rewards
-        - dones
-        - infos
-        - agent_selection
-        And must set up the environment so that render(), step(), and observe()
-        can be called without issues.
-        """
+        重置环境。
 
+        设置 AEC 协议要求的 agents / rewards / dones / infos / agent_selection。
+        """
         self.mdp.reset(seed, options)
         self._state = self.mdp.start_state
         self.reward_shaper.reset()
@@ -155,24 +173,14 @@ class MAWindFarmEnv(AECEnv):
             for id_agent, agent in enumerate(self.agents)
         }
         self.num_moves = 0
-        """
-        Init agent selector
-        """
         self._agent_selector = agent_selector(self.agents)
         self.agent_selection = self._agent_selector.next()
 
     def step(self, action):
         """
-        step(action) takes in an action for the current agent (specified by
-        agent_selection) and needs to update
-        - rewards
-        - _cumulative_rewards (accumulating the rewards)
-        - dones
-        - infos
-        - agent_selection (to the next agent)
-        And any internal state used by observe() or render()
+        AEC step：当前智能体提交动作。
+        当所有智能体都提交后，执行一步仿真并分配奖励。
         """
-
         assert self._state is not None, "Call reset before `step`"
 
         agent = self.agent_selection
@@ -183,9 +191,7 @@ class MAWindFarmEnv(AECEnv):
 
         self._num_steps[agent] += 1
 
-        # TODO: allow for different control for each agent
-        # For now, every local action must send a command for ALL controls
-        # and agents with partial control have to send dummy actions
+        # 验证动作完整性
         for control in action:
             if control not in self.mdp.controls:
                 raise ValueError(
@@ -198,14 +204,13 @@ class MAWindFarmEnv(AECEnv):
                 f" List of needed controls: {self.mdp.controls.keys()}"
             )
 
-        # Check if current constraints allow action
-        # cannot be actuating more than 10% of the time
+        # 执行器约束检查（agent 级别）
         agent_accumulator = self.accumulated_actions[agent]
         for control in action:
-            if not (control in self.mdp.ACTUATORS_RATE):
+            if control not in WindFarmMDP.ACTUATORS_RATE:
                 continue
             actuating_time = (
-                agent_accumulator[control] / self.mdp.ACTUATORS_RATE[control]
+                agent_accumulator[control] / WindFarmMDP.ACTUATORS_RATE[control]
             )
             actuating_frac = actuating_time / self._num_steps[agent] / self.farm_case.dt
             if actuating_frac >= 0.1:
@@ -214,57 +219,64 @@ class MAWindFarmEnv(AECEnv):
                 else:
                     action[control] = np.float32(0.0)
 
-        # restart reward accumulation
+        # 重启奖励累积
         self._cumulative_rewards[agent] = 0
-        # stores action of current agent
         self.actions[self.agent_selection] = action
 
-        # collect reward when all agents have taken an action
+        # 所有智能体提交完毕时，执行一步仿真
         if self._agent_selector.is_last():
+            joint_action = self._join_actions(self.actions)
             next_state, powers, loads, truncated = self.mdp.take_action(
-                self._state, self._join_actions(self.actions)
+                self._state, joint_action
             )
-            # normalize by initial freestream wind
-            normalized_powers = (
-                powers * 1e3 / (self.state()["freewind_measurements"][0] ** 3)
-            )
-            load_penalty = 0
-            if loads is not None:
-                load_penalty = np.mean(np.abs(loads))
-            reward = normalized_powers.mean() - self.load_coef * load_penalty
-            reward = np.array([self.reward_shaper(reward)])
+
+            # 全局奖励计算
+            freewind_speed = self.state()["freewind_measurements"][0]
+            reward = self.compute_reward(powers, loads, freewind_speed)
+
             self._state = next_state
-            for agent in self.agents:
+            for ag in self.agents:
                 if loads is not None:
-                    self.infos[agent]["load"] = loads[self.agent_name_mapping[agent]]
-                # cooperative env: same reward for everybody
-                # might change later to account for specific fatigue
-                self.rewards[agent] = reward
-                self.observations[agent] = self.observe(agent)
-                self.truncations[agent] = truncated
-                self.terminations[agent] = False
-                self.infos[agent]["power"] = powers[self.agent_name_mapping[agent]]
+                    self.infos[ag]["load"] = loads[self.agent_name_mapping[ag]]
+                self.rewards[ag] = reward
+                self.observations[ag] = self.observe(ag)
+                self.truncations[ag] = truncated
+                self.terminations[ag] = False
+                self.infos[ag]["power"] = powers[self.agent_name_mapping[ag]]
 
             self.num_moves += 1
-            # Truncate all agents when max_num_steps is reached
             if self.num_moves >= self.max_num_steps:
                 for a in self.agents:
                     self.truncations[a] = True
         else:
-            # no reward allocated until all players take an action
             self._clear_rewards()
 
-        # accumulate action for constraint checking
+        # 更新动作累积
         accumulator = self.mdp.get_accumulated_actions()
         for control in action:
             acc = accumulator[control][self.agent_name_mapping[agent]]
             self.accumulated_actions[agent][control] = acc
 
-        # selects the next agent.
         self.agent_selection = self._agent_selector.next()
-        # Adds .rewards to ._cumulative_rewards
         self._accumulate_rewards()
 
+    # ========== 内部辅助 ==========
+
+    def _join_actions(self, agent_actions: dict) -> dict:
+        """将各智能体的动作合并为联合动作字典。"""
+        joint_action = {
+            control: np.zeros(self.num_turbines, dtype=np.float32)
+            for control in self.mdp.controls
+        }
+        for j, (ag, action) in enumerate(agent_actions.items()):
+            for control in action:
+                val = action[control]
+                if isinstance(val, np.ndarray):
+                    joint_action[control][j] = val.item() if val.ndim >= 1 else val
+                else:
+                    joint_action[control][j] = val
+        return joint_action
+
     def close(self):
-        if hasattr(self, '_mdp') and hasattr(self._mdp, 'interface') and hasattr(self._mdp.interface, '_finalize_mpi_comm'):
-            self._mdp.interface._finalize_mpi_comm()
+        """清理仿真器资源。"""
+        self.close_simulator()

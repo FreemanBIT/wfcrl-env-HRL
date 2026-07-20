@@ -56,7 +56,7 @@ def main():
     # ---- 2. 接口签名 ----
     log(_section("2. wfcrl.interface 接口"))
     try:
-        from wfcrl.interface import (
+        from wfcrl.engine import (
             FlorisInterface, FastFarmInterface, ContinuousFastFarmInterface,
         )
         for cls in (FlorisInterface, ContinuousFastFarmInterface):
@@ -70,7 +70,7 @@ def main():
     # ---- 3. simul_config ----
     log(_section("3. wfcrl.simul_config"))
     try:
-        from wfcrl.simul_config import FlorisConfig, FastFarmConfig
+        from wfcrl.config import FlorisConfig, FastFarmConfig
         log(f"FlorisConfig fields: {list(FlorisConfig.__dataclass_fields__.keys())}")
         log(f"FastFarmConfig fields: {list(FastFarmConfig.__dataclass_fields__.keys())}")
     except Exception as e:  # noqa

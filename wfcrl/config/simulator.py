@@ -16,13 +16,14 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from wfcrl.config import ControlInput, WindConfig, WindType
+from wfcrl.config.control import ControlInput
+from wfcrl.config.types import WindConfig, WindType
 
 
 # FAST.Farm 可执行文件路径：优先使用环境变量
 def _get_fastfarm_exe() -> str:
     _DEFAULT = str(
-        Path(__file__).resolve().parent
+        Path(__file__).resolve().parent.parent
         / "simulators/fastfarm/bin/FAST.Farm_x64_OMP.exe"
     )
     return os.environ.get("FAST_FARM_EXE", _DEFAULT)
@@ -148,7 +149,7 @@ class SimulationConfig:
         return fl
 
     def _auto_output_dir(self, simulator: str) -> str:
-        base = Path(__file__).resolve().parent.parent
+        base = Path(__file__).resolve().parent.parent.parent
         name = f"{simulator}__{self.t_init + self.max_iter * self.dt:.0f}s"
         name += f"__{self.num_turbines}T_{time.time():.0f}"
         return str(base / "__simul__" / simulator / name)
@@ -274,6 +275,6 @@ class FlorisConfig(SimulationConfig):
         super().__post_init__()
         if self.turbine_library_path is None:
             self.turbine_library_path = str(
-                Path(__file__).resolve().parent
+                Path(__file__).resolve().parent.parent
                 / "simulators/floris/inputs/turbine_library/"
             )

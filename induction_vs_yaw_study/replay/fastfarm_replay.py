@@ -18,7 +18,7 @@ from induction_vs_yaw_study.replay.schedule import (
     build_control_input, control_inputs_for_recording,
 )
 
-from wfcrl.interface import ContinuousFastFarmInterface, FastFarmAborted
+from wfcrl.engine import ContinuousFastFarmInterface, FastFarmAborted
 from wfcrl.config import SimulationOutput
 
 
