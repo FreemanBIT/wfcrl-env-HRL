@@ -1,0 +1,15 @@
+# Core (required)
+numpy>=1.24
+scipy>=1.10
+
+# Surrogate wake model (recommended; the package falls back to a built-in
+# analytical Gaussian wake if FLORIS is not installed, so it runs without it)
+floris>=4.0
+
+# Optional — Scheme C Gaussian-process residual (GPResidual). Ridge-regression
+# residual is used if scikit-learn is absent.
+# scikit-learn>=1.3
+
+# Testing (use your environment's pytest; an offline shim is provided at
+# tests/_run_offline.py for environments without pytest)
+# pytest>=7.0

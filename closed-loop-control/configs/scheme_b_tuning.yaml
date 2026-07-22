@@ -1,0 +1,34 @@
+# Scheme B (FLORIDyn + EnKF + MPC) tuning parameters.
+# Maps to FLORIDynConfig / EnKFConfig / MPCConfig in code.
+
+floridyn:
+  dt: 2.0
+  max_delay_s: 240.0         # OP history length; must exceed the deepest tau
+  advection_factor: 1.0      # U_adv = factor * U_inf
+
+enkf:
+  n_ensemble: 40             # N_e (30-100 typical; larger = smoother, costlier)
+  estimate_params: true      # joint ambient + wake-parameter (ka,kb) estimation
+  q_U: 0.05                  # process-noise std per step (m/s)
+  q_phi: 0.2                 # (deg)
+  q_TI: 0.002
+  q_ka: 0.002
+  q_kb: 0.0002
+  r_power_frac: 0.03         # measurement-noise std as fraction of power
+  r_power_floor: 20.0        # (kW)
+  use_wind_meas: false       # also assimilate nacelle wind speed
+  inflation: 1.02            # covariance inflation
+
+mpc:
+  dt: 2.0
+  horizon_margin: 1.3        # Np*dt >= margin * tau_max  (delay coverage, eq 2.22)
+  min_horizon_steps: 8
+  max_horizon_steps: 60
+  lam_yaw: 0.002             # yaw-move penalty
+  lam_a: 0.5                 # induction-move penalty
+  n_passes: 2                # coordinate-refinement sweeps
+  yaw_refine_levels: 2
+
+control:
+  t_ctrl: 20.0               # MPC re-plan interval (s)
+  enable_enkf: true

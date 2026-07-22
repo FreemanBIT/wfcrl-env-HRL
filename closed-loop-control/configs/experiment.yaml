@@ -1,0 +1,48 @@
+# Example experiment configuration for the closed-loop control demos.
+#
+# Consumed conceptually by the demo runner (closedloop.demos.run_demo). The CLI
+# flags mirror these keys; this file documents a full experiment specification
+# and serves as a template for batch runs.
+
+experiment:
+  name: baseline_vs_schemes
+  seed: 0
+  dt: 2.0                    # control step (s); align with FAST.Farm DT
+  duration: 400.0            # episode length (s)
+  warmup_s: 60.0             # transient skipped before scoring
+
+farm:
+  case: farm_2x3_4D          # cases/farm_2x3_4D/
+  turbine: nrel_5MW
+  n_turbines: 6
+  spacing_D: 4.0
+
+wind:
+  # one of: steady_8ms | step | ramp | speed_ramp
+  schedule: steady_8ms
+  U_inf: 8.0
+  direction: 270.0
+  TI: 0.06
+
+# controllers to run and compare (greedy is always included as the baseline)
+controllers:
+  - name: greedy
+    mode: 1
+  - name: A
+    mode: 1                  # 1=YAW 2=TORQUE 3=PITCH 4=YAW_TORQUE 5=YAW_PITCH
+  - name: B
+    mode: 1
+  - name: C
+    mode: 1
+    route: greybox_mpc       # greybox_mpc | rl_safety
+
+# plant backend
+plant:
+  type: mock                 # mock | fastfarm
+  # for a live run set type: fastfarm and provide the run directory:
+  # fastfarm_dir: /path/to/fastfarm/run
+
+evaluation:
+  transient_s: 60.0
+  metrics: [gain_pct, cov, window_energy, load_proxy]
+  report: report.html
