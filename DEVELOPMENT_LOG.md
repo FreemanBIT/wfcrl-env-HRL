@@ -1,4 +1,4 @@
-﻿# 开发记录
+# 开发记录
 
 > 记录本分支相较于 [cibeah/WFCRL](https://github.com/cibeah/WFCRL) main 分支的全部变更。
 
@@ -76,3 +76,59 @@
 
 - 删除旧示例：example_fastfarm.py、example_hycon_farm_control.py、run_dafeng_baseline.py、example_online_control.py
 - MPI 依赖从必需降为可选（pip install -e ".[mpi]"）
+
+---
+
+## [v0.1.0] — 2026-07-23
+
+### 新增: WFCRL Dashboard — Web 可视化实验平台
+
+基于 Streamlit 构建的风电场控制实验管理界面 (`app/WFCRL_Dashboard.py`)。
+
+#### 风电场管理
+- 内置 11 个布局的可视化浏览（6T/3T/HornsRev/DafengH1...）
+- 自定义布局创建器（预设 + 坐标编辑器 + 实时散点图预览）
+
+#### 湍流风生成
+- Kaimal 谱湍流风生成器 (`app/wind_generator.py`)
+- 自动根据风场布局计算网格尺寸（避免 FAST.Farm 盒子太窄报错）
+- 调度风：多段风速/风向随时间线性变化，叠加湍流
+- 支持 .bts 文件浏览和验证
+
+#### 控制器管理
+- 自定义控制器插件系统 (`app/controller_loader.py`)
+- exec 沙箱加载，自动识别 WindFarmController 子类
+- 在线创建/编辑/上传/删除控制器
+- 一键 Mock 验证
+
+#### 内置 FastFarmYawController
+- `wfcrl/controllers/reference.py` 新增，专为 FAST.Farm 设计
+- 自动识别上游风机，施加固定偏航角
+- 注册为内置控制器 `fastfarm_yaw`
+
+#### 实验运行
+- 四步流程：选风场 → 选控制器 → 配风况 → 运行
+- 支持稳态/湍流/调度风三种风类型
+- Mock（秒级）/ FAST.Farm（分钟级）双后端
+
+#### 历史实验
+- 详情模式：功率/偏航/风速/转矩/转速 曲线 Tab
+- 对比模式：叠加曲线 + 增益计算 + 一键完整报告
+
+#### 尾流可视化
+- 简化高斯尾流模型 2D 热力图
+- 偏航尾流控制可视化（偏航箭头 + 尾流偏转）
+- 自适应网格降采样（支持 HornsRev1 80 台风机）
+
+#### Bug 修复
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| ASCII 编码崩溃 | `.decode('ascii')` + 中文路径 | 改为 `utf-8` |
+| .bts Grid 太窄 | 硬编码 680m，FAST.Farm 需 ≥756m | `calc_grid_from_layout()` 自动计算 |
+| .bts ID 不兼容 | 生成时 `ID=7`，FAST.Farm 需 `ID=8` | 生成时显式设为 8 |
+| FARMINPUTS_DIR 硬编码 | 指向旧项目路径 `D:\HR_Project\...` | 改为相对路径 + 环境变量覆盖 |
+| FAST.Farm 读不到 .bts | 中文路径 Fortran 不识别 | 自动复制到 ASCII 短路径 |
+
+#### 文档
+- `DASHBOARD_README.md` — 界面使用说明
+- `CURRENT_STATUS_AND_USAGE.md` — 更新至 v0.1.0 状态

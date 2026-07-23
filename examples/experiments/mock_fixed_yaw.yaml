@@ -1,0 +1,30 @@
+name: mock-fixed-yaw
+
+simulator:
+  backend: mock
+  dt: 2.0
+
+farm:
+  turbine_type: nrel_5MW
+  xcoords: [0.0, 630.0, 1260.0]
+  ycoords: [0.0, 0.0, 0.0]
+
+wind:
+  speed: 8.0
+  direction: 270.0
+  turbulence_intensity: 0.08
+
+controller:
+  type: fixed_yaw
+  yaw_misalignment_deg: [10.0, 0.0, 0.0]
+
+constraints:
+  yaw_bounds_deg: [-25.0, 25.0]
+  yaw_rate_deg_s: 0.3
+  yaw_deadband_deg: 0.5
+
+steps: 20
+
+output:
+  root: ../../__simul__/experiments
+  plot: true

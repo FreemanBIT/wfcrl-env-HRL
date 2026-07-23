@@ -23,7 +23,8 @@ LOCAL_DIR = Path(__file__).resolve().parent.parent  # wfcrl/simulator/ → wfcrl
 TEMPLATE_DIR = str(LOCAL_DIR / "simulators/{}/inputs/template/") + "/"
 CASE_DIR = str(LOCAL_DIR / "simulators/{}/inputs/") + "/"
 SERVO_DIR = str(LOCAL_DIR / "simulators/{}/servo_dll/") + "/"
-FARMINPUTS_DIR = os.environ.get("WFCRL_FARMINPUTS_DIR", r"D:\HR_Project\wfcrl-env-HRL\FarmInputs")
+FARMINPUTS_DIR = os.environ.get("WFCRL_FARMINPUTS_DIR",
+    str(LOCAL_DIR / "simulators/{}/inputs/template/FarmInputs").format("fastfarm"))
 
 
 def clean_folder(path):
@@ -551,10 +552,13 @@ def create_ff_case(case: Dict, output_dir=None):
     # Convert bare LF to CRLF (avoid double-converting existing CRLF)
     raw = raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
     # Read lines and fix line 2
-    lines = raw.decode('ascii').split('\r\n')
+    try:
+        lines = raw.decode('utf-8').split('\r\n')
+    except UnicodeDecodeError:
+        lines = raw.decode('gbk', errors='replace').split('\r\n')
     if len(lines) > 1:
         lines[1] = '! FAST.Farm input file'
-    raw = '\r\n'.join(lines).encode('ascii')
+    raw = '\r\n'.join(lines).encode('utf-8')
     with open(outputFSTF, 'wb') as f:
         f.write(raw)
     print("Created FAST.Farm input file:", outputFSTF)
@@ -569,7 +573,7 @@ def create_ff_case(case: Dict, output_dir=None):
     with open(servo_template_path, 'rb') as _sf:
         servo_template_raw = _sf.read()
     servo_template_raw = servo_template_raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
-    servo_dll_filename_encoded = servo_dll_filename.encode('ascii')
+    servo_dll_filename_encoded = servo_dll_filename.encode('utf-8')
 
     # FAST.Farm v5.0.0: SC_DLL (SuperController) no longer used
 
@@ -600,7 +604,10 @@ def create_ff_case(case: Dict, output_dir=None):
     with open(inflow_path, 'rb') as f:
         iw_raw = f.read()
     iw_raw = iw_raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
-    iw_text = iw_raw.decode('ascii')
+    try:
+        iw_text = iw_raw.decode('utf-8')
+    except UnicodeDecodeError:
+        iw_text = iw_raw.decode('gbk', errors='replace')
     # Restore RotorApexOffsetPos to 3 values if corrupted to single value
     import re as _re
     iw_text = _re.sub(
@@ -610,7 +617,7 @@ def create_ff_case(case: Dict, output_dir=None):
         flags=_re.MULTILINE
     )
     with open(inflow_path, 'wb') as f:
-        f.write(iw_text.encode('ascii'))
+        f.write(iw_text.encode('utf-8'))
     # Get needed .fst files — use raw copy + string replace to preserve v5.0.0 format
     out_fstf = FASTInputFile(outputFSTF)
     out_fstf.write(outputFSTF)
@@ -623,8 +630,8 @@ def create_ff_case(case: Dict, output_dir=None):
     for i, file in enumerate(fst_files):
         # Raw copy: replace ServoFile name and write directly (preserves v5.0.0 params)
         fst_raw = template_fst_raw.replace(
-            servo_file_name.encode('ascii'),
-            servo_file_name.replace("1", str(i + 1)).encode('ascii')
+            servo_file_name.encode('utf-8'),
+            servo_file_name.replace("1", str(i + 1)).encode('utf-8')
         )
 
         # ===== 关键修复：每台风机独立的 ElastoDyn 文件 =====
@@ -645,8 +652,8 @@ def create_ff_case(case: Dict, output_dir=None):
             _edw.write(_ed_raw)
         # 在 .fst 里把 EDFile 指向本机专属 ED 文件
         fst_raw = fst_raw.replace(
-            f'"{ed_template_name}"'.encode('ascii'),
-            f'"{ed_name_i}"'.encode('ascii'),
+            f'"{ed_template_name}"'.encode('utf-8'),
+            f'"{ed_name_i}"'.encode('utf-8'),
         )
         # =====================================================
 
@@ -657,10 +664,10 @@ def create_ff_case(case: Dict, output_dir=None):
         servo_i_name = servo_file_name.replace("1", str(i + 1)).replace('"', '')
         # Raw copy: replace DLL_FileName + DLL_InFile in servo file (preserves v5.0.0 format)
         dll_infile_old = b'"DISCON.IN"'
-        dll_infile_new = f'"DISCON_T{i+1}.IN"'.encode('ascii')
+        dll_infile_new = f'"DISCON_T{i+1}.IN"'.encode('utf-8')
         servo_raw = servo_template_raw.replace(
             servo_dll_filename_encoded,
-            servo_dll_filename_i.encode('ascii')
+            servo_dll_filename_i.encode('utf-8')
         )
         servo_raw = servo_raw.replace(dll_infile_old, dll_infile_new)
         with open(os.path.join(f"{output_dir}FarmInputs/", servo_i_name), 'wb') as _sw:

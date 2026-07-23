@@ -43,6 +43,13 @@ from wfcrl.engine.base import (
     SimulatorInterface,
     FastFarmAborted,
 )
+from wfcrl.engine.capabilities import (
+    FASTFARM_CONTROL_MODES,
+    FidelityLevel,
+    SimulatorCapabilities,
+    StepSynchronization,
+    TimeModel,
+)
 from wfcrl.engine.angle_utils import (
     wrap180,
     nacyaw_face_wind,
@@ -91,12 +98,30 @@ class FastFarmInterface(SimulatorInterface):
     output = ff.step(ControlInput.scalar(3, yaw_deg=10, pitch_deg=0))
     """
 
+    capabilities = SimulatorCapabilities(
+        simulator_id="fastfarm_segmented",
+        fidelity=FidelityLevel.MID_FIDELITY,
+        time_model=TimeModel.RESET_EACH_STEP,
+        synchronization=StepSynchronization.SUBPROCESS_BLOCKING,
+        control_modes=FASTFARM_CONTROL_MODES,
+        measurements=frozenset({
+            "time", "power_mw", "wind_speed", "wind_direction", "yaw_deg",
+            "pitch_deg", "torque_nm", "rotor_speed_rpm", "blade_loads",
+        }),
+        strict_step=False,
+        supports_flow_field=True,
+        notes=(
+            "The subprocess blocks, but every control step restarts the flow field.",
+            "Returned data can contain solver substeps rather than one controller sample.",
+        ),
+    )
+
     def __init__(self, config):
         self.config = config
         self.n_turbines = config.num_turbines
         self._fastfarm_exe = config.fastfarm_exe or os.environ.get(
             "FAST_FARM_EXE",
-            str(_FF_PROJECT_ROOT / "wfcrl/simulators/fastfarm/bin/FAST.Farm_x64_OMP.exe"),
+            str(_FF_PROJECT_ROOT / "wfcrl/simulators/fastfarm/bin/FAST.Farm_OpenMP.exe"),
         )
         self._template_config = config.to_legacy_dict()
         self._step_idx = 0
@@ -133,13 +158,14 @@ class FastFarmInterface(SimulatorInterface):
         self._current_wind = wind
         self._step_idx = 0
         self._cumulative_time = 0.0
+        self._reset_contract_state()
 
         if self._fstf_file is None:
             self.setup()
 
         self._write_wind_config(wind)
 
-    def step(self, controls: ControlInput) -> SimulationOutput:
+    def _step_impl(self, controls: ControlInput) -> SimulationOutput:
         """
         执行一步 FAST.Farm 仿真。
 
@@ -189,6 +215,7 @@ class FastFarmInterface(SimulatorInterface):
     def close(self) -> None:
         self._step_idx = 0
         self._cumulative_time = 0.0
+        self._reset_contract_state()
 
     # ========== 内部方法 ==========
 
@@ -247,7 +274,7 @@ class FastFarmInterface(SimulatorInterface):
         with open(ip, "rb") as f:
             raw = f.read()
         raw = raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
-        text = raw.decode("ascii")
+        text = raw.decode("utf-8", errors="replace")
         import re
         text = re.sub(
             r"^(\s*)[0-9.+-]+\s+RotorApexOffsetPos",
@@ -255,7 +282,7 @@ class FastFarmInterface(SimulatorInterface):
             text, flags=re.MULTILINE,
         )
         with open(ip, "wb") as f:
-            f.write(text.encode("ascii"))
+            f.write(text.encode("utf-8"))
         speed = self._current_wind.speed if self._current_wind else self.config.wind.speed
         write_inflow_info(ip, float(speed))
 
@@ -304,14 +331,14 @@ class FastFarmInterface(SimulatorInterface):
             raw = f.read()
         raw = raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
         import re
-        text = raw.decode("ascii")
+        text = raw.decode("utf-8", errors="replace")
         text = re.sub(
             r"^(\s*)[0-9.+-]+\s+RotorApexOffsetPos",
             r"\1 0.0, 0.0, 0.0   RotorApexOffsetPos",
             text, flags=re.MULTILINE,
         )
         with open(ip, "wb") as f:
-            f.write(text.encode("ascii"))
+            f.write(text.encode("utf-8"))
 
     def _set_controls_in_files(self, controls: ControlInput) -> None:
         if self._fstf_file is None or self._farm_base is None:
@@ -365,7 +392,13 @@ class FastFarmInterface(SimulatorInterface):
         prefix = os.path.splitext(os.path.basename(self._fstf_file))[0]
         parsed = _parse_all_outb(self._farm_base, prefix, self.n_turbines)
 
-        time_vec = parsed.get("time", np.array([self._cumulative_time]))
+        local_time = parsed.get("time")
+        if local_time is None or np.asarray(local_time).size == 0:
+            time_vec = np.array([self._cumulative_time + self.config.dt])
+        else:
+            # Each segmented FAST.Farm process starts its clock at zero.  Expose
+            # one monotonically increasing experiment clock at the public API.
+            time_vec = np.asarray(local_time, dtype=float) + self._cumulative_time
         power_raw = parsed.get("power")
         if power_raw is not None and power_raw.size > 0:
             power_mw = np.atleast_2d(power_raw)

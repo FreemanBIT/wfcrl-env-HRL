@@ -1,0 +1,24 @@
+name: fastfarm-greedy-baseline
+
+simulator:
+  backend: fastfarm
+  dt: 3.0
+
+farm:
+  turbine_type: nrel_5MW
+  xcoords: [0.0, 504.0, 1008.0, 0.0, 504.0, 1008.0]
+  ycoords: [-252.0, -252.0, -252.0, 252.0, 252.0, 252.0]
+
+wind:
+  speed: 8.0
+  direction: 270.0
+  turbulence_intensity: 0.06
+
+controller:
+  type: greedy
+
+steps: 40
+
+output:
+  root: ../../__simul__/experiments
+  plot: true

@@ -1,0 +1,37 @@
+name: mock-dynamic-derating
+
+simulator:
+  backend: mock
+  dt: 2.0
+
+farm:
+  turbine_type: nrel_5MW
+  xcoords: [0.0, 630.0, 1260.0]
+  ycoords: [0.0, 0.0, 0.0]
+
+wind:
+  speed: 8.0
+  direction: 270.0
+
+controller:
+  type: fixed_derating
+  derating_ratio: [0.8, 1.0, 1.0]
+  yaw_misalignment_deg: [5.0, 0.0, 0.0]
+
+power_reference:
+  type: power_curve
+  wind_speed_ms: [0.0, 3.0, 5.0, 8.0, 11.4, 25.0, 30.0]
+  power_mw: [0.0, 0.0, 0.35, 1.75, 5.0, 5.0, 0.0]
+  availability_factor: [1.0, 0.94, 0.88]
+  smoothing_alpha: 0.2
+
+constraints:
+  yaw_bounds_deg: [-25.0, 25.0]
+  yaw_rate_deg_s: 0.3
+  derating_ratio_rate_s: 0.02
+
+steps: 20
+
+output:
+  root: ../../__simul__/experiments
+  plot: true
