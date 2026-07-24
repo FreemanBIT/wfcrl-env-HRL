@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WFCRL Timing Diagram — Python vs FAST.Farm</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'JetBrains Mono', monospace; background: #020617; min-height: 100vh; padding: 2rem; color: white; }
+    .container { max-width: 1400px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; border-radius: 50%; animation: pulse 2s infinite; }
+    .pulse-dot.green { background: #34d399; }
+    .pulse-dot.red { background: #ef4444; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container { background: rgba(15,23,42,0.5); border-radius: 1rem; border: 1px solid #1e293b; padding: 1.5rem; overflow-x: auto; }
+    svg { width: 100%; min-width: 1200px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot green"></div>
+        <h1>Scheme A — Timing Diagram (DT=2s, works)</h1>
+      </div>
+      <p class="subtitle">SteadyOptimizer only runs every t_ctrl=30s. 14 out of 15 steps just reuse cached solution (≈0.01s).</p>
+    </div>
+    <div class="diagram-container">
+      <svg viewBox="0 0 1400 300">
+        <defs>
+          <marker id="a0" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#22d3ee"/></marker>
+          <marker id="a1" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#fbbf24"/></marker>
+          <pattern id="g" width="100" height="100" patternUnits="userSpaceOnUse"><path d="M100 0L0 0 0 100" fill="none" stroke="#1e293b" stroke-width="0.3"/></pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#g)"/>
+
+        <!-- Time axis -->
+        <line x1="80" y1="245" x2="1380" y2="245" stroke="#475569" stroke-width="1"/>
+        <text x="1370" y="260" fill="#475569" font-size="9" text-anchor="end">sim time (s)</text>
+        <text x="80" y="260" fill="#475569" font-size="9">0</text>
+        <text x="180" y="260" fill="#475569" font-size="9">2</text>
+        <text x="380" y="260" fill="#475569" font-size="9">4</text>
+        <text x="580" y="260" fill="#475569" font-size="9">6</text>
+        <text x="780" y="260" fill="#475569" font-size="9">28</text>
+        <text x="980" y="260" fill="#475569" font-size="9">30</text>
+        <text x="1180" y="260" fill="#475569" font-size="9">32</text>
+        <text x="1380" y="260" fill="#475569" font-size="9">200</text>
+
+        <!-- Row 1: FAST.Farm -->
+        <text x="15" y="58" fill="#fbbf24" font-size="10" font-weight="600">FAST.Farm</text>
+        <line x1="80" y1="55" x2="1380" y2="55" stroke="#fbbf24" stroke-width="0.5" stroke-dasharray="4,4"/>
+
+        <!-- FAST.Farm running blocks -->
+        <rect x="80" y="40" width="1300" height="30" rx="4" fill="rgba(251,191,36,0.10)" stroke="#fbbf24" stroke-width="0.8"/>
+        <text x="730" y="59" fill="#fbbf24" font-size="9" text-anchor="middle">continuous simulation, DT_low=0.05s, DISCON reads controls.txt + writes measurements every 0.05s</text>
+
+        <!-- Row 2: Python -->
+        <text x="15" y="98" fill="#22d3ee" font-size="10" font-weight="600">Python</text>
+        <line x1="80" y1="95" x2="1380" y2="95" stroke="#22d3ee" stroke-width="0.5" stroke-dasharray="4,4"/>
+
+        <!-- Step 1: compute ~1s, then wait -->
+        <rect x="80" y="80" width="30" height="20" rx="3" fill="#22d3ee"/>
+        <text x="95" y="94" fill="white" font-size="7" font-weight="600" text-anchor="middle">c</text>
+        <rect x="110" y="80" width="70" height="20" rx="3" fill="rgba(34,211,238,0.15)" stroke="#22d3ee" stroke-width="0.8"/>
+        <text x="145" y="94" fill="#22d3ee" font-size="7" text-anchor="middle">wait FF</text>
+
+        <!-- Step 2: reuse (fast) + wait -->
+        <rect x="180" y="80" width="8" height="20" rx="2" fill="rgba(34,211,238,0.3)"/>
+        <rect x="188" y="80" width="92" height="20" rx="3" fill="rgba(34,211,238,0.10)" stroke="#22d3ee" stroke-width="0.5"/>
+        <text x="234" y="94" fill="#22d3ee" font-size="7" text-anchor="middle">reuse prev sol + wait FF</text>
+
+        <!-- Step 3: reuse (fast) + wait -->
+        <rect x="280" y="80" width="8" height="20" rx="2" fill="rgba(34,211,238,0.3)"/>
+        <rect x="288" y="80" width="92" height="20" rx="3" fill="rgba(34,211,238,0.10)" stroke="#22d3ee" stroke-width="0.5"/>
+        <text x="334" y="94" fill="#22d3ee" font-size="7" text-anchor="middle">reuse + wait</text>
+
+        <!-- Steps 4-13: all reuse -->
+        <rect x="380" y="80" width="400" height="20" rx="3" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="0.3"/>
+        <text x="580" y="94" fill="#94a3b8" font-size="7" text-anchor="middle">steps 4-14: reuse cached solution + wait (0.01s each)</text>
+
+        <!-- Step 15: re-optimize ~1s -->
+        <rect x="780" y="80" width="40" height="20" rx="3" fill="#22d3ee"/>
+        <text x="800" y="94" fill="white" font-size="7" font-weight="600" text-anchor="middle">opt</text>
+        <rect x="820" y="80" width="60" height="20" rx="3" fill="rgba(34,211,238,0.15)" stroke="#22d3ee" stroke-width="0.8"/>
+        <text x="850" y="94" fill="#22d3ee" font-size="7" text-anchor="middle">wait FF</text>
+
+        <!-- Step 16: reuse -->
+        <rect x="880" y="80" width="8" height="20" rx="2" fill="rgba(34,211,238,0.3)"/>
+        <rect x="888" y="80" width="92" height="20" rx="3" fill="rgba(34,211,238,0.10)" stroke="#22d3ee" stroke-width="0.5"/>
+        <text x="934" y="94" fill="#22d3ee" font-size="7" text-anchor="middle">reuse + wait</text>
+
+        <!-- Rest of simulation -->
+        <rect x="980" y="80" width="400" height="20" rx="3" fill="rgba(34,211,238,0.05)" stroke="#22d3ee" stroke-width="0.2"/>
+        <text x="1180" y="94" fill="#94a3b8" font-size="7" text-anchor="middle">steps 17-100: reuse + wait (14/15 steps are instant)</text>
+
+        <!-- Legend callout -->
+        <rect x="80" y="115" width="1300" height="30" rx="4" fill="rgba(6,78,59,0.08)" stroke="#34d399" stroke-width="0.8"/>
+        <text x="730" y="134" fill="#34d399" font-size="8.5" text-anchor="middle">Scheme A: ~15 re-optimizations in 100 steps (100s × 2s). 85% of steps are instant. Python never falls behind.</text>
+
+        <!-- Bottom annotation -->
+        <text x="730" y="295" fill="#475569" font-size="8" text-anchor="middle">c = compute new cmd, opt = full re-optimization, reuse = return cached yaw/induction, wait FF = ff.wait_step() blocks until FAST.Farm catches up</text>
+      </svg>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- Scheme B -->
+    <!-- ================================================================ -->
+    <div class="header" style="margin-top:3rem">
+      <div class="header-row">
+        <div class="pulse-dot red"></div>
+        <h1>Scheme B — Timing Diagram (DT=2s, broken)</h1>
+      </div>
+      <p class="subtitle">EnKF.update() runs every step with 240 FLORIS calls (~2.4s). Total per step ~2.5s > DT=2s. Python falls behind.</p>
+    </div>
+    <div class="diagram-container">
+      <svg viewBox="0 0 1400 280">
+        <defs>
+          <marker id="b0" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ef4444"/></marker>
+          <marker id="b1" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#fbbf24"/></marker>
+          <pattern id="g2" width="100" height="100" patternUnits="userSpaceOnUse"><path d="M100 0L0 0 0 100" fill="none" stroke="#1e293b" stroke-width="0.3"/></pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#g2)"/>
+
+        <!-- Time axis for FAST.Farm -->
+        <text x="15" y="48" fill="#fbbf24" font-size="10" font-weight="600">FAST.Farm</text>
+        <line x1="80" y1="45" x2="1380" y2="45" stroke="#fbbf24" stroke-width="0.5" stroke-dasharray="4,4"/>
+        <rect x="80" y="30" width="1300" height="30" rx="4" fill="rgba(251,191,36,0.10)" stroke="#fbbf24" stroke-width="0.8"/>
+        <text x="730" y="49" fill="#fbbf24" font-size="9" text-anchor="middle">FAST.Farm runs at DT=2s pace. Each sim step = 2s wall clock ≈ 3s real time (6-turbine parallel).</text>
+
+        <!-- Wall clock axis -->
+        <line x1="80" y1="125" x2="1380" y2="125" stroke="#475569" stroke-width="1"/>
+        <text x="15" y="128" fill="#475569" font-size="9">wall</text>
+        <text x="80" y="140" fill="#475569" font-size="8">0s</text>
+        <text x="280" y="140" fill="#475569" font-size="8">3s</text>
+        <text x="530" y="140" fill="#475569" font-size="8">6s</text>
+        <text x="780" y="140" fill="#475569" font-size="8">9s</text>
+        <text x="1030" y="140" fill="#475569" font-size="8">12s</text>
+        <text x="1280" y="140" fill="#475569" font-size="8">15s</text>
+
+        <!-- Python row -->
+        <text x="15" y="85" fill="#22d3ee" font-size="10" font-weight="600">Python</text>
+        <line x1="80" y1="82" x2="1380" y2="82" stroke="#22d3ee" stroke-width="0.5" stroke-dasharray="4,4"/>
+
+        <!-- Step 1: EnKF 2.4s + MPC 0.08s + wait -->
+        <rect x="80" y="68" width="160" height="20" rx="3" fill="rgba(239,68,68,0.25)"/>
+        <text x="160" y="81" fill="white" font-size="7.5" font-weight="600" text-anchor="middle">EnKF (2.4s)</text>
+        <rect x="240" y="68" width="40" height="20" rx="3" fill="rgba(34,211,238,0.10)" stroke="#22d3ee" stroke-width="0.5"/>
+        <text x="260" y="81" fill="#22d3ee" font-size="7" text-anchor="middle">wait</text>
+        <!--   gap: Python falls behind ~0.5s here. FAST.Farm already at t=2.5 -->
+        <rect x="280" y="68" width="170" height="20" rx="0" fill="rgba(239,68,68,0.08)"/>
+        <text x="365" y="81" fill="#ef4444" font-size="7" text-anchor="middle">FF already at t=2.5 (0.5s ahead)</text>
+
+        <!-- Step 2 -->
+        <rect x="450" y="68" width="160" height="20" rx="3" fill="rgba(239,68,68,0.25)"/>
+        <text x="530" y="81" fill="white" font-size="7.5" font-weight="600" text-anchor="middle">EnKF (2.4s)</text>
+        <rect x="610" y="68" width="40" height="20" rx="3" fill="rgba(34,211,238,0.10)" stroke="#22d3ee" stroke-width="0.5"/>
+        <text x="630" y="81" fill="#22d3ee" font-size="7" text-anchor="middle">wait</text>
+        <rect x="650" y="68" width="170" height="20" rx="0" fill="rgba(239,68,68,0.08)"/>
+        <text x="735" y="81" fill="#ef4444" font-size="7" text-anchor="middle">FF at t=5.5 (1.5s ahead)</text>
+
+        <!-- Step 3 -->
+        <rect x="870" y="68" width="160" height="20" rx="3" fill="rgba(239,68,68,0.25)"/>
+        <text x="950" y="81" fill="white" font-size="7.5" font-weight="600" text-anchor="middle">EnKF (2.4s)</text>
+        <rect x="1030" y="68" width="40" height="20" rx="3" fill="rgba(34,211,238,0.10)" stroke="#22d3ee" stroke-width="0.5"/>
+        <text x="1050" y="81" fill="#22d3ee" font-size="7" text-anchor="middle">wait</text>
+        <rect x="1070" y="68" width="170" height="20" rx="0" fill="rgba(239,68,68,0.10)"/>
+        <text x="1155" y="81" fill="#ef4444" font-size="7" text-anchor="middle">FF at t=9 (3s ahead!)</text>
+
+        <!-- Step 4..N: cumulative -->
+        <rect x="80" y="100" width="1300" height="20" rx="3" fill="rgba(239,68,68,0.05)" stroke="#ef4444" stroke-width="0.5" stroke-dasharray="4,4"/>
+        <text x="730" y="113" fill="#ef4444" font-size="8" text-anchor="middle">after 30 steps: FAST.Farm already at t=75, Python at step=30 (t=60) → 15s desync → wait_step polls for step=30, files have step=37 → TIMEOUT → crash</text>
+
+        <!-- FAST.Farm line (what it actually does while Python computes) -->
+        <rect x="80" y="160" width="1300" height="60" rx="4" fill="rgba(239,68,68,0.04)" stroke="#ef4444" stroke-width="0.6" stroke-dasharray="6,4"/>
+        <text x="95" y="178" fill="#ef4444" font-size="8" font-weight="600">FAST.Farm while Python computes: DISCON keeps re-reading old controls.txt (same yaw/pitch) and keeps overwriting measurement files</text>
+        <text x="95" y="194" fill="#94a3b8" font-size="7.5">controls.txt step=5 → DISCON runs t=0→10 with cmd=5 → measurements_T*.txt keep advancing (step=6,7,8...)</text>
+        <text x="95" y="210" fill="#94a3b8" font-size="7.5">When Python finally calls wait_step for step=6, the files are at step=10 → step mismatch → poll timeout → process exit → abort</text>
+
+        <text x="730" y="295" fill="#475569" font-size="8" text-anchor="middle">Root cause: EnKF(2.4s) + FLORIDyn(0.06s) + MPC_amortized(0.08s) + overhead = 2.55s  >  DT=2s  →  +0.55s drift per step</text>
+      </svg>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- DISCON internal timing -->
+    <!-- ================================================================ -->
+    <div class="header" style="margin-top:3rem">
+      <div class="header-row">
+        <div class="pulse-dot" style="background:#fbbf24"></div>
+        <h1>FAST.Farm Internal Timing — DISCON per DT_low</h1>
+      </div>
+      <p class="subtitle">Within one control step (DT=2s), FAST.Farm runs 40 substeps (DT_low=0.05s). DISCON is called on every substep.</p>
+    </div>
+    <div class="diagram-container">
+      <svg viewBox="0 0 1400 320">
+        <defs>
+          <pattern id="g3" width="100" height="100" patternUnits="userSpaceOnUse"><path d="M100 0L0 0 0 100" fill="none" stroke="#1e293b" stroke-width="0.3"/></pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#g3)"/>
+
+        <text x="15" y="48" fill="#fbbf24" font-size="10" font-weight="600">FAST.Farm DT_low=0.05s (one control step = 40 substeps)</text>
+        <line x1="80" y1="45" x2="1380" y2="45" stroke="#fbbf24" stroke-width="0.5" stroke-dasharray="4,4"/>
+
+        <!-- 40 substeps shown as alternating bars -->
+        <rect x="80" y="30" width="20" height="22" rx="3" fill="rgba(251,191,36,0.3)"/>
+        <rect x="108" y="30" width="20" height="22" rx="3" fill="rgba(251,191,36,0.15)"/>
+        <rect x="136" y="30" width="20" height="22" rx="3" fill="rgba(251,191,36,0.3)"/>
+        <rect x="164" y="30" width="20" height="22" rx="3" fill="rgba(251,191,36,0.15)"/>
+        <rect x="192" y="30" width="150" height="22" rx="3" fill="rgba(251,191,36,0.08)"/>
+        <text x="267" y="45" fill="#94a3b8" font-size="7" text-anchor="middle">... 36 more substeps ...</text>
+        <rect x="310" y="30" width="20" height="22" rx="3" fill="rgba(251,191,36,0.3)"/>
+        <rect x="338" y="30" width="20" height="22" rx="3" fill="rgba(251,191,36,0.15)"/>
+
+        <!-- Zoom into one substep -->
+        <rect x="400" y="30" width="200" height="22" rx="3" fill="rgba(34,211,238,0.15)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="500" y="45" fill="#22d3ee" font-size="7" text-anchor="middle">← one DT_low=0.05s →</text>
+
+        <text x="15" y="85" fill="white" font-size="10" font-weight="600">Zoom: what happens in 1 DT_low (0.05s)</text>
+
+        <!-- Substeps within DT_low -->
+        <rect x="80" y="72" width="100" height="18" rx="3" fill="rgba(34,211,238,0.2)" stroke="#22d3ee" stroke-width="0.8"/>
+        <text x="130" y="84" fill="#22d3ee" font-size="7" font-weight="600" text-anchor="middle">ElastoDyn: integrate</text>
+
+        <line x1="180" y1="81" x2="195" y2="81" stroke="#64748b" stroke-width="1"/>
+
+        <rect x="195" y="72" width="85" height="18" rx="3" fill="rgba(34,211,238,0.2)" stroke="#22d3ee" stroke-width="0.8"/>
+        <text x="237" y="84" fill="#22d3ee" font-size="7" font-weight="600" text-anchor="middle">AeroDyn: BEM</text>
+
+        <line x1="280" y1="81" x2="295" y2="81" stroke="#64748b" stroke-width="1"/>
+
+        <rect x="295" y="72" width="180" height="18" rx="3" fill="rgba(239,68,68,0.3)" stroke="#ef4444" stroke-width="1.2"/>
+        <text x="385" y="84" fill="white" font-size="7" font-weight="600" text-anchor="middle">ServoDyn → DISCON.bridge.dll</text>
+
+        <!-- DISCON internals subdiagram -->
+        <rect x="495" y="60" width="550" height="42" rx="5" fill="rgba(76,29,149,0.12)" stroke="#a78bfa" stroke-width="0.8"/>
+        <text x="505" y="76" fill="#a78bfa" font-size="7.5" font-weight="600">Inside DISCON_bridge.f90 (every DT_low):</text>
+        <text x="505" y="90" fill="#94a3b8" font-size="7">① OPEN controls.txt → READ step + per-turbine yaw/pitch/power → CLOSE</text>
+        <text x="505" y="102" fill="#94a3b8" font-size="7">② Apply commands to avrSWap output array → ROSCO inner loop receives overrides</text>
+        <text x="505" y="114" fill="#94a3b8" font-size="7">③ Collect measurements (genpwr, wind_x, nacyaw, moop1...) from FAST arrays</text>
+        <text x="505" y="126" fill="#94a3b8" font-size="7">④ OPEN measurements_T{id}.txt → WRITE key=value lines → CLOSE  ⚠ Fortran OPEN/CLOSE every 0.05s</text>
+
+        <!-- File IO count -->
+        <rect x="80" y="145" width="550" height="55" rx="4" fill="rgba(239,68,68,0.06)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,4"/>
+        <text x="95" y="162" fill="#ef4444" font-size="8.5" font-weight="600">File I/O per control step:</text>
+        <text x="95" y="178" fill="#94a3b8" font-size="7.5">controls.txt: 1 READ per substep × 40 substeps = 40 OPEN/READ/CLOSE per control step</text>
+        <text x="95" y="194" fill="#94a3b8" font-size="7.5">measurements_T1..T6.txt: 6 WRITES per substep × 40 substeps = 240 OPEN/WRITE/CLOSE per control step</text>
+        <text x="95" y="210" fill="#94a3b8" font-size="7.5">⚠ DT=2s → 280 file ops per step (OK). DT=10s → 1400 file ops (Fortran OPEN STATUS crash)</text>
+
+        <!-- Connection arrows from Python -->
+        <rect x="80" y="215" width="300" height="30" rx="4" fill="rgba(34,211,238,0.10)" stroke="#22d3ee" stroke-width="0.8"/>
+        <text x="230" y="234" fill="#22d3ee" font-size="8" text-anchor="middle">Python writes controls.txt once per control step</text>
+
+        <line x1="380" y1="230" x2="500" y2="230" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#a0)"/>
+
+        <rect x="490" y="215" width="300" height="30" rx="4" fill="rgba(251,191,36,0.10)" stroke="#fbbf24" stroke-width="0.8"/>
+        <text x="640" y="234" fill="#fbbf24" font-size="8" text-anchor="middle">DISCON reads same controls.txt 40 times between updates</text>
+
+        <!-- Final note -->
+        <rect x="80" y="260" width="1200" height="35" rx="4" fill="rgba(6,78,59,0.08)" stroke="#34d399" stroke-width="0.8"/>
+        <text x="680" y="280" fill="#34d399" font-size="8" text-anchor="middle">Key insight: DISCON is NOT a "controller" — it's a transparent bridge that forwards yaw/pitch/power from controls.txt to ROSCO, and measurements back to Python.</text>
+        <text x="680" y="294" fill="#34d399" font-size="8" text-anchor="middle">ROSCO continues normal torque/pitch inner-loop control regardless of what DISCON sends.</text>
+
+      </svg>
+    </div>
+
+    <p style="text-align:center;margin-top:2rem;color:#475569;font-size:0.75rem">WFCRL Closed-Loop Control · Timing Analysis · D:\HR_Project\wfcrl-env-HRL\closed-loop-control</p>
+  </div>
+</body>
+</html>

@@ -16,6 +16,7 @@ last plan is held.
 """
 from __future__ import annotations
 
+import time as _time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -89,19 +90,32 @@ class ControllerB(BaseController):
             self._initialized = True
 
         # --- observer: EnKF correction (cheap, every step) ---
+        t_enkf = 0.0
         if self.cfg.enable_enkf and len(p_meas) == self.n_turbines:
+            print(f"\n{'='*60}")
+            print(f"Step t={t:.1f}s  U_inf(meas)={flow_est.U_inf:.2f}  φ={flow_est.phi:.1f}°  "
+                  f"P_farm={p_meas.sum():.0f}kW")
             self.model.set_controls(self._yaw_sol, self._a_sol)
-            self.enkf.update(p_meas, self._yaw_sol, self._a_sol, meas_wind=wind_meas)
+            t0 = _time.perf_counter()
+            self.enkf.update(p_meas, self._yaw_sol, self._a_sol, meas_wind=wind_meas,
+                             verbose=True)
+            t_enkf = _time.perf_counter() - t0
+            print(f"  ── EnKF elapsed: {t_enkf:.3f}s ──")
         else:
             # no filter: just track sensed ambient
             self.model.set_conditions(flow_est.U_inf, flow_est.phi, flow_est.TI_est)
 
         # --- controller: MPC re-plan on schedule ---
+        t_mpc = 0.0
         if (t - self._last_ctrl_t) >= self.cfg.t_ctrl:
             U = self.model._U_inf
             phi = self.model._phi
             TI = self.model._TI
-            self._yaw_sol, self._a_sol = self.mpc.solve(self.spec, U, phi, TI)
+            t0 = _time.perf_counter()
+            self._yaw_sol, self._a_sol = self.mpc.solve(self.spec, U, phi, TI,
+                                                        verbose=True)
+            t_mpc = _time.perf_counter() - t0
+            print(f"  ── MPC  elapsed: {t_mpc:.3f}s ──")
             self._last_ctrl_t = t
 
         # advance the model's OP registers with the applied control

@@ -68,6 +68,7 @@ class MPCController:
         U_inf: float,
         phi: float,
         TI: float,
+        verbose: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return the first-step optimal ``(yaw[n], a[n])`` to apply now.
 
@@ -84,11 +85,6 @@ class MPCController:
         a = self._prev_a.copy() if opt_a else np.full(self.n, A_GREEDY)
 
         def objective(yaw_vec, a_vec) -> float:
-            # Quasi-static objective: the farm power the control settles to, with
-            # the roll-out internally covering tau_max (eq 2.22), minus an action
-            # penalty. Using the settled value (instead of a truncated horizon)
-            # both satisfies the delay-coverage requirement and keeps the search
-            # affordable for coordinate refinement.
             p_settled = self.model.steady_power(yaw_vec, a_vec)   # kW
             dyaw = yaw_vec - self._prev_yaw
             da = a_vec - self._prev_a
@@ -96,20 +92,45 @@ class MPCController:
                    + self.cfg.lam_a * float(np.sum(da ** 2)) * 1e3)
             return p_settled - pen
 
+        # baseline
+        yaw_base = np.zeros(self.n)
+        a_base = np.full(self.n, A_GREEDY)
+        p_base = self.model.steady_power(yaw_base, a_base)
+        if verbose:
+            print(f"  MPC: Np={Np} steps, greedy baseline={p_base:.0f} kW")
+
         # coordinate refinement over the roll-out
-        for _ in range(self.cfg.n_passes):
+        for pass_idx in range(self.cfg.n_passes):
+            if verbose:
+                print(f"  MPC Pass {pass_idx+1}/{self.cfg.n_passes}:")
             for i in range(self.n):
                 if opt_yaw:
-                    yaw[i] = self._refine_scalar(
+                    yaw[i] = self._refine_scalar_verbose(
                         lambda v: objective(_set(yaw, i, v), a),
                         list(self.cfg.yaw_grid), -YAW_MAX, YAW_MAX,
                         self.cfg.yaw_refine_levels,
+                        label=f"T{i+1} yaw", base_obj=objective(yaw_base, a_base),
+                        verbose=verbose,
                     )
+                    if verbose:
+                        yaw_tmp = yaw.copy()
+                        yaw_tmp[i] = yaw[i]
+                        p_now = self.model.steady_power(yaw_tmp, a)
+                        gain = 100.0 * (p_now - p_base) / p_base if p_base > 0 else 0.0
+                        print(f"    T{i+1} yaw={yaw[i]:.0f}°  P={p_now:.0f}kW ({gain:+.1f}%)")
                 if opt_a:
-                    a[i] = self._best_on_grid(
+                    a[i] = self._best_on_grid_verbose(
                         lambda v: objective(yaw, _set(a, i, v)),
                         list(self.cfg.a_grid),
+                        label=f"T{i+1} a", verbose=verbose,
                     )
+
+        p_final = self.model.steady_power(yaw, a)
+        if verbose:
+            gain = 100.0 * (p_final - p_base) / p_base if p_base > 0 else 0.0
+            yaw_s = "[" + " ".join(f"{y:3.0f}" for y in yaw) + "]"
+            a_s = "[" + " ".join(f"{v:.2f}" for v in a) + "]"
+            print(f"  MPC Final: P={p_final:.0f}kW ({gain:+.1f}%)  yaw={yaw_s}  a={a_s}")
 
         self._prev_yaw = yaw.copy()
         self._prev_a = a.copy()
@@ -125,13 +146,30 @@ class MPCController:
         vals = [f(v) for v in grid]
         return grid[int(np.argmax(vals))]
 
-    def _refine_scalar(self, f, grid, lo, hi, levels):
+    @staticmethod
+    def _best_on_grid_verbose(f, grid, label="", verbose=False):
+        vals = [f(v) for v in grid]
+        best_idx = int(np.argmax(vals))
+        if verbose:
+            s = " ".join(f"{v}={val:.0f}" for v, val in zip(grid, vals))
+            print(f"    {label} grid: [{s}]  best={grid[best_idx]}")
+        return grid[best_idx]
+
+    def _refine_scalar_verbose(self, f, grid, lo, hi, levels, label="",
+                                base_obj=0.0, verbose=False):
         best = self._best_on_grid(f, grid)
+        if verbose:
+            print(f"    {label} coarse: best={best}", end="")
         span = (grid[1] - grid[0]) if len(grid) > 1 else 5.0
         for _ in range(levels):
             span *= 0.4
-            local = [min(hi, max(lo, best + d)) for d in (-span, -span / 2, 0, span / 2, span)]
+            local = [min(hi, max(lo, best + d))
+                     for d in (-span, -span / 2, 0, span / 2, span)]
             best = self._best_on_grid(f, local)
+            if verbose:
+                print(f" → refine best={best}", end="")
+        if verbose:
+            print()
         return best
 
 

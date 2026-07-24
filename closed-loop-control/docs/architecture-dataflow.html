@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WFCRL Closed-Loop Data Flow Architecture</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'JetBrains Mono', monospace; background: #020617; min-height: 100vh; padding: 2rem; color: white; }
+    .container { max-width: 1300px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container { background: rgba(15, 23, 42, 0.5); border-radius: 1rem; border: 1px solid #1e293b; padding: 1.5rem; overflow-x: auto; }
+    svg { width: 100%; min-width: 1100px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.red { background: #ef4444; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.emerald { background: #34d399; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>WFCRL Closed-Loop Wind Farm Control — Data Flow Architecture</h1>
+      </div>
+      <p class="subtitle">FAST.Farm Continuous Mode · File Bridge Protocol · Scheme B (EnKF + MPC) · Synchronization Bottleneck</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1200 880">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrow-farm" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24" />
+          </marker>
+          <marker id="arrow-python" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <marker id="arrow-err" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#ef4444" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ================================================================
+             REGION: FAST.Farm Process (right side)
+             ================================================================ -->
+        <rect x="640" y="30" width="540" height="830" rx="12" fill="rgba(251, 191, 36, 0.04)" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="8,4"/>
+        <text x="655" y="52" fill="#fbbf24" font-size="11" font-weight="600">FAST.Farm Process (Fortran, PID=nnnnn)</text>
+
+        <!-- Time track -->
+        <text x="655" y="72" fill="#94a3b8" font-size="9">Sim time: 0s → 200s, DT_low=0.05s, DT=2s (configurable via --dt)</text>
+
+        <!-- AWAE + WakeDynamics -->
+        <rect x="660" y="88" width="200" height="42" rx="5" fill="rgba(120, 53, 15, 0.25)" stroke="#fbbf24" stroke-width="1.2"/>
+        <text x="760" y="106" fill="white" font-size="10" font-weight="600" text-anchor="middle">AWAE + WakeDynamics</text>
+        <text x="760" y="120" fill="#94a3b8" font-size="7.5" text-anchor="middle">Low-res grid · Wake plane advection · Grid4D</text>
+
+        <!-- 6 OpenFAST instances -->
+        <text x="660" y="152" fill="#94a3b8" font-size="9">6 × OpenFAST (OpenMP threads, parallel)</text>
+
+        <!-- Turbine 1 -->
+        <rect x="665" y="162" width="155" height="72" rx="5" fill="rgba(120, 53, 15, 0.15)" stroke="#fbbf24" stroke-width="0.8"/>
+        <text x="742" y="178" fill="white" font-size="9" font-weight="600" text-anchor="middle">WT1 (ElastoDyn+ServoDyn)</text>
+        <rect x="675" y="186" width="135" height="16" rx="3" fill="rgba(6, 78, 59, 0.3)" stroke="#34d399" stroke-width="0.6"/>
+        <text x="742" y="197" fill="#34d399" font-size="7" text-anchor="middle">ROSCO v2.9 (torque/pitch inner loop)</text>
+        <rect x="675" y="206" width="135" height="16" rx="3" fill="rgba(251, 191, 36, 0.2)" stroke="#fbbf24" stroke-width="0.6"/>
+        <text x="742" y="217" fill="#fbbf24" font-size="7" text-anchor="middle">DISCON_bridge.dll (yaw+power override)</text>
+
+        <!-- Turbine 2 -->
+        <rect x="835" y="162" width="155" height="72" rx="5" fill="rgba(120, 53, 15, 0.15)" stroke="#fbbf24" stroke-width="0.8"/>
+        <text x="912" y="178" fill="white" font-size="9" font-weight="600" text-anchor="middle">WT2</text>
+        <rect x="845" y="186" width="135" height="16" rx="3" fill="rgba(6, 78, 59, 0.3)" stroke="#34d399" stroke-width="0.6"/>
+        <text x="912" y="197" fill="#34d399" font-size="7" text-anchor="middle">ROSCO v2.9</text>
+        <rect x="845" y="206" width="135" height="16" rx="3" fill="rgba(251, 191, 36, 0.2)" stroke="#fbbf24" stroke-width="0.6"/>
+        <text x="912" y="217" fill="#fbbf24" font-size="7" text-anchor="middle">DISCON_bridge.dll</text>
+
+        <!-- WT3-WT6 compact -->
+        <rect x="665" y="242" width="155" height="36" rx="5" fill="rgba(120, 53, 15, 0.12)" stroke="#fbbf24" stroke-width="0.6"/>
+        <text x="742" y="256" fill="white" font-size="8" text-anchor="middle">WT3 · ROSCO · DISCON</text>
+        <text x="742" y="270" fill="#94a3b8" font-size="6.5" text-anchor="middle">same structure as WT1</text>
+        <rect x="835" y="242" width="155" height="36" rx="5" fill="rgba(120, 53, 15, 0.12)" stroke="#fbbf24" stroke-width="0.6"/>
+        <text x="912" y="256" fill="white" font-size="8" text-anchor="middle">WT4 · ROSCO · DISCON</text>
+        <rect x="665" y="285" width="155" height="36" rx="5" fill="rgba(120, 53, 15, 0.12)" stroke="#fbbf24" stroke-width="0.6"/>
+        <text x="742" y="299" fill="white" font-size="8" text-anchor="middle">WT5 · ROSCO · DISCON</text>
+        <rect x="835" y="285" width="155" height="36" rx="5" fill="rgba(120, 53, 15, 0.12)" stroke="#fbbf24" stroke-width="0.6"/>
+        <text x="912" y="299" fill="white" font-size="8" text-anchor="middle">WT6 · ROSCO · DISCON</text>
+
+        <!-- Controls.txt (consumed by DISCON) -->
+        <rect x="660" y="340" width="250" height="30" rx="4" fill="rgba(251, 191, 36, 0.2)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="785" y="355" fill="white" font-size="9" font-weight="600" text-anchor="middle">controls.txt (step=N, yaw/pitch/power per turbine)</text>
+        <text x="785" y="366" fill="#94a3b8" font-size="6.5" text-anchor="middle">Read by DISCON every DT_low (0.05s) via keyword-based parsing</text>
+
+        <!-- Measurement files (written by DISCON) -->
+        <text x="660" y="388" fill="#94a3b8" font-size="8" font-weight="600">6 × measurement files (written independently by each DISCON thread):</text>
+        <rect x="665" y="396" width="150" height="22" rx="3" fill="rgba(6, 78, 59, 0.2)" stroke="#34d399" stroke-width="0.6"/>
+        <text x="740" y="410" fill="#34d399" font-size="7.5" text-anchor="middle">measurements_T1.txt</text>
+        <rect x="825" y="396" width="150" height="22" rx="3" fill="rgba(6, 78, 59, 0.2)" stroke="#34d399" stroke-width="0.6"/>
+        <text x="900" y="410" fill="#34d399" font-size="7.5" text-anchor="middle">measurements_T2.txt</text>
+        <rect x="665" y="422" width="150" height="22" rx="3" fill="rgba(6, 78, 59, 0.2)" stroke="#34d399" stroke-width="0.6"/>
+        <text x="740" y="436" fill="#34d399" font-size="7.5" text-anchor="middle">measurements_T3.txt</text>
+        <rect x="825" y="422" width="150" height="22" rx="3" fill="rgba(6, 78, 59, 0.2)" stroke="#34d399" stroke-width="0.6"/>
+        <text x="900" y="436" fill="#34d399" font-size="7.5" text-anchor="middle">measurements_T4.txt</text>
+        <rect x="665" y="448" width="150" height="22" rx="3" fill="rgba(6, 78, 59, 0.2)" stroke="#34d399" stroke-width="0.6"/>
+        <text x="740" y="462" fill="#34d399" font-size="7.5" text-anchor="middle">measurements_T5.txt</text>
+        <rect x="825" y="448" width="150" height="22" rx="3" fill="rgba(6, 78, 59, 0.2)" stroke="#34d399" stroke-width="0.6"/>
+        <text x="900" y="462" fill="#34d399" font-size="7.5" text-anchor="middle">measurements_T6.txt</text>
+
+        <!-- DISCON file format -->
+        <rect x="660" y="480" width="500" height="55" rx="4" fill="rgba(30, 41, 59, 0.4)" stroke="#64748b" stroke-width="0.8"/>
+        <text x="680" y="495" fill="#94a3b8" font-size="7.5">File format (written every 0.05s, overwritten):</text>
+        <text x="680" y="510" fill="#64748b" font-size="7" font-family="monospace">step=N t=  X.XXXX mode=0</text>
+        <text x="680" y="522" fill="#64748b" font-size="7" font-family="monospace"> genpwr=  XXX.XX genspd=  XXX.XX gentq=  XXXXX.XX</text>
+        <text x="680" y="534" fill="#64748b" font-size="7" font-family="monospace"> rotspd=  X.XXXX wind_x=  X.XXXX  blpitch=  X.XXXX nacyaw=  X.XXXX</text>
+        <text x="680" y="546" fill="#64748b" font-size="7" font-family="monospace"> ⚠ multi-token: "wind_x=      5.3035" — need last_label state machine to parse</text>
+
+        <!-- Timing details -->
+        <rect x="660" y="545" width="500" height="75" rx="4" fill="rgba(239, 68, 68, 0.08)" stroke="#ef4444" stroke-width="1" stroke-dasharray="6,4"/>
+        <text x="680" y="562" fill="#ef4444" font-size="9" font-weight="600">⚠ Synchronization Gap (the core problem)</text>
+        <text x="680" y="578" fill="#94a3b8" font-size="7.5">DISCON writes measurement files asynchronously per OpenFAST thread</text>
+        <text x="680" y="592" fill="#94a3b8" font-size="7.5">WFCRL _read_all() exits on FIRST turbine match → others get zeros</text>
+        <text x="680" y="606" fill="#94a3b8" font-size="7.5">When Python computation &gt; DT, controls.txt not updated in time → step mismatch</text>
+
+        <!-- ================================================================
+             REGION: Python Controller (left side)
+             ================================================================ -->
+        <rect x="15" y="30" width="600" height="830" rx="12" fill="rgba(34, 211, 238, 0.03)" stroke="#22d3ee" stroke-width="1.2" stroke-dasharray="8,4"/>
+        <text x="30" y="52" fill="#22d3ee" font-size="11" font-weight="600">Python Controller (ContinuousFastFarmInterface)</text>
+
+        <!-- ClosedLoopRunner loop -->
+        <rect x="30" y="70" width="570" height="180" rx="6" fill="rgba(8, 51, 68, 0.2)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="315" y="88" fill="#22d3ee" font-size="10" font-weight="600" text-anchor="middle">Main Loop (example_fastfarm_launcher.py)</text>
+
+        <!-- Step 1: Wait -->
+        <rect x="45" y="98" width="120" height="28" rx="4" fill="#1e293b" stroke="#64748b" stroke-width="1"/>
+        <text x="105" y="115" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">ff.wait_step(cin)</text>
+
+        <!-- Step 2: Parse -->
+        <rect x="180" y="98" width="120" height="28" rx="4" fill="#1e293b" stroke="#64748b" stroke-width="1"/>
+        <text x="240" y="115" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">_output_to_meas()</text>
+
+        <!-- Step 3: Ensure -->
+        <rect x="315" y="98" width="130" height="28" rx="4" fill="rgba(239, 68, 68, 0.15)" stroke="#ef4444" stroke-width="1" stroke-dasharray="3,3"/>
+        <text x="380" y="115" fill="#ef4444" font-size="7.5" font-weight="600" text-anchor="middle">_ensure_all(N=6)</text>
+
+        <!-- Step 4: Send -->
+        <rect x="460" y="98" width="120" height="28" rx="4" fill="#1e293b" stroke="#64748b" stroke-width="1"/>
+        <text x="520" y="115" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">ctrl.step(flow,meas)</text>
+
+        <!-- Arrows between steps -->
+        <line x1="165" y1="112" x2="178" y2="112" stroke="#64748b" stroke-width="1" marker-end="url(#arrowhead)"/>
+        <line x1="300" y1="112" x2="313" y2="112" stroke="#ef4444" stroke-width="1" marker-end="url(#arrow-err)"/>
+        <line x1="445" y1="112" x2="458" y2="112" stroke="#64748b" stroke-width="1" marker-end="url(#arrowhead)"/>
+
+        <!-- Annotations -->
+        <text x="105" y="140" fill="#64748b" font-size="7" text-anchor="middle">① writes controls.txt</text>
+        <text x="105" y="150" fill="#64748b" font-size="7" text-anchor="middle">polls meas files</text>
+        <text x="105" y="160" fill="#ef4444" font-size="6.5" text-anchor="middle">timeout 120s (abort)</text>
+
+        <text x="240" y="140" fill="#64748b" font-size="7" text-anchor="middle">② Cmd→ControlInput</text>
+        <text x="240" y="150" fill="#64748b" font-size="7" text-anchor="middle">SimOutput→TurbineMeas</text>
+
+        <text x="380" y="140" fill="#ef4444" font-size="7" text-anchor="middle">③ re-read files</text>
+        <text x="380" y="150" fill="#ef4444" font-size="7" text-anchor="middle">until N=6 or timeout</text>
+        <text x="380" y="160" fill="#ef4444" font-size="6.5" text-anchor="middle">patch zeros→real data</text>
+
+        <text x="520" y="140" fill="#64748b" font-size="7" text-anchor="middle">④ controller decides</text>
+        <text x="520" y="150" fill="#64748b" font-size="7" text-anchor="middle">yaw/induction per turbine</text>
+
+        <!-- Scheme B internal -->
+        <text x="30" y="270" fill="#34d399" font-size="10" font-weight="600">Scheme B Controller Internals (ctrl.step)</text>
+
+        <!-- Sensing -->
+        <rect x="35" y="282" width="165" height="45" rx="5" fill="rgba(8, 51, 68, 0.3)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="117" y="298" fill="white" font-size="9" font-weight="600" text-anchor="middle">Sensing (M3)</text>
+        <text x="117" y="314" fill="#94a3b8" font-size="7.5" text-anchor="middle">sliding-window U_inf,phi,TI</text>
+
+        <!-- EnKF -->
+        <rect x="215" y="282" width="185" height="75" rx="5" fill="rgba(239, 68, 68, 0.12)" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4,4"/>
+        <text x="307" y="298" fill="white" font-size="9" font-weight="600" text-anchor="middle">EnKF update (B2)</text>
+        <text x="307" y="312" fill="#ef4444" font-size="7" text-anchor="middle">Ne=40 × 6 turbines</text>
+        <text x="307" y="324" fill="#ef4444" font-size="7" text-anchor="middle">= 240 FLORIS calls</text>
+        <text x="307" y="338" fill="#ef4444" font-size="7" text-anchor="middle">~2.4s ⚠ BOTTLENECK</text>
+        <text x="307" y="352" fill="#64748b" font-size="6.5" text-anchor="middle">per step, every step!</text>
+
+        <!-- FLORIDyn -->
+        <rect x="415" y="282" width="175" height="45" rx="5" fill="rgba(8, 51, 68, 0.3)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="502" y="298" fill="white" font-size="9" font-weight="600" text-anchor="middle">FLORIDyn.step() (B1)</text>
+        <text x="502" y="314" fill="#94a3b8" font-size="7.5" text-anchor="middle">TWF · OP advection · 6 FLORIS</text>
+
+        <!-- MPC -->
+        <rect x="215" y="365" width="375" height="28" rx="5" fill="rgba(6, 78, 59, 0.3)" stroke="#34d399" stroke-width="1"/>
+        <text x="402" y="382" fill="white" font-size="9" font-weight="600" text-anchor="middle">MPC.solve() (B3) — only every t_ctrl=20s (~60-84 FLORIS calls)</text>
+
+        <!-- FLORIS surrogate -->
+        <rect x="35" y="408" width="555" height="45" rx="5" fill="rgba(76, 29, 149, 0.2)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="312" y="424" fill="white" font-size="9" font-weight="600" text-anchor="middle">SurrogateModel.predict() — FLORIS fm.run() or Analytical Gaussian Wake</text>
+        <text x="312" y="440" fill="#94a3b8" font-size="7.5" text-anchor="middle">fm.run(): 6×6 wake deficit + SOS superposition + Cp interpolation (~10ms/call)</text>
+
+        <!-- Timing summary -->
+        <rect x="35" y="465" width="555" height="55" rx="5" fill="rgba(239, 68, 68, 0.08)" stroke="#ef4444" stroke-width="1"/>
+        <text x="55" y="482" fill="#ef4444" font-size="8.5" font-weight="600">Per-step timing (Scheme B, FLORIS backend, DT=2s):</text>
+        <text x="55" y="498" fill="#94a3b8" font-size="7.5">EnKF (240 calls × 10ms) = 2.4s  +  FLORIDyn.step (6 calls) = 0.06s  +  MPC amortized = 0.08s</text>
+        <text x="55" y="512" fill="#ef4444" font-size="7.5" font-weight="600">Total: ~2.5s/step  >  DT=2s  →  Python falls behind FAST.Farm by ~0.5s every step → crash after ~30 steps</text>
+
+        <!-- File I/O arrows -->
+        <!-- Python → controls.txt -->
+        <path d="M 630 112 C 640 112, 645 112, 655 355" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-python)"/>
+        <text x="642" y="230" fill="#22d3ee" font-size="8" transform="rotate(-90, 642, 230)">write controls.txt</text>
+
+        <!-- controls.txt → DISCON (already on FAST.Farm side) -->
+
+        <!-- measurements → Python -->
+        <path d="M 660 433 C 645 433, 635 433, 625 433" fill="none" stroke="#fbbf24" stroke-width="2"/>
+        <path d="M 625 433 C 610 433, 600 420, 590 400 L 580 350 L 570 320 L 565 300" fill="none" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow-farm)"/>
+        <text x="632" y="390" fill="#fbbf24" font-size="7" transform="rotate(-90, 632, 390)">read measurements</text>
+
+        <!-- Bottleneck callout -->
+        <rect x="35" y="535" width="555" height="100" rx="6" fill="rgba(239, 68, 68, 0.06)" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="6,4"/>
+        <text x="55" y="555" fill="#ef4444" font-size="9" font-weight="600">⚠ DT=10s → Fortran runtime crash (cannot change STATUS in OPEN)</text>
+        <text x="55" y="575" fill="#94a3b8" font-size="7.5">DISCON opens/writes/closes measurement files every DT_low=0.05s</text>
+        <text x="55" y="590" fill="#94a3b8" font-size="7.5">DT=2s: 40 OPEN/CLOSE cycles between Python reads → stable</text>
+        <text x="55" y="605" fill="#94a3b8" font-size="7.5">DT=10s: 200 OPEN/CLOSE cycles → Fortran file handle corruption</text>
+        <text x="55" y="625" fill="#22d3ee" font-size="8" font-weight="600">Fix: reduce EnKF ensemble (N=10 instead of 40) or use analytical fallback for ensemble predictions</text>
+
+        <!-- Potential fix -->
+        <rect x="35" y="648" width="555" height="45" rx="5" fill="rgba(6, 78, 59, 0.1)" stroke="#34d399" stroke-width="1.2"/>
+        <text x="55" y="665" fill="#34d399" font-size="8.5" font-weight="600">Fix: EnKF with analytical fallback (N=40): 240 × 0.1ms = 0.024s → total ~0.05s/step ✓ DT=2s viable</text>
+        <text x="55" y="682" fill="#94a3b8" font-size="7.5">Keep FLORIS only for MPC.solve() (steady optimization, accuracy matters). EnKF is state estimation.</text>
+
+        <!-- Legend -->
+        <text x="30" y="720" fill="white" font-size="10" font-weight="600">Legend</text>
+        <rect x="30" y="730" width="14" height="9" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="50" y="738" fill="#94a3b8" font-size="7.5">Python Controller</text>
+        <rect x="180" y="730" width="14" height="9" rx="2" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="200" y="738" fill="#94a3b8" font-size="7.5">FAST.Farm / DISCON</text>
+        <rect x="330" y="730" width="14" height="9" rx="2" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1"/>
+        <text x="350" y="738" fill="#94a3b8" font-size="7.5">ROSCO / Fix</text>
+        <rect x="460" y="730" width="14" height="9" rx="2" fill="rgba(239, 68, 68, 0.2)" stroke="#ef4444" stroke-width="1" stroke-dasharray="3,3"/>
+        <text x="480" y="738" fill="#94a3b8" font-size="7.5">Bottleneck / Error</text>
+
+      </svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot red"></div>
+          <h3>Problem 1: Measurement Race</h3>
+        </div>
+        <ul>
+          <li>• WFCRL _read_all() returns on FIRST turbine match</li>
+          <li>• 6 DISCON DLLs write at different wall-clock times</li>
+          <li>• 3-5 turbines get zeros in SimulationOutput</li>
+          <li>• Fixed: _ensure_all_turbines_measured() polls until N=6</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot red"></div>
+          <h3>Problem 2: EnKF Bottleneck</h3>
+        </div>
+        <ul>
+          <li>• 40 ensemble × 6 turbines = 240 FLORIS calls/step</li>
+          <li>• ~10ms per FLORIS fm.run() = 2.4s per EnKF update</li>
+          <li>• Total ~2.5s/step > DT=2s → Python falls behind</li>
+          <li>• After ~30 steps: step mismatch → crash</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot red"></div>
+          <h3>Problem 3: DT=10s Fortran Crash</h3>
+        </div>
+        <ul>
+          <li>• DISCON OPEN/CLOSE measurement file every 0.05s</li>
+          <li>• DT=2s: 40 cycles (OK). DT=10s: 200 cycles (CRASH)</li>
+          <li>• Fortran: "Cannot change STATUS parameter in OPEN"</li>
+          <li>• Cannot increase DT; must make EnKF faster instead</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">WFCRL Closed-Loop Control · FAST.Farm v5.0.0 · Scheme A/B/C · D:\HR_Project\wfcrl-env-HRL\closed-loop-control</p>
+  </div>
+</body>
+</html>

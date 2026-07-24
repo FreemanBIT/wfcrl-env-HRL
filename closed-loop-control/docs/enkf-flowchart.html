@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EnKF Flowchart — Scheme B Observer</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'JetBrains Mono',monospace; background:#020617; min-height:100vh; padding:2rem; color:white; }
+    .container { max-width:1200px; margin:0 auto; }
+    h1 { font-size:1.3rem; margin-bottom:0.5rem; }
+    .sub { color:#94a3b8; font-size:0.8rem; margin-bottom:1.5rem; }
+    .flow { background:rgba(15,23,42,0.5); border-radius:1rem; border:1px solid #1e293b; padding:1.5rem; overflow-x:auto; }
+    svg { width:100%; min-width:1000px; display:block; }
+  </style>
+</head>
+<body>
+<div class="container">
+<h1>EnKF.update() — full flowchart</h1>
+<p class="sub">Called every control step (DT=2s). Input: measured per-turbine power. Output: corrected ambient state + wake params → fed to FLORIDyn model.</p>
+<div class="flow">
+<svg viewBox="0 0 1100 1050">
+<defs>
+  <marker id="a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#64748b"/></marker>
+  <marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ef4444"/></marker>
+  <marker id="ag" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#34d399"/></marker>
+  <pattern id="g" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0L0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.3"/></pattern>
+</defs>
+<rect width="100%" height="100%" fill="url(#g)"/>
+
+<!-- ======  INPUT ====== -->
+<rect x="380" y="15" width="340" height="50" rx="8" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+<text x="550" y="36" fill="white" font-size="11" font-weight="600" text-anchor="middle">INPUT: meas_power_kw[6] + yaw[6] + a[6]</text>
+<text x="550" y="54" fill="#94a3b8" font-size="9" text-anchor="middle">FAST.Farm measured power (kW per turbine)</text>
+
+<line x1="550" y1="65" x2="550" y2="80" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+<!-- ======  STEP 1: FORECAST ====== -->
+<rect x="230" y="80" width="640" height="95" rx="8" fill="rgba(30,41,59,0.3)" stroke="#475569" stroke-width="1"/>
+<text x="550" y="100" fill="#94a3b8" font-size="10" font-weight="600" text-anchor="middle">STEP 1: FORECAST (random walk + inflation)</text>
+<text x="550" y="118" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">ens[5,40] += q[5] * N(0,1)        ← 每个member加随机游走噪声</text>
+<text x="550" y="140" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">ens = mean + 1.02 * (ens - mean)   ← 协方差膨胀，防止过度收敛</text>
+<text x="550" y="162" fill="#475569" font-size="9" text-anchor="middle">clip: U∈[2,20]  φ∈[180,360]  TI∈[0.01,0.30]  ka∈[0.1,0.8]  kb∈[0,0.05]</text>
+
+<line x1="550" y1="175" x2="550" y2="195" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+<!-- ======  STEP 2: PREDICT MEASUREMENT (40 LOOP) ====== -->
+<rect x="50" y="195" width="1000" height="155" rx="8" fill="rgba(239,68,68,0.06)" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="6,4"/>
+<text x="550" y="215" fill="#ef4444" font-size="10" font-weight="600" text-anchor="middle">STEP 2: PREDICT MEASUREMENTS (40-member ensemble loop — BOTTLENECK)</text>
+
+<text x="550" y="238" fill="#64748b" font-size="13" text-anchor="middle" font-family="monospace">for e in range(40):  Y[:,e] = _predict_measurement(ens[:,e], yaw, a)</text>
+<text x="550" y="258" fill="#ef4444" font-size="9" text-anchor="middle">↓ 每个 member 展开 ↓</text>
+
+<!-- inner box for one member prediction -->
+<rect x="70" y="268" width="960" height="72" rx="6" fill="rgba(76,29,149,0.08)" stroke="#a78bfa" stroke-width="0.8"/>
+<text x="90" y="285" fill="#a78bfa" font-size="9" font-weight="600">_predict_measurement(member[e], yaw, a):</text>
+
+<text x="90" y="302" fill="#94a3b8" font-size="8.5" font-family="monospace">① model.sur.set_params(ka, kb)           ← 设置尾流参数</text>
+<text x="90" y="318" fill="#94a3b8" font-size="8.5" font-family="monospace">② model.set_conditions(U, phi, TI)        ← 设置环境状态</text>
+<text x="90" y="334" fill="#94a3b8" font-size="8.5" font-family="monospace">③ model.set_controls(yaw, a)              ← 当前控制指令</text>
+<text x="90" y="350" fill="#ef4444" font-size="8.5" font-family="monospace">④ model._recompute_effective()            ← for i in 6: surrogate.predict() 〈6次 FLORIS fm.run()〉</text>
+<text x="90" y="366" fill="#94a3b8" font-size="8.5" font-family="monospace">⑤ return [P_1,...,P_6] + [U_eff_1,...] if use_wind_meas</text>
+
+<text x="550" y="356" fill="#ef4444" font-size="9" text-anchor="middle" font-weight="600">Total: 40 members × 6 turbines = 240 FLORIS fm.run() calls (~2.4s)</text>
+
+<!-- output of step 2 -->
+<text x="550" y="395" fill="#64748b" font-size="12" text-anchor="middle" font-family="monospace">Y.shape = (m, 40)      where m = 6 (power only) or 12 (power + wind)</text>
+
+<line x1="550" y1="410" x2="550" y2="430" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+<!-- ======  STEP 3: COVARIANCES ====== -->
+<rect x="230" y="430" width="640" height="80" rx="8" fill="rgba(30,41,59,0.3)" stroke="#475569" stroke-width="1"/>
+<text x="550" y="450" fill="#94a3b8" font-size="10" font-weight="600" text-anchor="middle">STEP 3: COMPUTE COVARIANCES</text>
+
+<text x="550" y="472" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">xbar = ens.mean(axis=1)      shape: (5,)</text>
+<text x="550" y="494" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">ybar = Y.mean(axis=1)        shape: (m,)</text>
+
+<line x1="550" y1="510" x2="550" y2="530" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+<rect x="330" y="530" width="440" height="55" rx="8" fill="rgba(15,23,42,0.6)" stroke="#64748b" stroke-width="1"/>
+<text x="550" y="550" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">Ex = ens - xbar          (5,40)</text>
+<text x="550" y="572" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">Ey = Y - ybar            (m,40)</text>
+
+<line x1="550" y1="585" x2="550" y2="605" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+<rect x="330" y="605" width="440" height="40" rx="8" fill="rgba(15,23,42,0.6)" stroke="#64748b" stroke-width="1"/>
+<text x="550" y="622" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">Pxy = (Ex @ Ey.T) / 39    cross-cov (5,m)</text>
+<text x="550" y="640" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">Pyy = (Ey @ Ey.T) / 39    meas-cov  (m,m)</text>
+
+<line x1="550" y1="645" x2="550" y2="665" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+<!-- ======  STEP 4: KALMAN GAIN ====== -->
+<rect x="330" y="665" width="440" height="50" rx="8" fill="rgba(6,78,59,0.12)" stroke="#34d399" stroke-width="1"/>
+<text x="550" y="685" fill="#34d399" font-size="10" font-weight="600" text-anchor="middle">STEP 4: KALMAN GAIN + ANALYSIS UPDATE</text>
+<text x="550" y="705" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">K = Pxy @ pinv(Pyy + R)     Kalman gain (5,m)</text>
+
+<line x1="550" y1="715" x2="550" y2="735" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+<!-- ======  STEP 5: APPLY ====== -->
+<rect x="330" y="735" width="440" height="55" rx="8" fill="rgba(6,78,59,0.12)" stroke="#34d399" stroke-width="1"/>
+<text x="550" y="755" fill="#34d399" font-size="10" font-weight="600" text-anchor="middle">STEP 5: APPLY CORRECTION</text>
+<text x="550" y="775" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">D = y_meas + N(0,R)        perturbed obs (m,40)</text>
+<text x="550" y="793" fill="#64748b" font-size="15" text-anchor="middle" font-family="monospace">ens = ens + K @ (D - Y)     correct all 40 members !</text>
+
+<line x1="550" y1="790" x2="550" y2="810" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+<!-- ======  OUTPUT ====== -->
+<rect x="230" y="810" width="640" height="65" rx="8" fill="rgba(6,78,59,0.2)" stroke="#34d399" stroke-width="1.5"/>
+<text x="550" y="832" fill="#34d399" font-size="10" font-weight="600" text-anchor="middle">OUTPUT: posterior mean → write to model</text>
+<text x="550" y="852" fill="#64748b" font-size="13" text-anchor="middle" font-family="monospace">post = ens.mean(axis=1) = [U=8.01, φ=270.2°, TI=0.059, ka=0.38, kb=0.004]</text>
+<text x="550" y="872" fill="#94a3b8" font-size="10" text-anchor="middle">model.set_conditions(U,φ,TI)   +   sur.set_params({ka,kb})</text>
+
+<!-- side annotations -->
+<text x="1070" y="260" fill="#ef4444" font-size="8" transform="rotate(90,1070,260)">O(N_e × n_turb × surrogate)</text>
+<text x="1070" y="500" fill="#475569" font-size="8" transform="rotate(90,1070,500)">O(dim² × N_e) matrix ops ~μs</text>
+<text x="1070" y="780" fill="#34d399" font-size="8" transform="rotate(90,1070,780)">corrected state → MPC</text>
+
+<!-- data sizes -->
+<rect x="50" y="900" width="1000" height="55" rx="6" fill="rgba(30,41,59,0.2)" stroke="#475569" stroke-width="0.8"/>
+<text x="70" y="918" fill="#94a3b8" font-size="9" font-weight="600">Data dimensions (Ne=40, n=6 turbines, dim=5 state vars, m=6 measurement vars):</text>
+<text x="70" y="938" fill="#64748b" font-size="8.5" font-family="monospace">ens[5,40]  Y[6,40]  Ex[5,40]  Ey[6,40]  Pxy[5,6]  Pyy[6,6]  K[5,6]  R_diag[6]  D[6,40]</text>
+
+<!-- Path for fix annotation -->
+<rect x="50" y="970" width="1000" height="40" rx="6" fill="rgba(6,78,59,0.06)" stroke="#34d399" stroke-width="0.8"/>
+<text x="550" y="990" fill="#34d399" font-size="9" text-anchor="middle">Fix: switch surrogate.predict() from FLORIS to analytical Gaussian wake for ensemble predictions → 240×0.1ms=0.024s</text>
+<text x="550" y="1005" fill="#94a3b8" font-size="8" text-anchor="middle">Keep FLORIS for MPC.solve() (steady optimization, called every 20s, accuracy matters)</text>
+
+</svg>
+</div>
+</div>
+</body>
+</html>

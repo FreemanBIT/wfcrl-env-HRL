@@ -21,6 +21,7 @@ from wfcrl.config.simulator import FastFarmConfig
 from wfcrl.config.types import WindConfig, WindType
 from wfcrl.config.control import ControlInput
 from wfcrl.engine.fastfarm_continuous import ContinuousFastFarmInterface
+from wfcrl.engine._outlist import _set_fast_scalar
 
 from closedloop.case_config import FarmCase, default_case
 from closedloop.surrogate import SurrogateModel
@@ -111,7 +112,7 @@ def _parse_discon_file(fpath: str) -> dict:
     return vals
 
 
-def _ensure_all_turbines_measured(output, ff, n_turbines: int, timeout: float = 0.5):
+def _ensure_all_turbines_measured(output, ff, n_turbines: int, timeout: float = 2.0):
     """Re-read measurement files until all N turbines have fresh wind speed.
 
     WFCRL's _read_all() exits on first match; DISCON in parallel OpenFAST
@@ -140,6 +141,10 @@ def _ensure_all_turbines_measured(output, ff, n_turbines: int, timeout: float = 
         for t_id in range(1, n + 1):
             fpath = _os.path.join(farm_base, f'measurements_T{t_id}.txt')
             vals = _parse_discon_file(fpath)
+            # Retry once if file was empty (mid-write race)
+            if not vals:
+                _time.sleep(0.01)
+                vals = _parse_discon_file(fpath)
             if not vals:
                 continue
             step = int(vals.get('step', -1))
@@ -166,15 +171,160 @@ def _ensure_all_turbines_measured(output, ff, n_turbines: int, timeout: float = 
               f" after {timeout}s")
 
 
+def _read_sim_time(ff) -> float:
+    """Read current FAST.Farm simulation time from T1's measurement file."""
+    import os as _os
+    farm_base = getattr(ff, '_farm_base', None)
+    if not farm_base:
+        return -1.0
+    vals = _parse_discon_file(_os.path.join(farm_base, 'measurements_T1.txt'))
+    return vals.get('t', -1.0) if vals else -1.0
+
+
+def _poll_sim_time_until(ff, target_t: float, timeout: float = 0.0) -> float:
+    """Wait until FAST.Farm simulation time >= target_t. Returns actual time."""
+    import time as _time
+    t = _read_sim_time(ff)
+    if t >= target_t:
+        return t
+    deadline = _time.time() + timeout if timeout > 0 else float('inf')
+    while _time.time() < deadline:
+        if getattr(ff, '_process', None) is not None and ff._process.poll() is not None:
+            return t  # FAST.Farm died
+        _time.sleep(0.05)
+        t = _read_sim_time(ff)
+        if t >= target_t:
+            return t
+    return t
+
+
+def _unlock_yaw_dof(ff):
+    """Revert _fix_initial_yaw: set YawDOF=True + YCMode=5 so DISCON yaw
+    commands take effect. YCMode=0 (template default) ignores DLL yaw rate.
+    NacYaw=0 is correct — wind-field rotation means 0° is aligned with +X flow."""
+    import os as _os
+    farm_base = getattr(ff, '_farm_base', None)
+    fstf_file = getattr(ff, '_fstf_file', None)
+    if not farm_base or not fstf_file:
+        return
+    try:
+        from openfast_toolbox.io.fast_input_file import FASTInputFile
+        fstf = FASTInputFile(fstf_file)
+        wt_refs = [row[3].replace('"', "") for row in fstf["WindTurbines"]]
+        for wt_ref in wt_refs:
+            fst = FASTInputFile(str(_os.path.join(farm_base, wt_ref)))
+            # YawDOF in ElastoDyn
+            ed_rel = fst["EDFile"].replace('"', "")
+            ed_path = _os.path.join(farm_base, ed_rel)
+            if _os.path.exists(ed_path):
+                _set_fast_scalar(ed_path, "YawDOF", "True")
+            # YCMode in ServoDyn (must NOT be 0, or DLL yaw rate is ignored)
+            servo_rel = fst["ServoFile"].replace('"', "")
+            servo_path = _os.path.join(farm_base, servo_rel)
+            if _os.path.exists(servo_path):
+                _set_fast_scalar(servo_path, "YCMode", "5")
+                _set_fast_scalar(servo_path, "TYCOn", "0.0")  # enable from t=0
+    except Exception as e:
+        print(f"  [warn] Could not unlock yaw DOF: {e}")
+
+
+def _enable_per_turbine_out(ff):
+    """Set OutFileFmt=3 in each turbine's .fst so per-turbine .out files are written."""
+    import os as _os
+    farm_base = getattr(ff, '_farm_base', None)
+    fstf_file = getattr(ff, '_fstf_file', None)
+    if not farm_base or not fstf_file:
+        return
+    try:
+        from openfast_toolbox.io.fast_input_file import FASTInputFile
+        fstf = FASTInputFile(fstf_file)
+        wt_refs = [row[3].replace('"', "") for row in fstf["WindTurbines"]]
+        for wt_ref in wt_refs:
+            fst_path = _os.path.join(farm_base, wt_ref)
+            if _os.path.exists(fst_path):
+                _set_fast_scalar(fst_path, "OutFileFmt", "3")
+    except Exception as e:
+        print(f"  [warn] Could not enable per-turbine .out: {e}")
+
+
+def _save_dtl_from_outb(output_dir, ff, n_turbines, dt_sample=1.0):
+    """Parse FAST.Farm per-turbine .out files and save resampled data to CSV."""
+    import os as _os, csv as _csv
+    from pathlib import Path as _Path
+    from wfcrl.engine._outb import _parse_all_outb, CHANNEL_TO_OUTPUT
+
+    farm_base = getattr(ff, '_farm_base', None)
+    fstf_file = getattr(ff, '_fstf_file', None)
+    if not farm_base or not fstf_file:
+        print("  [warn] No farm_base, cannot parse .out")
+        return
+
+    prefix = _os.path.splitext(_os.path.basename(fstf_file))[0]  # "Case"
+    try:
+        data = _parse_all_outb(farm_base, prefix, n_turbines)
+    except Exception as e:
+        print(f"  [warn] .out parse failed: {e}")
+        return
+
+    time_vec = data.get("time")
+    if time_vec is None or len(time_vec) == 0:
+        print("  [warn] No .out data found")
+        return
+
+    # Channels to extract and their CSV column prefixes
+    channel_csv_map = {
+        "power": "genpwr", "generator_torque": "gentq",
+        "rotor_speed": "rotspd", "pitch": "blpitch",
+        "yaw": "nacyaw", "wind_x": "wind_x",
+        "blade_load_1": "mip1", "blade_load_2": "moop1",
+        "blade_load_3": "mzb1",
+    }
+
+    # Build header
+    header = ["t"]
+    for col in channel_csv_map.values():
+        for t_id in range(1, n_turbines + 1):
+            header.append(f"{col}_T{t_id}")
+
+    csv_path = _Path(output_dir) / "measurements_dtl.csv"
+    t_start = time_vec[0]
+    t_end = time_vec[-1]
+
+    with open(csv_path, "w", newline="") as f:
+        writer = _csv.writer(f)
+        writer.writerow(header)
+
+        t_sample = max(t_start, dt_sample * ((t_start + 0.001) // dt_sample + 1))
+        while t_sample <= t_end + 1e-6:
+            idx = int(np.searchsorted(time_vec, t_sample))
+            idx = min(idx, len(time_vec) - 1)
+            row = [t_sample]
+            for ch_key, _col in channel_csv_map.items():
+                arr = data.get(ch_key)
+                if arr is not None and arr.shape[1] >= n_turbines:
+                    for t_id in range(n_turbines):
+                        row.append(arr[idx, t_id])
+                else:
+                    row.extend([0.0] * n_turbines)
+            writer.writerow(row)
+            t_sample += dt_sample
+
+    print(f"DTL measurements saved: {csv_path}  ({time_vec[0]:.1f}s–{time_vec[-1]:.1f}s, "
+          f"resampled to {dt_sample}s)")
+
+
 def main():
     p = argparse.ArgumentParser(description="FAST.Farm + closed-loop launcher (WFCRL native)")
     p.add_argument("--duration", type=float, default=300)
-    p.add_argument("--dt", type=float, default=2.0, help="FAST.Farm DT_low")
+    p.add_argument("--dt", type=float, default=10.0, help="FAST.Farm control step (s)")
     p.add_argument("--controller", default="greedy",
                    choices=["greedy", "A", "B", "C", "a", "b", "c"])
     p.add_argument("--mode", type=int, default=1, choices=[1,2,3,4,5])
-    p.add_argument("--wind-speed", type=float, default=8.0)
+    p.add_argument("--wind-speed", type=float, default=10.0)
     p.add_argument("--wind-dir", type=float, default=270.0)
+    p.add_argument("--bts", type=str,
+                   default=r"D:\HR_Project\wfcrl-env-HRL\FarmInputs\inflow_10ms_TI05_s8D.bts",
+                   help="TurbSim .bts wind file (absolute path avoids copy to FarmInputs/)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--no-floris", action="store_true")
     args = p.parse_args()
@@ -192,8 +342,9 @@ def main():
     output_dir = str(Path(__file__).resolve().parents[1] /
                      f"__simul__/launcher/{args.controller}_mode{args.mode}_{ts}")
 
-    wind = WindConfig(wind_type=WindType.STEADY, speed=args.wind_speed,
-                      direction=args.wind_dir, turbulence_intensity=0.06)
+    wind = WindConfig(wind_type=WindType.TURBSIM_BTS, speed=args.wind_speed,
+                      direction=args.wind_dir, turbulence_intensity=0.06,
+                      wind_file=args.bts)
 
     config = FastFarmConfig(
         case_name=f"launcher_{args.controller}",
@@ -205,6 +356,8 @@ def main():
 
     ff = ContinuousFastFarmInterface(config)
     ff.setup()       # generates case + deploys DISCON DLL + writes ROSCO params
+    _enable_per_turbine_out(ff)  # OutFileFmt=3 on each turbine for per-turbine .out
+    _unlock_yaw_dof(ff)  # _fix_initial_yaw sets YawDOF=False for fixed-yaw LUT tests
     ff.reset(wind)   # configures InflowWind
     print(f"Case: {ff._farm_base}")
 
@@ -244,6 +397,15 @@ def main():
     traj = Trajectory(controller=args.controller, mode=args.mode)
     prev_cmds = None
 
+    # Controls CSV: record yaw/power/pitch commands at each control step
+    controls_csv = Path(output_dir) / "controls.csv"
+    with open(controls_csv, 'w', newline='') as f:
+        header = ['step', 't']
+        for tid in range(1, case.n_turbines + 1):
+            header.extend([f'yaw_{tid}', f'power_{tid}', f'pitch_{tid}'])
+        import csv as _csv2
+        _csv2.writer(f).writerow(header)
+
     # First-iteration state: no measurements yet; controller starts from defaults.
     meas: dict[int, TurbineMeas] = {}
     flow = sensing.estimate({})
@@ -267,6 +429,44 @@ def main():
             cin = _cmds_to_control_input(
                 cmds, case.n_turbines, args.wind_speed, args.wind_dir)
 
+            # Record commands to controls.csv (at intended control time)
+            ctrl_t_target = (k + 1) * args.dt
+            with open(controls_csv, 'a', newline='') as f:
+                row = [step, ctrl_t_target]
+                for tid in range(case.n_turbines):
+                    row.extend([
+                        cin.yaw[tid] if tid < len(cin.yaw) else 0.0,
+                        cin.power[tid] if cin.power is not None and tid < len(cin.power) else 0.0,
+                        cin.pitch[tid] if tid < len(cin.pitch) else 0.0,
+                    ])
+                import csv as _csv3
+                _csv3.writer(f).writerow(row)
+
+            # Wait until FAST.Farm simulation time reaches the control boundary,
+            # then dispatch commands exactly on schedule.  If computation
+            # took too long and we missed the boundary, skip to the next one.
+            sim_t = _read_sim_time(ff)
+            if sim_t > ctrl_t_target + args.dt * 0.5:
+                skipped = int((sim_t - ctrl_t_target) / args.dt) + 1
+                new_target = ctrl_t_target + skipped * args.dt
+                print(f"  [warn] computation late (sim t={sim_t:.1f}s, "
+                      f"target {ctrl_t_target:.0f}s) — resetting to t={new_target:.0f}s")
+                ctrl_t_target = new_target
+                # Update controls.csv row
+                import csv as _csv4
+                with open(controls_csv, 'r') as f:
+                    rows = list(_csv4.reader(f))
+                if rows:
+                    rows[-1][1] = str(int(ctrl_t_target))
+                    with open(controls_csv, 'w', newline='') as f:
+                        _csv4.writer(f).writerows(rows)
+
+            sim_t = _poll_sim_time_until(ff, ctrl_t_target)
+            if sim_t < ctrl_t_target - 0.5:
+                print(f"\nFAST.Farm stalled at t={sim_t:.1f}s (target {ctrl_t_target})")
+                aborted = True
+                break
+
             # Send to FAST.Farm via WFCRL interface
             try:
                 output = ff.wait_step(cin)
@@ -277,7 +477,7 @@ def main():
                 break
 
             # Re-read until all N turbines report (WFCRL's poll exits on first match)
-            _ensure_all_turbines_measured(output, ff, case.n_turbines, timeout=0.5)
+            _ensure_all_turbines_measured(output, ff, case.n_turbines, timeout=2.0)
 
             # Parse response — feeds NEXT iteration's controller step
             meas = _output_to_meas(output)
@@ -304,6 +504,9 @@ def main():
         ff.stop()
         ff.close()
 
+    # ── Extract DT_low measurements from .out files → measurements_dtl.csv ──
+    _save_dtl_from_outb(output_dir, ff, case.n_turbines)
+
     # ── 5. Report ──────────────────────────────────────────────────────
     ev = Evaluator(transient_s=60.0)
     print(f"\nDone. Mean farm power (post-transient): {ev.mean_farm_power(traj):.1f} kW")
@@ -312,6 +515,7 @@ def main():
     out = Path(output_dir) / "trajectory.csv"
     traj.save_csv(out)
     print(f"Trajectory saved: {out}  ({'partial — FAST.Farm exited early' if aborted else 'complete'})")
+    print(f"Controls saved: {controls_csv}")
 
 
 if __name__ == "__main__":

@@ -137,6 +137,7 @@ class EnKF:
         yaw: np.ndarray,
         a: np.ndarray,
         meas_wind: Optional[np.ndarray] = None,
+        verbose: bool = False,
     ) -> dict:
         """One EnKF forecast+analysis step. Returns the posterior mean state and
         writes it into the model."""
@@ -151,6 +152,15 @@ class EnKF:
         xbar = self._ens.mean(axis=1, keepdims=True)
         self._ens = xbar + self.cfg.inflation * (self._ens - xbar)
         self._clip_ensemble()
+
+        if verbose:
+            xbar_post_fc = self._ens.mean(axis=1)
+            std_post_fc = self._ens.std(axis=1)
+            names = ["U", "φ", "TI"] + (["ka", "kb"] if self.cfg.estimate_params else [])
+            s_mean = " ".join(f"{n}={xbar_post_fc[i]:.3f}" for i, n in enumerate(names))
+            s_std  = " ".join(f"σ{n}={std_post_fc[i]:.3f}" for i, n in enumerate(names))
+            print(f"  EnKF Forecast:  mean [{s_mean}]")
+            print(f"                  std  [{s_std}]")
 
         # --- predicted measurements for each member (eq 2.13 mean of h) ---
         y_meas = self._measurement_vector(meas_power_kw, meas_wind)
@@ -172,11 +182,32 @@ class EnKF:
 
         # --- gain and update (eq 2.17-2.18) ---
         K = Pxy @ np.linalg.pinv(S)                      # (dim,m)
+
+        if verbose:
+            y_meas_vec = self._measurement_vector(meas_power_kw, meas_wind)
+            innov_per_turb = y_meas_vec[:self.n_turb] - ybar.ravel()[:self.n_turb]
+            s_innov = " ".join(f"{v:+.0f}" for v in innov_per_turb)
+            print(f"  EnKF Predict:   P_farm ensemble range "
+                  f"[{Y[:self.n_turb].sum(axis=0).min():.0f} .. "
+                  f"{Y[:self.n_turb].sum(axis=0).mean():.0f} .. "
+                  f"{Y[:self.n_turb].sum(axis=0).max():.0f}] kW")
+            print(f"  EnKF Measure:   P_farm_meas={meas_power_kw.sum():.0f} kW")
+            print(f"  EnKF Innov:     per-turb [{s_innov}] kW, |K|₂={np.linalg.norm(K):.3f}")
+
         # perturbed observations
         Rsqrt = np.sqrt(np.diag(R))
         D = y_meas[:, None] + Rsqrt[:, None] * self.rng.standard_normal((m, Ne))
         self._ens = self._ens + K @ (D - Y)
         self._clip_ensemble()
+
+        if verbose:
+            delta = self._ens.mean(axis=1) - xbar_post_fc
+            names = ["U", "φ", "TI"] + (["ka", "kb"] if self.cfg.estimate_params else [])
+            s_delta = " ".join(f"Δ{n}={delta[i]:+.4f}" for i, n in enumerate(names))
+            post_mean = self._ens.mean(axis=1)
+            s_post = " ".join(f"{n}={post_mean[i]:.3f}" for i, n in enumerate(names))
+            print(f"  EnKF Analysis:  Δ  [{s_delta}]")
+            print(f"                  post [{s_post}]")
 
         # posterior mean -> write into model
         post = self._ens.mean(axis=1)

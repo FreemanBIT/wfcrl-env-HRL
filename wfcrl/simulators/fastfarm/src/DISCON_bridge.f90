@@ -22,7 +22,7 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
   REAL(4),    SAVE :: prev_yaw = 0.0, prev_pitch = 0.0, prev_torque = 0.0
   REAL(4),    SAVE :: prev_power = 0.0, power_err_integral = 0.0
   INTEGER(4), SAVE :: call_count = 0
-  ! 内部控制参数 (ROSCO 等效)
+  ! 内部控制参数 (ROSCO 等效)(
   REAL(4), PARAMETER :: GEN_SPD_CUTIN = 7.33
   REAL(4), PARAMETER :: GEN_SPD_RATED = 122.9
   REAL(4), PARAMETER :: T_RATED = 43093.55
@@ -37,8 +37,9 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
 
   ! 每次调用都写标记文件（调试：确认 DLL 被调用）
   call_count = call_count + 1
+  CLOSE(97)
   OPEN(97, FILE='_discon_called.txt', STATUS='REPLACE')
-  WRITE(97,'(A,I0,A,I0)') 'call=',call_count,' turbine=',my_id
+  WRITE(97,'(A,I0,A,I0,A)') 'call=',call_count,' turbine=',my_id,'  v2-continuous-yaw'
   CLOSE(97)
 
   ! 初始化: 通过 accINFILE 读取 turbine ID
@@ -116,17 +117,27 @@ SUBROUTINE DISCON(avrSWap, aviFail, accINFILE, avrOutData, avrData) BIND (C, NAM
   avrSWap(44) = pitch_cmd_internal * 0.0174533  ! blade 3
   avrSWap(45) = pitch_cmd_internal * 0.0174533  ! collective pitch (rad)
   avrSWap(47) = torque_cmd                      ! generator torque (Nm)
-  avrSWap(48) = 0.0                             ! yaw rate (rad/s)
+  avrSWap(48) = 0.0                             ! yaw rate (rad/s) — overridden below
+
+  ! --- 持续偏航控制：用上一次存储的目标偏航指令持续输出偏航速率 ---
+  ! prev_yaw 是 SAVE 变量，跨 DT_low 调用保持。即使 controls.txt 未更新，
+  ! 偏航速率仍然持续输出，防止机舱在控制步内停止转动。
+  IF (ABS(prev_yaw) > 0.01) THEN
+    avrSWap(48) = (prev_yaw * 0.0174533 - nac_yaw) * 0.2
+  END IF
+
+  ! --- 显式关闭文件句柄（防止 STATUS='REPLACE' 冲突）---
+  CLOSE(94)
+  CLOSE(97)
 
   ! --- 写入测量文件 ---
   WRITE(tstr, '(I0)') turbine_id
   OPEN(94, FILE='measurements_T'//TRIM(tstr)//'.txt', STATUS='REPLACE')
-  ! 使用显式格式写入，确保 "step=N" 等为连续字符（无分隔空格）
-  WRITE(94,'(A,I0,A,F0.4,A,F0.2,A,F0.4,A,F0.4,A,F0.2)') &
+  WRITE(94,'(A,I0,A,F0.4,A,F0.4,A,F0.4,A,F0.4,A,F0.2)') &
     'step=',applied_step,' t=',current_time,' genpwr=',gen_pwr/1000.0, &
     ' genspd=',gen_spd*9.5493,' gentq=',gen_tq,' rotspd=',rot_spd*9.5493
   WRITE(94,'(A,F0.6)') ' wind_x=',wind_x
-  WRITE(94,'(A,F0.6,A,F0.6)') ' blpitch=',blade1_pitch*57.29578,' nacyaw=',nac_yaw*57.29578
+  WRITE(94,'(A,F0.6,A,F0.6,A,F0.3)') ' blpitch=',blade1_pitch*57.29578,' nacyaw=',nac_yaw*57.29578,' yaw_cmd=',prev_yaw
   WRITE(94,'(A,F0.2,A,F0.2,A,F0.2)') ' mip1=',root_mip1,' moop1=',root_moop1,' mzb1=',root_mzb1
   CLOSE(94)
 
