@@ -13,6 +13,35 @@ results/*
 FarmInputs/*
 *.bts
 *.exe
+.dll
+.vtk
+.log
 .hermes/*
 closed-loop-control/__simul__/*
 nul
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Obsidian & Claude
+.obsidian/
+.claudian/
+
+# Generated files
+custom_winds/
+custom_layouts/*.yaml
+
+# FAST.Farm binaries (too large for GitHub)
+wfcrl/simulators/fastfarm/bin/
+wfcrl/simulators/fastfarm/servo_dll/*.dll
+
+# Experiment outputs
+fastfarm_continuous.log
+closed-loop-control/results/
+closed-loop-control/report_*.html
+
+# OS files
+.DS_Store
+Thumbs.db
