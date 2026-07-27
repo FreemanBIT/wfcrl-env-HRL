@@ -39,6 +39,46 @@ elif "DISPLAY" not in os.environ:
     except Exception:
         pass
 import matplotlib.pyplot as plt
+
+# VTK visualization
+_HAVE_PYVISTA = False
+try:
+    import pyvista as pv
+    _HAVE_PYVISTA = True
+except Exception:
+    pass
+
+def render_vtk_screenshot(vtk_dir, time_step=-1, slice_height=90.0):
+    if not _HAVE_PYVISTA:
+        return None
+    from pathlib import Path
+    import numpy as np
+    vtk_path = Path(vtk_dir)
+    if not vtk_path.exists():
+        alt = vtk_path.parent / "vtk_ff"
+        if alt.exists():
+            vtk_path = alt
+        else:
+            return None
+    low_files = sorted(vtk_path.glob("Case.Low.Dis.*.vtk"))
+    if not low_files:
+        return None
+    fpath = str(low_files[time_step]) if time_step < len(low_files) else str(low_files[-1])
+    try:
+        mesh = pv.read(fpath)
+        vel = mesh["Velocity"]
+        mesh["VelocityMagnitude"] = np.linalg.norm(vel, axis=1)
+        plotter = pv.Plotter(off_screen=True, window_size=[1000, 500])
+        sl = mesh.slice("z", origin=(0, 0, slice_height))
+        plotter.add_mesh(sl, scalars="VelocityMagnitude", cmap="RdYlGn", show_edges=False, lighting=False)
+        plotter.show_bounds(grid="front", location="outer", all_edges=True, xtitle="x (m)", ytitle="y (m)")
+        plotter.view_xy()
+        img = plotter.screenshot(return_img=True)
+        plotter.close()
+        return img
+    except Exception:
+        return None
+
 from matplotlib.patches import Circle, Patch
 
 # matplotlib 中文字体
@@ -281,6 +321,7 @@ def generate_yaml_from_form(params):
     # FAST.Farm 特有
     if params.get("backend") == "fastfarm":
         config["simulator"]["dt"] = params.get("dt", 3.0)
+        config["simulator"]["options"] = {"enable_vtk": params.get("enable_vtk", False)}
 
     return yaml.safe_dump(config, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
@@ -864,6 +905,7 @@ def page_quick_run():
                         "xcoords": list(layout_info["x"]),
                         "ycoords": list(layout_info["y"]),
                         "turbine_type": "nrel_5MW",
+                        "enable_vtk": enable_vtk,
                     }
                     if controller == "fixed_yaw" and st.session_state.get("config_yaw"):
                         params["yaw_misalignment_deg"] = st.session_state["config_yaw"]
@@ -2560,6 +2602,9 @@ def page_run():
             dt = st.number_input("时间步长 (s)", 1.0, 5.0, 3.0, 0.5, key="run_dt")
             steps = st.number_input("步数", 5, 200, 30, key="run_steps")
         st.caption(f"仿真时长: {dt * steps:.0f}s")
+        enable_vtk = False
+        if backend == "fastfarm":
+            enable_vtk = st.checkbox("VTK flow field visualization", value=False, help="Generate VTK files for wake visualization in history")
 
     if is_custom and backend == "fastfarm":
         st.warning("⚠️ 自定义控制器当前仅支持 Mock 后端。选择内置控制器可使用 FAST.Farm。")
@@ -2622,11 +2667,15 @@ def page_run():
                 else:
                     from wfcrl.engine.fastfarm_continuous import ContinuousFastFarmInterface
                     from wfcrl.config.simulator import FastFarmConfig
+                    exp_name = f"{farm_name}-{ctrl_info["name"]}-{datetime.now().strftime("%H%M%S")}"
+                    os.makedirs(str(EXPERIMENTS_DIR / exp_name), exist_ok=True)
                     cfg = FastFarmConfig(
                         case_name=f"ff-run-{farm_name}",
                         num_turbines=n_t, xcoords=list(xs), ycoords=list(ys),
                         dt=dt, max_iter=steps,
                         wind=wind_cfg,
+                        output_dir=str(EXPERIMENTS_DIR / exp_name),
+                        enable_vtk=enable_vtk,
                     )
                     sim = ContinuousFastFarmInterface(cfg)
 
@@ -2651,6 +2700,10 @@ def page_run():
                     elif ctrl_type == "fastfarm_yaw":
                         from wfcrl.controllers import FastFarmYawController
                         ctrl_instance = FastFarmYawController()
+                        # Use set_fixed_yaw to directly lock yaw (avoids DLL yaw control issues)
+                        if hasattr(sim, "set_fixed_yaw"):
+                            yaw_arr = np.array([-17.0] + [0.0]*(n_t-1), dtype=np.float64)
+                            sim.set_fixed_yaw(yaw_arr)
                     else:
                         raise ValueError(f"未知控制器: {ctrl_type}")
 
@@ -2678,10 +2731,21 @@ def page_run():
                     "final_time_s": steps * dt,
                     "mean_farm_power_mw": float(np.mean(result.output.farm_power_mw)),
                     "duration_wall_s": elapsed,
-                    "wind_speed": wind_speed, "wind_direction": wind_dir,
+                    "wind_speed": wind_speed, "wind_direction": wind_dir_val,
                 }
                 json.dump(meta, open(out_dir / "metadata.json", "w", encoding="utf-8"),
                           indent=2, ensure_ascii=False)
+                # Copy VTK files if FAST.Farm was used
+                import shutil
+                for sfx in ["FarmInputs/vtk_ff", "simulator/FarmInputs/vtk_ff"]:
+                    src = Path(str(sim.config.output_dir)) / sfx
+                    if src.exists():
+                        dst = out_dir / sfx
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        if dst.exists():
+                            shutil.rmtree(str(dst))
+                        shutil.copytree(str(src), str(dst))
+                        break
 
                 progress.progress(1.0, text="完成")
                 status.update(label="✅ 实验完成", state="complete")
@@ -2744,9 +2808,35 @@ def _show_experiment_detail(exp, df, meta):
     wt = meta.get("duration_wall_s")
     cols2[3].metric("墙钟耗时", f"{wt:.1f}s" if wt else "?")
 
+    col_del1, col_del2 = st.columns([1, 5])
+    with col_del1:
+        btn_key = f"del_{exp['dir'].name}"
+        if st.button("🗑️ 删除", type="secondary", key=btn_key):
+            import shutil
+            shutil.rmtree(str(exp["dir"]), ignore_errors=True)
+            st.success(f"已删除: {exp['dir'].name}")
+            st.rerun()
+
     if df is None:
         st.warning("无时序数据")
         return
+
+    # ── VTK visualization ──
+    for _vd in [Path(str(exp["dir"]))/"simulator"/"FarmInputs"/"vtk_ff",
+                Path(str(exp["dir"]))/"FarmInputs"/"vtk_ff"]:
+        if _vd.exists() and _HAVE_PYVISTA:
+            _lf = sorted(_vd.glob("Case.Low.Dis.*.vtk"))
+            if _lf:
+                st.subheader("VTK FAST.Farm flow field")
+                _si = st.slider("Time step", 0, len(_lf)-1, len(_lf)-1, key=f"vtk_{exp["dir"].name}")
+                _img = render_vtk_screenshot(str(_vd), _si, 90.0)
+                if _img is not None:
+                    st.image(_img, use_container_width=True)
+                st.divider()
+            break
+        elif _vd.exists():
+            st.info("VTK files exist. Install: pip install pyvista")
+            break
 
     # ── 参数Tab ──────────────────────────────────────────────────
     st.subheader("📈 详细参数")

@@ -686,6 +686,14 @@ def create_ff_case(case: Dict, output_dir=None):
     # OpenFAST 5.0.0 requires RotorDiamRef
     rotor_diameter = ed["TipRad"] * 2
     out_fstf["RotorDiamRef"] = rotor_diameter
+
+    # 启用 VTK 输出（用于尾流可视化）
+    out_fstf["WrDisWind"] = True           # 写入 disturbed wind VTK 文件
+    out_fstf["NOutDisWindXY"] = 1           # 输出一个水平切片
+    out_fstf["OutDisWindZ"] = hubHeight      # 在轮毂高度切片
+    out_fstf["NOutDisWindYZ"] = 0
+    out_fstf["NOutDisWindXZ"] = 0
+
     out_fstf.write(outputFSTF)
     return outputFSTF
 

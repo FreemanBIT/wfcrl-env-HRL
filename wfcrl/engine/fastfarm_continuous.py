@@ -35,9 +35,12 @@ final = ff.stop()
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess as _sp
+import sys
 import time
 import warnings
+from dataclasses import replace
 from typing import Dict, Optional, Sequence
 
 import numpy as np
@@ -54,11 +57,26 @@ from wfcrl.engine._ff_case import (
 from wfcrl.engine.base import (
     FastFarmAborted,
 )
+from wfcrl.engine.capabilities import (
+    FASTFARM_CONTROL_MODES,
+    FidelityLevel,
+    SimulatorCapabilities,
+    StepSynchronization,
+    TimeModel,
+)
 from wfcrl.engine.angle_utils import (
     nacyaw_from_misalignment,
     misalignment_from_nacyaw,
 )
 from wfcrl.engine.fastfarm_step import FastFarmInterface
+from wfcrl.engine.fastfarm_protocol import (
+    PHASE_APPLIED,
+    PHASE_READY,
+    FastFarmProtocolError,
+    atomic_write_text,
+    render_control_header,
+    wait_for_turbine_records,
+)
 from wfcrl.engine._outlist import (
     _set_fast_scalar,
 )
@@ -101,8 +119,39 @@ class ContinuousFastFarmInterface(FastFarmInterface):
     final = ff.stop()
     """
 
+    capabilities = SimulatorCapabilities(
+        simulator_id="fastfarm_continuous",
+        fidelity=FidelityLevel.MID_FIDELITY,
+        time_model=TimeModel.CONTINUOUS,
+        synchronization=StepSynchronization.FILE_POLLING,
+        control_modes=FASTFARM_CONTROL_MODES,
+        measurements=frozenset({
+            "time", "power_mw", "wind_speed", "yaw_deg", "pitch_deg",
+            "torque_nm", "rotor_speed_rpm", "blade_loads",
+        }),
+        strict_step=False,
+        supports_flow_field=True,
+        notes=(
+            "Flow is continuous, but the current text-file bridge does not pause FAST.Farm.",
+            "Controller wall-clock time must currently remain below the exchange interval.",
+        ),
+    )
+
     def __init__(self, config):
         super().__init__(config)
+        self._strict_handshake = bool(
+            getattr(config, "enable_strict_handshake", False)
+        )
+        if self._strict_handshake:
+            self.capabilities = replace(
+                type(self).capabilities,
+                synchronization=StepSynchronization.FILE_HANDSHAKE,
+                strict_step=True,
+                notes=(
+                    "Protocol-v2 blocks every turbine at each controller boundary.",
+                    "Requires the matching protocol-v2 DISCON bridge DLL.",
+                ),
+            )
         self._process: Optional[_sp.Popen] = None
         self._controls_file: Optional[str] = None
         self._discon_initialized = False
@@ -129,6 +178,16 @@ class ContinuousFastFarmInterface(FastFarmInterface):
         self._controls_file = os.path.join(self._farm_base, "controls.txt")
 
         print(f"ContinuousFastFarmInterface ready: {self.n_turbines} turbines")
+
+    def reset(self, wind: WindConfig) -> None:
+        super().reset(wind)
+        self._reset_contract_state()
+
+    def _step_impl(self, controls: ControlInput) -> SimulationOutput:
+        """Use the continuous bridge through the common ``step`` entry point."""
+        if self._process is None:
+            self.start()
+        return self.wait_step(controls)
 
     def set_fixed_yaw(self, yaw_misalign_deg) -> None:
         """设置各风机的**固定偏航失准角**（相对来流，度）并锁定偏航自由度。
@@ -177,12 +236,16 @@ class ContinuousFastFarmInterface(FastFarmInterface):
         初始用 mode=0 零偏航增量，让 ROSCO 自行对风。"""
         if self._controls_file is None:
             return
-        lines = ["step=-1"]
+        if self._strict_handshake:
+            lines = [render_control_header(
+                -1, self.config.dt, self.config.handshake_timeout,
+            )]
+        else:
+            lines = ["step=-1"]
         for t in range(self.n_turbines):
             lines.append(f"T{t+1} mode=0 yaw=0.000 pitch=0.000 power=0.000 minpitch=0.000")
         lines.append("END")
-        with open(self._controls_file, 'w') as f:
-            f.write('\n'.join(lines) + '\n')
+        atomic_write_text(self._controls_file, '\n'.join(lines) + '\n')
 
     def start(self) -> None:
         """后台启动 FAST.Farm（非阻塞）。"""
@@ -191,6 +254,10 @@ class ContinuousFastFarmInterface(FastFarmInterface):
 
         # 预写初始 controls.txt（step=0），使 DLL 第一时间获得正确偏航
         self._write_initial_controls()
+
+        process_env = self._fastfarm_process_environment()
+        if self._strict_handshake:
+            self._require_openmp_fastfarm(process_env)
 
         # 将 FAST.Farm 输出重定向到日志文件（防止 pipe 缓冲区满导致死锁）
         log_path = os.path.join(self.config.output_dir or ".", "fastfarm_continuous.log")
@@ -201,10 +268,48 @@ class ContinuousFastFarmInterface(FastFarmInterface):
             stdout=log_file,
             stderr=_sp.STDOUT,
             text=True,
+            env=process_env,
         )
         self._proc_log = log_file
         self._step_idx = 0
         print(f"FAST.Farm started (PID {self._process.pid}), log: {log_path}")
+
+    def _fastfarm_process_environment(self) -> Dict[str, str]:
+        """Build a child environment that can locate Intel's OpenMP runtime."""
+        env = os.environ.copy()
+        if shutil.which("libiomp5md.dll", path=env.get("PATH")) is not None:
+            return env
+
+        candidates = (
+            os.path.join(sys.prefix, "Lib", "site-packages", "torch", "lib"),
+            os.path.join(sys.prefix, "Library", "bin"),
+        )
+        for directory in candidates:
+            if os.path.exists(os.path.join(directory, "libiomp5md.dll")):
+                env["PATH"] = directory + os.pathsep + env.get("PATH", "")
+                break
+        return env
+
+    def _require_openmp_fastfarm(self, process_env: Dict[str, str]) -> None:
+        """Fail before launch when strict barriers would deadlock a serial build."""
+        try:
+            probe = _sp.run(
+                [self._fastfarm_exe],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=process_env,
+            )
+        except (OSError, _sp.SubprocessError) as exc:
+            raise RuntimeError(
+                "Strict FAST.Farm handshake requires a runnable OpenMP FAST.Farm binary"
+            ) from exc
+        banner = (probe.stdout or "") + (probe.stderr or "")
+        if "OpenMP: Yes" not in banner:
+            raise RuntimeError(
+                "Strict FAST.Farm handshake requires an OpenMP build; serial FAST.Farm "
+                "would deadlock when the first turbine waits at the farm barrier"
+            )
 
     def wait_step(self, controls: ControlInput) -> SimulationOutput:
         """
@@ -220,6 +325,21 @@ class ContinuousFastFarmInterface(FastFarmInterface):
             raise RuntimeError("Call setup() first")
 
         self._write_controls_file(controls)
+        expected_step = self._step_idx
+        if self._strict_handshake:
+            try:
+                wait_for_turbine_records(
+                    self._farm_base,
+                    prefix="ack",
+                    n_turbines=self.n_turbines,
+                    expected_step=expected_step,
+                    expected_phase=PHASE_APPLIED,
+                    timeout=self.config.handshake_timeout,
+                    poll_interval=self.config.handshake_poll_interval,
+                    process=self._process,
+                )
+            except FastFarmProtocolError as exc:
+                raise FastFarmAborted(str(exc)) from exc
         self._step_idx += 1
 
         # 轮询等待（DISCON 每 DT_low ≈ 0.05s 写一次）
@@ -234,11 +354,20 @@ class ContinuousFastFarmInterface(FastFarmInterface):
         （部分时序），使上层仍能保存部分结果 CSV，而不是整个工况丢失。
         """
         if self._process is not None:
-            # 写 END 标记（若进程还活着，让它优雅收尾）
-            if self._controls_file and self._process.poll() is None:
+            if self._strict_handshake and self._process.poll() is None:
+                # A strict bridge may currently be blocked inside a turbine
+                # callback.  Terminate explicitly instead of waiting for a
+                # legacy END record that protocol v2 intentionally ignores.
                 try:
-                    with open(self._controls_file, 'w') as f:
-                        f.write('step=-1\nEND\n')
+                    self._process.terminate()
+                    self._process.wait(timeout=10)
+                except Exception:
+                    pass
+            # 写 END 标记（若进程还活着，让它优雅收尾）
+            if (not self._strict_handshake and self._controls_file
+                    and self._process.poll() is None):
+                try:
+                    atomic_write_text(self._controls_file, 'step=-1\nEND\n')
                 except OSError:
                     pass
             # 等进程结束；已 abort 的会立即返回。设超时避免永久阻塞。
@@ -285,6 +414,7 @@ class ContinuousFastFarmInterface(FastFarmInterface):
             self._proc_log = None
         self._step_idx = 0
         self._cumulative_time = 0.0
+        self._reset_contract_state()
 
     # ========== 内部方法 ==========
 
@@ -294,7 +424,12 @@ class ContinuousFastFarmInterface(FastFarmInterface):
         if self._controls_file is None:
             return
 
-        lines = [f"step={self._step_idx}"]
+        if self._strict_handshake:
+            lines = [render_control_header(
+                self._step_idx, self.config.dt, self.config.handshake_timeout,
+            )]
+        else:
+            lines = [f"step={self._step_idx}"]
         wdir = (self._current_wind.direction
                 if self._current_wind else self.config.wind.direction)
         for t in range(self.n_turbines):
@@ -307,8 +442,7 @@ class ContinuousFastFarmInterface(FastFarmInterface):
             lines.append(f"T{t+1} mode={m} yaw={y:.3f} pitch={p:.3f} power={pw:.3f} minpitch={mp:.3f}")
         lines.append("END")
 
-        with open(self._controls_file, 'w') as f:
-            f.write('\n'.join(lines) + '\n')
+        atomic_write_text(self._controls_file, '\n'.join(lines) + '\n')
 
     def _read_measurements_with_poll(self, timeout: float = 120.0) -> SimulationOutput:
         """
@@ -332,6 +466,23 @@ class ContinuousFastFarmInterface(FastFarmInterface):
         n = self.n_turbines
         expected_step = self._step_idx - 1
         target_time = self._step_idx * self.config.dt
+
+        if self._strict_handshake:
+            try:
+                data = wait_for_turbine_records(
+                    self._farm_base or ".",
+                    prefix="measurements",
+                    n_turbines=n,
+                    expected_step=expected_step,
+                    expected_phase=PHASE_READY,
+                    minimum_time=target_time - max(1e-8, self.config.dt * 1e-6),
+                    timeout=self.config.handshake_timeout,
+                    poll_interval=self.config.handshake_poll_interval,
+                    process=self._process,
+                )
+            except FastFarmProtocolError as exc:
+                raise FastFarmAborted(str(exc)) from exc
+            return self._measurements_to_output(data, expected_step, target_time)
 
         def _read_all() -> Optional[Dict[int, Dict[str, float]]]:
             """收集所有存在的 measurements_T*.txt，返回 step+time 都匹配的数据。"""
@@ -371,7 +522,9 @@ class ContinuousFastFarmInterface(FastFarmInterface):
                 if sim_time < target_time - self.config.dt * 0.5:
                     continue
                 results[t_id] = vals
-            return results if results else None
+            # A controller step is a farm-wide barrier: never return a partly
+            # updated farm snapshot just because the fastest turbine wrote first.
+            return results if len(results) == n else None
 
         # 轮询
         start_t = time.time()
@@ -396,7 +549,16 @@ class ContinuousFastFarmInterface(FastFarmInterface):
                 f"step={self._step_idx} (process may be hung or aborting)."
             )
 
-        # 初始化数组（缺失的风机保持 0）
+        return self._measurements_to_output(data, expected_step, target_time)
+
+    def _measurements_to_output(
+        self,
+        data: Dict[int, Dict[str, object]],
+        expected_step: int,
+        target_time: float,
+    ) -> SimulationOutput:
+        """Convert one complete farm-wide bridge snapshot to common output."""
+        n = self.n_turbines
         power_mw = np.zeros(n)
         wind_speed = np.zeros(n)
         yaw_deg = np.zeros(n)
@@ -425,12 +587,18 @@ class ContinuousFastFarmInterface(FastFarmInterface):
             blade_loads[i, 2] = vals.get('mzb1', 0.0)
 
         n_found = len(data)
-        metadata = {"step": self._step_idx, "n_measurements_found": n_found}
+        metadata = {
+            "step": expected_step,
+            "n_measurements_found": n_found,
+            "bridge_protocol": 2 if self._strict_handshake else 1,
+        }
         if n_found < n:
             metadata["warning"] = f"only {n_found}/{n} turbine measurements found"
 
         return SimulationOutput(
-            time=np.array([self._cumulative_time]),
+            # ``target_time`` is the end of the controller interval whose
+            # measurement has just been observed.
+            time=np.array([target_time]),
             power_mw=power_mw.reshape(1, -1),
             wind_speed=wind_speed.reshape(1, -1),
             yaw_deg=yaw_deg.reshape(1, -1),

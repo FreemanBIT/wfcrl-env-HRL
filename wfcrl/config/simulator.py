@@ -22,11 +22,16 @@ from wfcrl.config.types import WindConfig, WindType
 
 # FAST.Farm 可执行文件路径：优先使用环境变量
 def _get_fastfarm_exe() -> str:
-    _DEFAULT = str(
-        Path(__file__).resolve().parent.parent
-        / "simulators/fastfarm/bin/FAST.Farm_x64_OMP.exe"
+    bin_dir = Path(__file__).resolve().parent.parent / "simulators/fastfarm/bin"
+    official_openmp = bin_dir / "FAST.Farm_OpenMP.exe"
+    official_release = bin_dir / "FAST.Farm.exe"
+    legacy_openmp = bin_dir / "FAST.Farm_x64_OMP.exe"
+    default = next(
+        (path for path in (official_openmp, legacy_openmp, official_release)
+         if path.exists()),
+        legacy_openmp,
     )
-    return os.environ.get("FAST_FARM_EXE", _DEFAULT)
+    return os.environ.get("FAST_FARM_EXE", str(default))
 
 
 # =========================================================================
@@ -215,6 +220,12 @@ class FastFarmConfig(SimulationConfig):
     wind_time_series_file : Optional[str]
         风时序文件路径 (TurbSim .bts 等)，WindType≠1 时使用。
         会自动从 WindConfig.wind_file 设置。
+    enable_strict_handshake : bool
+        是否启用协议 v2 全风机严格握手。需要配套新版 DISCON DLL。
+    handshake_timeout : float
+        等待全部风机确认或测量的墙钟超时 (s)。
+    handshake_poll_interval : float
+        Python 轮询 ACK/READY 文件的间隔 (s)。
     """
     fastfarm_exe: Optional[str] = field(default_factory=_get_fastfarm_exe)
     template_dir: Optional[str] = None
@@ -224,9 +235,19 @@ class FastFarmConfig(SimulationConfig):
     # 是否对湍流(.bts)启用 Mod_AmbWind=3（多盒 Low + HighT{n}）。
     # 稳态(WindType=1)下该开关无影响（OpenFAST 文档明确）。
     use_mod_ambwind3: bool = False
+    enable_vtk: bool = True
+    # Experimental protocol-v2 barrier.  It requires a matching rebuilt
+    # DISCON_WT1.dll; legacy file polling remains the default.
+    enable_strict_handshake: bool = False
+    handshake_timeout: float = 120.0
+    handshake_poll_interval: float = 0.02
 
     def __post_init__(self):
         super().__post_init__()
+        if self.handshake_timeout <= 0:
+            raise ValueError("handshake_timeout must be positive")
+        if self.handshake_poll_interval <= 0:
+            raise ValueError("handshake_poll_interval must be positive")
         # 从 WindConfig 同步 wind_file
         if self.wind.wind_file and not self.wind_time_series_file:
             self.wind_time_series_file = self.wind.wind_file
@@ -234,6 +255,7 @@ class FastFarmConfig(SimulationConfig):
     def to_legacy_dict(self) -> dict:
         d = super().to_legacy_dict()
         d["use_mod_ambwind3"] = bool(self.use_mod_ambwind3)
+        d["enable_vtk"] = bool(self.enable_vtk)
         return d
 
 
