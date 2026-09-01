@@ -1,0 +1,97 @@
+1
+! ===== WFCRL: first line = turbine ID (read by bridge), following = ROSCO v2.9.0 NREL 5MW parameters =====
+! ROSCO v2.9.0 NREL 5MW Parameters (minimum required set)
+! ===== FILTERS =====
+1            F_LPFType
+1.57080     F_LPFCornerFreq
+1.00000        F_LPFDamping
+0     F_NumNotchFilts
+0     F_GenSpdNotch_N
+0     F_TwrTopNotch_N
+0.62832      F_SSCornerFreq
+0.20944      F_WECornerFreq
+0.00349            F_YawErr
+0.00000  0.00000      F_FlCornerFreq
+0.00000    F_FlHighPassFreq
+0.00000     F_FlpCornerFreq
+! ===== PITCH CONTROL (minimum viable gains for NREL 5MW) =====
+1      PC_ControlMode
+1             PC_GS_n
+0.00000        PC_GS_angles
+-0.40000           PC_GS_KP
+-0.10000           PC_GS_KI
+0.00000            PC_GS_KD
+0.00000            PC_GS_TF
+1.57080           PC_MaxPit
+0.00000           PC_MinPit
+0.13963           PC_MaxRat
+-0.13963          PC_MinRat
+122.90967           PC_RefSpd
+0.00000          PC_FinePit
+0.01745           PC_Switch
+! ===== TORQUE CONTROL =====
+2      VS_ControlMode
+1       VS_ConstPower
+94.40000           VS_GenEff
+4.74029e+04          VS_ArSatTq
+1.50000e+06           VS_MaxRat
+4.74029e+04            VS_MaxTq
+0.00000e+00            VS_MinTq
+76.43334         VS_MinOMSpd
+2.85302            VS_Rgn2K
+5.00000e+06            VS_RtPwr
+4.30935e+04             VS_RtTq
+122.90967           VS_RefSpd
+1                VS_n
+-6.97771e+02              VS_KP
+-1.04507e+02              VS_KI
+0.00000           VS_TSRopt
+0.10000         VS_PwrFiltF
+! ===== SETPOINT SMOOTHER =====
+0             SS_Mode
+0.00100           SS_VSGain
+0.00100           SS_PCGain
+! ===== WIND SPEED ESTIMATOR =====
+0             WE_Mode
+63.000      WE_BladeRadius
+12             WE_CP_n
+0.00000  0.00000  0.00000  0.00000  0.00000  0.00000  0.00000  0.00000  0.00000  0.00000  0.00000  0.00000               WE_CP
+0.00000            WE_Gamma
+97.0     WE_GearboxRatio
+4.37500e+07             WE_Jtot
+1.22500           WE_RhoAir
+"unused"        PerfFileName
+1 1       PerfTableSize
+0        WE_FOPoles_N
+! ===== YAW CONTROL =====
+0       Y_ControlMode
+0.00000           Y_uSwitch
+0.13963         Y_ErrThresh
+0.00873              Y_Rate
+0.00000           Y_MErrSet
+0.08727        Y_IPC_IntSat
+0.00000            Y_IPC_KP
+0.00000            Y_IPC_KI
+! ===== MODES (all off by default, WFCRL bridge controls) =====
+0             PS_Mode
+0    PS_BldPitchMin_N
+0             SD_Mode
+0             FL_Mode
+0             TD_Mode
+0            TRA_Mode
+0     IPC_ControlMode
+0            PRC_Mode
+0            Flp_Mode
+0             OL_Mode
+0             PA_Mode
+0             PF_Mode
+0            AWC_Mode
+0            Ext_Mode
+0            ZMQ_Mode
+0             CC_Mode
+0            StC_Mode
+! ===== DEBUG =====
+0        LoggingLevel
+0                Echo
+0.00000              DT_Out
+0       Ext_Interface

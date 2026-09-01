@@ -1,0 +1,4 @@
+step=5 t=18.0000 genpwr=1711.2916 genspd=820.9528 gentq=21086.3750 rotspd=8.46
+ wind_x=8.000271
+ blpitch=.000000 nacyaw=.000000 yaw_cmd=-10.607
+ mip1=4838334.50 moop1=5593957.50 mzb1=5515898.00
