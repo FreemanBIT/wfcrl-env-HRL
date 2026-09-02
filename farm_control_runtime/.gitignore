@@ -1,0 +1,6 @@
+build/
+*.o
+*.exe
+tests/unit/test_runner
+__pycache__/
+*.pyc
