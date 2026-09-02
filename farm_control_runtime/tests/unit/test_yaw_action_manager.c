@@ -5,6 +5,7 @@
  */
 #include "test_framework.h"
 #include "fcr_internal.h"
+#include <string.h>
 
 #define PI 3.14159265358979323846
 #define D2R(d) ((d) * PI / 180.0)

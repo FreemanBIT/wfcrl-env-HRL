@@ -7,6 +7,7 @@
 #include "fcr_internal.h"
 #include "fcr_rosco_api.h"
 #include "fcr_provider_api.h"
+#include <string.h>
 
 extern int fcr_rosco_api_init(uint32_t n_turbines_max, double dt_high_s);
 extern int fcr_rosco_api_register_turbine(int32_t turbine_id);

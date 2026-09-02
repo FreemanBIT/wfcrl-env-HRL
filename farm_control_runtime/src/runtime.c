@@ -29,6 +29,8 @@ FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
     if (rt->cfg.stale_threshold_s <= 0.0) rt->cfg.stale_threshold_s = 5.0;
     if (rt->cfg.flow_stale_threshold_s <= 0.0) rt->cfg.flow_stale_threshold_s = 3.0;
 
+    rt->aggregator = fcr_state_aggregator_create(rt->cfg.n_turbines, 1.0);
+    if (!rt->aggregator) { fcr_runtime_destroy(rt); return NULL; }
     rt->cs = fcr_command_store_create(rt->cfg.n_turbines,
                                       rt->cfg.default_yaw_ttl_s,
                                       rt->cfg.default_induction_ttl_s,
@@ -47,6 +49,7 @@ FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
 int fcr_runtime_destroy(FcrRuntime *rt)
 {
     if (!rt) return 0;
+    if (rt->aggregator) fcr_state_aggregator_destroy((FcrStateAggregator *)rt->aggregator);
     fcr_command_store_destroy(rt->cs);
     fcr_state_store_destroy(rt->ss);
     fcr_watchdog_destroy(rt->wd);
@@ -120,6 +123,7 @@ int fcr_runtime_step_high(FcrRuntime *rt, double sim_time_s)
     /* 3) CommandStore refresh + setpoint 生成 */
     fcr_command_store_refresh(rt->cs, sim_time_s, heading, rt->ss->low_step);
     fcr_runtime_update_setpoints(rt, sim_time_s, rt->ss->low_step);
+
     return 0;
 }
 
@@ -204,7 +208,11 @@ int fcr_runtime_step_low(FcrRuntime *rt, double sim_time_s)
     if (!rt) return -1;
 
     fcr_watchdog_update(rt->wd, rt->ss->sim_time_s, rt->ss, rt->cs);
-    aggregate_state(rt, &out, rt->ss->sim_time_s);
+    if (rt->aggregator) {
+        fcr_state_aggregator_build_frame((FcrStateAggregator *)rt->aggregator, rt->ss, &out);
+    } else {
+        aggregate_state(rt, &out, rt->ss->sim_time_s);
+    }
     if (rt->cfg.transport) {
         fcr_transport_publish(rt->cfg.transport, &out);
     }
@@ -213,21 +221,29 @@ int fcr_runtime_step_low(FcrRuntime *rt, double sim_time_s)
 }
 
 /* ------------------------------------------------------------------ */
-/* Provider API 实现（fcr_provider_api.h / fcr_fastfarm_rt_provider.h） */
+/* 高速样本喂入（发布事件驱动 1 s 统计；Phase 5）                      */
 /* ------------------------------------------------------------------ */
-
-int fcr_publish_rt_clock(FcrRuntime *rt, double sim_time_s,
-                         uint64_t fast_step, uint64_t low_step,
-                         uint32_t rt_health_flags)
+void fcr_runtime_feed_fast(FcrRuntime *rt, int32_t turbine_id,
+                           const FcrRoscoFastState *st)
 {
-    if (!rt) return -1;
-    return fcr_state_store_set_clock(rt->ss, sim_time_s, fast_step, low_step,
-                                     rt_health_flags);
+    FcrStateAggregator *a;
+    if (!rt || !st) return;
+    a = (FcrStateAggregator *)rt->aggregator;
+    if (a) fcr_state_aggregator_feed_fast(a, turbine_id, st);
+}
+
+void fcr_runtime_feed_extra_stats(FcrRuntime *rt, const FcrTurbineExtraState *st)
+{
+    FcrStateAggregator *a;
+    if (!rt || !st) return;
+    a = (FcrStateAggregator *)rt->aggregator;
+    if (a) fcr_state_aggregator_feed_extra(a, st);
 }
 
 int fcr_publish_turbine_extra_state(FcrRuntime *rt, const FcrTurbineExtraState *st)
 {
     if (!rt) return -1;
+    fcr_runtime_feed_extra_stats(rt, st);
     return fcr_state_store_set_extra(rt->ss, st);
 }
 
@@ -235,4 +251,12 @@ int fcr_publish_flow_state(FcrRuntime *rt, const FcrFlowState *flow)
 {
     if (!rt) return -1;
     return fcr_state_store_set_flow(rt->ss, flow);
+}
+int fcr_publish_rt_clock(FcrRuntime *rt, double sim_time_s,
+                         uint64_t fast_step, uint64_t low_step,
+                         uint32_t rt_health_flags)
+{
+    if (!rt) return -1;
+    return fcr_state_store_set_clock(rt->ss, sim_time_s, fast_step, low_step,
+                                     rt_health_flags);
 }

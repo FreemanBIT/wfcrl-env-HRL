@@ -10,6 +10,7 @@
 #include "fcr_internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 FcrYawActionManager *fcr_yaw_manager_create(uint32_t n_turbines, double deadband_rad)
 {

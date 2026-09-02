@@ -132,6 +132,28 @@ int fcr_state_store_get_extra(const FcrStateStore *ss, int32_t turbine_id,
                               FcrTurbineExtraState *out);
 
 /* ------------------------------------------------------------------ */
+/* signal_statistics.c + state_aggregator.c (Phase 5)                 */
+/* ------------------------------------------------------------------ */
+
+FcrSignalStatistics *fcr_signal_stat_create(double window_s, uint32_t capacity);
+void fcr_signal_stat_destroy(FcrSignalStatistics *s);
+void fcr_signal_stat_reset(FcrSignalStatistics *s);
+int  fcr_signal_stat_update(FcrSignalStatistics *s, double sim_time_s, double x);
+int  fcr_signal_stat_get(const FcrSignalStatistics *s, FcrSignalStats *out);
+
+struct FcrStateAggregator;   /* 定义见 state_aggregator.c */
+
+FcrStateAggregator *fcr_state_aggregator_create(uint32_t n_turbines, double window_s);
+void fcr_state_aggregator_destroy(FcrStateAggregator *a);
+void fcr_state_aggregator_feed_fast(FcrStateAggregator *a, int32_t turbine_id,
+                                    const FcrRoscoFastState *st);
+void fcr_state_aggregator_feed_extra(FcrStateAggregator *a, const FcrTurbineExtraState *st);
+void fcr_runtime_feed_fast(FcrRuntime *rt, int32_t turbine_id, const FcrRoscoFastState *st);
+void fcr_runtime_feed_extra_stats(FcrRuntime *rt, const FcrTurbineExtraState *st);
+void fcr_state_aggregator_build_frame(FcrStateAggregator *a, const FcrStateStore *ss,
+                                      FarmStateFrame *out);
+
+/* ------------------------------------------------------------------ */
 /* yaw_action_manager.c                                               */
 /* ------------------------------------------------------------------ */
 

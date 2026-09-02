@@ -11,6 +11,8 @@ void test_watchdog_register(void);
 void test_rosco_api_register(void);
 void test_yaw_action_manager_register(void);
 void test_offline_provider_register(void);
+void test_signal_statistics_register(void);
+void test_state_aggregator_register(void);
 
 int main(void)
 {
@@ -22,6 +24,8 @@ int main(void)
     test_rosco_api_register();
     test_yaw_action_manager_register();
     test_offline_provider_register();
+    test_signal_statistics_register();
+    test_state_aggregator_register();
     failed += test_run_all("farm_control_runtime unit tests");
     return failed ? 1 : 0;
 }

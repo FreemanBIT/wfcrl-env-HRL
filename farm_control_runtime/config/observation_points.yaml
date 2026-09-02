@@ -1,0 +1,14 @@
+# observation_points.yaml — AWAE 观察点配置（Phase 5 冻结）
+#
+# 观察点为全场坐标中的空间点，由 AWAE 场插值提供 ambient/disturbed U/V/W。
+# 离线（预编译 FAST.Farm + DLL 探针）无法访问 AWAE 网格 → n_points=0，
+# 观察点量由 RT Provider 提供（语义见 FASTFARM_RT_PROVIDER_ICD.md）。
+#
+points: []          # [{id: 1, x_m: 0.0, y_m: 0.0, z_m: 90.0}, ...]
+
+# 盘面量语义（离线可发布）：
+#   disk_disturbed_wind_mps : 每机 hub 扰动风速（HorWindV）
+#   disk_ambient_wind_mps   : 配置值（FCR_CFG_AMBIENT_MPS）或全场最大 hub 风近似
+#   disk_ambient_ti         : runtime 1 s 窗口统计（hub wind），见 state_aggregator
+
+# RT 侧必须按本文件补全 observation points 并插值 AWAE 场

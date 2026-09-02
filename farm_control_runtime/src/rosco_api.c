@@ -117,6 +117,7 @@ int fcr_rosco_publish_state(int32_t turbine_id, const FcrRoscoFastState *st)
     if (!g_rt || !st) return -1;
     FCR_LOCK();
     fcr_state_store_set_fast(g_rt->ss, turbine_id, st);
+    fcr_runtime_feed_fast(g_rt, turbine_id, st);   /* 统计样本喂入 */
     FCR_UNLOCK();
     return 0;
 }

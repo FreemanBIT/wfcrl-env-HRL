@@ -1,0 +1,18 @@
+# farm_control_runtime.yaml — 运行时配置样例（Phase 1/5 冻结）
+
+runtime:
+  n_turbines: 6                # 场内机组数（≤ 64）
+  dt_high_s: 0.01              # 高速周期（ROSCO/OF）
+  dt_low_s: 1.0                # 低速周期（AWAE/状态帧）
+  default_yaw_ttl_s: 60.0      # 偏航命令默认 TTL
+  default_induction_ttl_s: 1.0 # 诱导命令默认 TTL
+  stale_threshold_s: 5.0       # 命令超龄阈值
+  flow_stale_threshold_s: 3.0  # 流场超龄阈值
+  yaw_rate_limit_rad_s: 0.00873
+
+aggregator:
+  stats_window_s: 1.0          # 1 s 统计窗口
+  yaw_reached_deadband_rad: 0.00873   # ≈0.5°
+
+# 离线 Provider 环境（由 harness 注入）：
+#   FCR_CFG_DT_LOW / FCR_CFG_DT_HIGH / FCR_CFG_AMBIENT_MPS
