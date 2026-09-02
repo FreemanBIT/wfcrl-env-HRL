@@ -70,6 +70,13 @@ FcrSignalStatistics    *fcr_runtime_signal_statistics(FcrRuntime *rt) { return r
 FcrWatchdog            *fcr_runtime_watchdog(FcrRuntime *rt)      { return rt ? rt->wd : NULL; }
 FcrRoscoApi            *fcr_runtime_rosco_api(FcrRuntime *rt)     { return rt ? (FcrRoscoApi *)rt->rosco_api : NULL; }
 
+int fcr_runtime_set_transport(FcrRuntime *rt, FcrTransport *t)
+{
+    if (!rt) return -1;
+    rt->cfg.transport = t;
+    return 0;
+}
+
 int fcr_runtime_bind_turbines(FcrRuntime *rt, uint32_t n_turbines)
 {
     if (!rt || n_turbines == 0 || n_turbines > FCR_MAX_TURBINES) return -1;

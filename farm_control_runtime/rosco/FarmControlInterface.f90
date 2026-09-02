@@ -45,17 +45,20 @@ CONTAINS
       REAL(C_DOUBLE), INTENT(IN), OPTIONAL :: dt_high_s
       REAL(C_DOUBLE) :: dt
       INTEGER(C_INT) :: rc
+
       IF (init_done_) RETURN
       dt = 0.01_C_DOUBLE
       IF (PRESENT(dt_high_s)) dt = dt_high_s
       rc = fcr_rosco_api_init(FCR_MAX_TURBINES_LOCAL, dt)
       api_ok_ = (rc == 0)
+
       IF (api_ok_) THEN
          rc = fcr_rosco_api_register_turbine(turbine_id)
          IF (rc /= 0) api_ok_ = .FALSE.
       ENDIF
       n_turbines_ = MAX(n_turbines_, turbine_id)
       init_done_ = .TRUE.
+
    END SUBROUTINE FCR_Init
 
    ! ------------------------------------------------------------------
@@ -113,6 +116,13 @@ CONTAINS
       st%pitch_cmd_rad(2) = avrSWAP(43)
       st%pitch_cmd_rad(3) = avrSWAP(44)
       st%yaw_target_heading_rad = 0.0_C_DOUBLE
+      st%yaw_seq_applied = 0
+      st%induction_seq_applied = 0
+      IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
+         IF (setpoint_(turbine_id)%yaw_enable /= 0) THEN
+            st%yaw_target_heading_rad = setpoint_(turbine_id)%yaw_target_heading_rad
+         END IF
+      END IF
       st%yaw_target_heading_rad = 0.0_C_DOUBLE
       IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
          IF (setpoint_(turbine_id)%yaw_enable /= 0) THEN

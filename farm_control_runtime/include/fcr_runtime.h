@@ -89,6 +89,9 @@ FcrRoscoApi            *fcr_runtime_rosco_api(FcrRuntime *rt);
 /* 每台机查询：初始化时把 turbine 槽位绑定（n_turbines 一致）           */
 int fcr_runtime_bind_turbines(FcrRuntime *rt, uint32_t n_turbines);
 
+/* 挂载/卸载 Transport（Phase 7）：step_high 拉取命令、step_low 发布状态    */
+int fcr_runtime_set_transport(FcrRuntime *rt, FcrTransport *t);
+
 #ifdef __cplusplus
 }
 #endif

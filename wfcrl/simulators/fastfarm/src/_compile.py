@@ -76,6 +76,21 @@ if mode == "farmcontrol":
         "offline_fastfarm_provider.c",
     ]
     c_objs = []
+    # C++ ZMQ transport（Phase 7；Windows 动态加载 libzmq）
+    zmq_cpp = os.path.join(FCR_ROOT, "transport", "zmq", "zmq_transport.cpp")
+    if os.path.exists(zmq_cpp):
+        gpp = find_tool("g++", [r"D:\TDM-GCC-64\bin\g++.exe", r"C:\mingw64\bin\g++.exe", "g++"])
+        if gpp is None:
+            print("ERROR: g++ not found (required for zmq_transport.cpp)."); sys.exit(1)
+        zmq_obj = os.path.join(SRC_DIR, "zmq_transport.o")
+        rcpp = subprocess.run([gpp, "-std=c++17", "-O2", "-c", zmq_cpp,
+                               "-I", os.path.join(FCR_ROOT, "include"),
+                               "-I", os.path.join(FCR_ROOT, "src"),
+                               "-o", zmq_obj], cwd=SRC_DIR, capture_output=True,
+                              encoding="utf-8", errors="replace")
+        if rcpp.returncode != 0:
+            print("C++ compile FAIL (zmq_transport.cpp):"); print(rcpp.stderr); sys.exit(1)
+        c_objs.append(zmq_obj)
     for src in c_sources:
         obj = os.path.join(SRC_DIR, os.path.splitext(src)[0] + ".o")
         src_file = os.path.join(FCR_ROOT, "src", src)
@@ -110,6 +125,8 @@ else:
     f90_sources = f90_sources + controllers_entry + dll_entry
 
 cmd += f90_sources
+cmd += ["-lstdc++"]   # C++ ZMQ transport 运行时
+cmd += ["-lws2_32"]
 print(f"Running: {' '.join(cmd[:6])} ... ({len(cmd)} args)")
 result = subprocess.run(cmd, cwd=SRC_DIR, capture_output=True, encoding="utf-8", errors="replace", timeout=300)
 

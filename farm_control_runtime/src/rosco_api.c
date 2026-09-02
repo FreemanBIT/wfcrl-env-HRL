@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -34,6 +35,7 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
 static FcrRuntime *g_rt = NULL;
+static int g_transport_done = 0; /* shm/zmq 挂载只执行一次（多机并发保护） */
 
 /* ------------------------------------------------------------------ */
 /* 生命周期（由 DISCON 首次调用 / 离线 harness 调用）                 */
@@ -56,12 +58,26 @@ int fcr_rosco_api_init(uint32_t n_turbines_max, double dt_high_s)
     FCR_LOCK_INIT();
     FCR_LOCK();
     if (!g_rt) g_rt = fcr_runtime_create(&cfg);
-    FCR_UNLOCK();
-    if (g_rt) {
-        /* 离线命令注入源（Phase 3 预实现；Phase 7 由 ZeroMQ Transport 替换） */
+    if (g_rt && !g_transport_done) {
+        /* 离线命令注入源（Phase 3 预实现；Phase 7 由 ZeroMQ Transport 替换）。
+         * 只执行一次：FAST.Farm 多台机/多线程首调并发安全。 */
         extern int fcr_offline_shm_init(void);
         fcr_offline_shm_init();
+        {
+            const char *cp = getenv("FCR_ZMQ_CMD_PORT");
+            const char *sp = getenv("FCR_ZMQ_STATE_PORT");
+            if (cp || sp) {
+                extern int fcr_zmq_transport_hook(FcrRuntime *rt, int cmd_port, int state_port);
+                int cport = cp ? atoi(cp) : 0;
+                int sport = sp ? atoi(sp) : 0;
+                if (fcr_zmq_transport_hook(g_rt, cport, sport) != 0) {
+                    /* 静默降级（C stderr 在 FAST.Farm 内不可见；用 FCR_DIAG_FILE 诊断） */
+                }
+            }
+        }
+        g_transport_done = 1;
     }
+    FCR_UNLOCK();
     return g_rt ? 0 : -1;
 }
 
@@ -122,13 +138,20 @@ int fcr_rosco_publish_state(int32_t turbine_id, const FcrRoscoFastState *st)
     return 0;
 }
 
-/* 单机 10 ms 主步进：命令 refresh（含 yaw 目标锁存）+ setpoint 生成   */
+/* 单机 10 ms 主步进：transport 拉取 + 命令 refresh（含 yaw 目标锁存）+ setpoint */
 int fcr_rosco_step_high(int32_t turbine_id, double sim_time_s)
 {
     double heading;
     FcrRoscoFastState st;
     if (!g_rt) return -1;
     FCR_LOCK();
+    /* Transport 命令帧拉取（Phase 7：ZeroMQ 命令通道，每 10 ms 轮询） */
+    if (g_rt->cfg.transport) {
+        FarmCommandFrame frame;
+        while (fcr_transport_poll(g_rt->cfg.transport, &frame) == 1) {
+            fcr_command_store_accept_frame(g_rt->cs, &frame);
+        }
+    }
     /* 取本机最新机舱方位（来自上一次 publish_state）                  */
     memset(&st, 0, sizeof(st));
     fcr_state_store_get_fast(g_rt->ss, turbine_id, &st);

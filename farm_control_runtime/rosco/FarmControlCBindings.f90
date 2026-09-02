@@ -91,6 +91,11 @@ MODULE FarmControlCBindings
          TYPE(FcrFastStateC)    :: st
       END FUNCTION fcr_rosco_publish_state_fc
 
+      ! ZMQ Transport 状态（Phase 7 诊断）
+      INTEGER(C_INT) FUNCTION fcr_zmq_transport_status() BIND(C, NAME='fcr_zmq_transport_status')
+         IMPORT :: C_INT
+      END FUNCTION fcr_zmq_transport_status
+
       ! Offline Provider（Phase 4）：每 10 ms 发布 OpenFAST extra 状态
       INTEGER(C_INT) FUNCTION fcr_offline_provider_init() BIND(C, NAME='fcr_offline_provider_init')
          IMPORT :: C_INT

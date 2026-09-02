@@ -135,6 +135,9 @@ IF (.NOT. wfcrl_init_done) THEN
         wfcrl_turbine_id = 1
     END IF
     wfcrl_init_done = .TRUE.
+#ifdef FCR_FARM_CONTROL
+#else
+#endif
 END IF
 
 #ifdef FCR_FARM_CONTROL

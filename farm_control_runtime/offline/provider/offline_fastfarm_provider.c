@@ -77,6 +77,11 @@ static void publish_flow_snapshot(FcrRuntime *rt, double sim_time_s)
     fl.n_turbines = FCR_MAX_TURBINES;
     fl.n_points = 0;   /* 观察点（U/V/W 网格）离线不可得：RT Provider 提供 */
     fcr_publish_flow_state(rt, &fl);
+
+    /* 1 s 低速步驱动：聚合（SignalStatistics 窗口闭合）+ watchdog +
+     * Transport 发布 FarmStateFrame（Phase 7 ZMQ 状态链）。 */
+    extern int fcr_rosco_step_low(double sim_time_s);
+    fcr_rosco_step_low(sim_time_s);
 }
 
 /* 每 10 ms：发布 OpenFAST 额外快速状态（turbine extra） */
