@@ -130,6 +130,38 @@ int fcr_state_store_get_fast(const FcrStateStore *ss, int32_t turbine_id,
 const FcrFlowState *fcr_state_store_get_flow(const FcrStateStore *ss);
 
 /* ------------------------------------------------------------------ */
+/* yaw_action_manager.c                                               */
+/* ------------------------------------------------------------------ */
+
+/* 偏航动作执行状态（每机）                                            */
+typedef struct {
+    int32_t  turbine_id;
+    uint32_t valid;                   /* 状态有效                          */
+    uint64_t seq;                     /* 已应用 seq                        */
+    double   target_heading_rad;      /* 锁存绝对目标（内部约定）          */
+    double   heading_now_rad;         /* 最近一次机舱方位                  */
+    double   error_rad;               /* wrap_pm_pi(target - heading)      */
+    uint32_t tracking;                /* 正在执行（|err| > deadband）      */
+    uint32_t reached;                 /* 已到达（|err| <= deadband）       */
+    double   last_update_time_s;
+} FcrYawActionState;
+
+struct FcrYawActionManager {
+    uint32_t n_turbines;
+    double   deadband_rad;            /* 到达判定死区                      */
+    FcrYawActionState t[FCR_MAX_TURBINES];
+};
+
+FcrYawActionManager *fcr_yaw_manager_create(uint32_t n_turbines, double deadband_rad);
+void fcr_yaw_manager_destroy(FcrYawActionManager *mgr);
+/* 每高速步更新单机状态：读取 CommandStore 通道状态 + 最新机舱方位      */
+void fcr_yaw_manager_update(FcrYawActionManager *mgr, int32_t turbine_id,
+                            const FcrTurbineCommandState *tc,
+                            double heading_now_rad, double sim_time_s);
+int  fcr_yaw_manager_get(const FcrYawActionManager *mgr, int32_t turbine_id,
+                         FcrYawActionState *out);
+
+/* ------------------------------------------------------------------ */
 /* watchdog.c                                                         */
 /* ------------------------------------------------------------------ */
 

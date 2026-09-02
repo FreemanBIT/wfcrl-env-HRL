@@ -57,8 +57,10 @@ f90_sources = [
     "Constants.f90", "ROSCO_Types.f90", "SysGnuWin.f90",
     "Filters.f90", "Functions.f90", "ControllerBlocks.f90",
     "ROSCO_Helpers.f90", "ReadSetParameters.f90", "ROSCO_IO.f90",
-    "Controllers.f90", "ExtControl.f90", "ZeroMQInterface.f90",
+    "ExtControl.f90", "ZeroMQInterface.f90",
 ]
+# Controllers 在 FCR 路径下 USE FarmControlInterface，须在桥模块之后编译
+controllers_entry = ["Controllers.f90"]
 # DISCON.F90 依赖 FarmControlInterface（module 先后顺序），由各模式放最后
 dll_entry = ["DISCON.F90"]
 
@@ -69,12 +71,16 @@ if mode == "farmcontrol":
     c_sources = [
         "angle_convention.c", "command_store.c", "state_store.c",
         "watchdog.c", "runtime.c", "rosco_api.c",
+        "shm_command_source.c",
     ]
     c_objs = []
     for src in c_sources:
         obj = os.path.join(SRC_DIR, os.path.splitext(src)[0] + ".o")
+        src_file = os.path.join(FCR_ROOT, "src", src)
+        if not os.path.exists(src_file):
+            src_file = os.path.join(FCR_ROOT, "offline", "harness", src)
         r = subprocess.run([gcc, "-std=c11", "-O2", "-c",
-                            os.path.join(FCR_ROOT, "src", src),
+                            src_file,
                             "-I", os.path.join(FCR_ROOT, "include"),
                             "-I", os.path.join(FCR_ROOT, "src"),
                             "-o", obj], cwd=SRC_DIR, capture_output=True, text=True)
@@ -88,12 +94,14 @@ if mode == "farmcontrol":
     f90_sources = f90_sources + [
         os.path.join(FCR_ROOT, "rosco", "FarmControlCBindings.f90"),
         os.path.join(FCR_ROOT, "rosco", "FarmControlInterface.f90"),
+        "Controllers.f90",
     ] + dll_entry
+    controllers_entry = []
     print("== farm_control_runtime integration build (FCR_FARM_CONTROL) ==")
 else:
     print("== legacy ROSCO + WFCRL bridge build ==")
     cmd += ["-UFCR_FARM_CONTROL"]
-    f90_sources = f90_sources + dll_entry
+    f90_sources = f90_sources + controllers_entry + dll_entry
 
 cmd += f90_sources
 print(f"Running: {' '.join(cmd[:6])} ... ({len(cmd)} args)")

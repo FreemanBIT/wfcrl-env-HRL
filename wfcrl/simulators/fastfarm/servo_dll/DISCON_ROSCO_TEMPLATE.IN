@@ -64,9 +64,9 @@
 1 1       PerfTableSize
 0        WE_FOPoles_N
 ! ===== YAW CONTROL =====
-0       Y_ControlMode
+1       Y_ControlMode   [FCR: ROSCO yaw controller active]
 0.00000           Y_uSwitch
-0.13963         Y_ErrThresh
+0.13963  0.13963    Y_ErrThresh   [FCR: Y_ControlMode=1 需要 2 个值]
 0.00873              Y_Rate
 0.00000           Y_MErrSet
 0.08727        Y_IPC_IntSat

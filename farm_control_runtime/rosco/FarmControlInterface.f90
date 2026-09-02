@@ -25,6 +25,7 @@ MODULE FarmControlInterface
    ! 每台机 setpoint 本地副本（SAVE，DLL 进程内存）
    TYPE(FcrSetpointC), SAVE, TARGET :: setpoint_(FCR_MAX_TURBINES_LOCAL)
    INTEGER,            SAVE :: n_turbines_ = 0
+   INTEGER,            SAVE :: current_turbine_id_ = 0
    LOGICAL,            SAVE :: init_done_ = .FALSE.
    LOGICAL,            SAVE :: api_ok_ = .FALSE.
 
@@ -32,7 +33,7 @@ MODULE FarmControlInterface
    PUBLIC :: FCR_Init, FCR_Step, FCR_PublishState, FCR_Shutdown
    PUBLIC :: FCR_IsExternalEnabled, FCR_IsYawExternal, FCR_GetYawTargetHeadingDeg, &
              FCR_GetYawSeqApplied, FCR_GetPowerRatio, FCR_GetMinPitchDeg, &
-             FCR_GetCommandStatusFlags, FCR_Setpoint
+             FCR_GetCommandStatusFlags, FCR_Setpoint, FCR_CurrentTurbineId
 
 CONTAINS
 
@@ -66,6 +67,7 @@ CONTAINS
       INTEGER(C_INT) :: rc
       IF (.NOT. init_done_) CALL FCR_Init(turbine_id)
       IF (.NOT. api_ok_) RETURN
+      current_turbine_id_ = turbine_id
       rc = fcr_rosco_step_high(turbine_id, sim_time_s)
       IF (rc == 0 .AND. turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
          rc = fcr_rosco_read_setpoint_fc(turbine_id, setpoint_(turbine_id))
@@ -183,6 +185,11 @@ CONTAINS
       init_done_ = .FALSE.
       api_ok_ = .FALSE.
    END SUBROUTINE FCR_Shutdown
+
+   ! 当前（最近一次 FCR_Step 的）机组号 —— 供 ROSCO 控制子程序查询自身
+   INTEGER FUNCTION FCR_CurrentTurbineId() RESULT(r)
+      r = current_turbine_id_
+   END FUNCTION FCR_CurrentTurbineId
 
    ! 供其他模块直接读取 setpoint 副本（只读约定）
    FUNCTION FCR_Setpoint(turbine_id) RESULT(sp)

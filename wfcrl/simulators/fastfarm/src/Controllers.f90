@@ -18,6 +18,9 @@ MODULE Controllers
     USE Functions
     USE Filters
     USE ControllerBlocks
+#ifdef FCR_FARM_CONTROL
+    USE FarmControlInterface
+#endif
 
     IMPLICIT NONE
 
@@ -350,6 +353,16 @@ CONTAINS
             ENDIF
             
             ! Compute/apply offset
+#ifdef FCR_FARM_CONTROL
+            ! ===== 外部场控偏航目标（Phase 3）：FarmYawTargetHeading =====
+            ! runtime 已把 yaw_delta（CW+）换算为 OpenFAST 内部约定的绝对
+            ! 目标并锁存；ROSCO 只替换目标来源，保留 deadband / state
+            ! machine / yaw-rate limit / avrSWAP(48) 输出。
+            IF (FCR_IsYawExternal(FCR_CurrentTurbineId())) THEN
+                NacHeadingTarget = FCR_GetYawTargetHeadingDeg(FCR_CurrentTurbineId()) ! (deg, OpenFAST 内部约定)
+                NacVaneOffset = 0.0
+            ELSE
+#endif
             IF (CntrPar%ZMQ_Mode == 1) THEN
                 NacVaneOffset = LocalVar%ZMQ_YawOffset
             ELSE
@@ -361,6 +374,9 @@ CONTAINS
             WindDirPlusOffsetCosF = LPFilter(cos(WindDirPlusOffset*D2R), LocalVar%DT, CntrPar%F_YawErr, LocalVar%FP, LocalVar%iStatus, .FALSE., objInst%instLPF) ! (-)
             WindDirPlusOffsetSinF = LPFilter(sin(WindDirPlusOffset*D2R), LocalVar%DT, CntrPar%F_YawErr, LocalVar%FP, LocalVar%iStatus, .FALSE., objInst%instLPF) ! (-)
             NacHeadingTarget = wrap_360(atan2(WindDirPlusOffsetSinF, WindDirPlusOffsetCosF) * R2D) ! (deg)
+#ifdef FCR_FARM_CONTROL
+            ENDIF
+#endif
 
             ! ---- Now get into the guts of the control ----
             ! Yaw error
