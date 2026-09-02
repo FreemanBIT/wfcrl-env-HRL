@@ -37,6 +37,12 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static FcrRuntime *g_rt = NULL;
 static int g_transport_done = 0; /* shm/zmq 挂载只执行一次（多机并发保护） */
 
+/* 弱符号：无 C++ 链接时（单元测试）自动解析为 NULL stub */
+#if defined(__GNUC__)
+extern int fcr_zmq_transport_hook(FcrRuntime *rt, int cmd_port, int state_port)
+    __attribute__((weak));
+#endif
+
 /* ------------------------------------------------------------------ */
 /* 生命周期（由 DISCON 首次调用 / 离线 harness 调用）                 */
 /* ------------------------------------------------------------------ */
@@ -70,9 +76,7 @@ int fcr_rosco_api_init(uint32_t n_turbines_max, double dt_high_s)
                 extern int fcr_zmq_transport_hook(FcrRuntime *rt, int cmd_port, int state_port);
                 int cport = cp ? atoi(cp) : 0;
                 int sport = sp ? atoi(sp) : 0;
-                if (fcr_zmq_transport_hook(g_rt, cport, sport) != 0) {
-                    /* 静默降级（C stderr 在 FAST.Farm 内不可见；用 FCR_DIAG_FILE 诊断） */
-                }
+                fcr_zmq_transport_hook(g_rt, cport, sport);
             }
         }
         g_transport_done = 1;
