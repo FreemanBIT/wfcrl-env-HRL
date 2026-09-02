@@ -12,6 +12,7 @@
  * 共享内存名：FCR_CMD_V1；内容：FarmCommandFrame（二进制，见 fcr_state_types.h）。
  */
 #include "fcr_internal.h"
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -96,6 +97,8 @@ int fcr_shm_command_stop(void)  { return 0; }
 /* 生命周期钩子：由 fcr_rosco_api_init / shutdown 调用 */
 int fcr_offline_shm_init(void)
 {
+    /* 环境变量 FCR_DISABLE_SHM=1 时禁用共享内存命令源（ZMQ 专用） */
+    if (getenv("FCR_DISABLE_SHM")) return 0;
 #ifdef _WIN32
     return fcr_shm_command_start();
 #else

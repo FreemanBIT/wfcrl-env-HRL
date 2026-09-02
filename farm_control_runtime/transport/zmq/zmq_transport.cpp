@@ -180,30 +180,31 @@ FcrTransport *zmq_transport_create(int cmd_port, int state_port)
     t->ctx = g_zmq.ctx_new();
     diag("[zmq] ctx_new %p\n", t->ctx);
     if (!t->ctx) { delete t; return nullptr; }
+    /* Phase 8 修正：FAST.Farm 每台机为独立进程。为避免多进程 bind 冲突，
+     * DLL 侧只 connect（Python Farm Controller 侧 bind）：
+     *   命令：DLL SUB  connect -> client PUB (bind tcp://*:CMD_PORT)
+     *   状态：DLL PUB  connect -> client SUB (bind tcp://*:STATE_PORT)
+     */
+    const char *host = getenv("FCR_ZMQ_HOST");
+    if (!host || !host[0]) host = "127.0.0.1";
     if (cmd_port > 0) {
         t->cmd_sub = g_zmq.socket(t->ctx, ZMQ_SUB);
         diag("[zmq] cmd_sub %p\n", t->cmd_sub);
         if (!t->cmd_sub) { delete t; return nullptr; }
         g_zmq.setsockopt(t->cmd_sub, ZMQ_SUBSCRIBE, "", 0);
         char addr[64];
-        snprintf(addr, sizeof(addr), "tcp://*:%d", cmd_port);
-        int brc = g_zmq.bind(t->cmd_sub, addr);
-        diag("[zmq] bind cmd %s -> %d (errno=%d)\n", addr, brc, g_zmq.errno_fn ? g_zmq.errno_fn() : -1);
-        if (brc != 0) {
-            delete t;
-            return nullptr;
-        }
+        snprintf(addr, sizeof(addr), "tcp://%s:%d", host, cmd_port);
+        int crc = g_zmq.connect(t->cmd_sub, addr);
+        diag("[zmq] connect cmd %s -> %d (errno=%d)\n", addr, crc, g_zmq.errno_fn ? g_zmq.errno_fn() : -1);
     }
     if (state_port > 0) {
         t->state_pub = g_zmq.socket(t->ctx, ZMQ_PUB);
+        diag("[zmq] state_pub %p\n", t->state_pub);
         if (!t->state_pub) { delete t; return nullptr; }
         char addr[64];
-        snprintf(addr, sizeof(addr), "tcp://*:%d", state_port);
-        if (g_zmq.bind(t->state_pub, addr) != 0) {
-            fprintf(stderr, "[zmq] bind state %s failed\n", addr);
-            delete t;
-            return nullptr;
-        }
+        snprintf(addr, sizeof(addr), "tcp://%s:%d", host, state_port);
+        int crc = g_zmq.connect(t->state_pub, addr);
+        diag("[zmq] connect state %s -> %d (errno=%d)\n", addr, crc, g_zmq.errno_fn ? g_zmq.errno_fn() : -1);
     }
     if (t->cmd_sub) {
         t->cmd_thread = (HANDLE)_beginthreadex(nullptr, 0, cmd_thread_fn, t, 0, nullptr);
@@ -211,6 +212,7 @@ FcrTransport *zmq_transport_create(int cmd_port, int state_port)
     diag("[zmq] transport ready (cmd=%d state=%d)\n", cmd_port, state_port);
     return &t->base;
 }
+
 
 void zmq_transport_destroy(FcrTransport *self)
 {

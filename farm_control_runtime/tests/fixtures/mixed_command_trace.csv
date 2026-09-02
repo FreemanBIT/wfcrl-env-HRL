@@ -1,0 +1,9 @@
+time_rel,turbine_id,channel,seq,value
+2.0,1,yaw,1,8.0
+2.5,1,induction,1,0.25
+10.0,2,yaw,1,-8.0
+11.0,2,induction,1,0.28
+18.0,1,yaw,2,-4.0
+19.0,3,induction,1,0.35
+26.0,1,yaw,2,90.0
+28.0,1,induction,2,0.22

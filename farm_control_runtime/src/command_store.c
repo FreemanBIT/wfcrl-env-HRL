@@ -11,6 +11,7 @@
 #include "fcr_internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 FcrCommandStore *fcr_command_store_create(uint32_t n_turbines,
                                           double default_yaw_ttl_s,
@@ -58,7 +59,7 @@ static void accept_turbine(FcrCommandStore *cs, const FcrTurbineCommand *cmd,
             tc->yaw_target_latched = 0;      /* 等待锁存 */
             tc->yaw_effective_low_step = cmd->yaw_effective_low_step;
             tc->yaw_ttl_s = (cmd->yaw_ttl_s > 0.0) ? cmd->yaw_ttl_s : cs->default_yaw_ttl_s;
-            tc->yaw_issue_time_s = cmd->source_time_s;
+            tc->yaw_issue_time_s = -1.0;   /* 到达时刻未知：首次 refresh 时以仿真时间起算 */
             tc->source_time_s = cmd->source_time_s;
             tc->command_status_flags &= ~FCR_CMD_FLAG_INVALID_SEQ;
         } else if (cmd->yaw_seq == tc->yaw_seq_rx) {
@@ -81,7 +82,7 @@ static void accept_turbine(FcrCommandStore *cs, const FcrTurbineCommand *cmd,
             tc->ind_effective_low_step = cmd->induction_effective_low_step;
             tc->ind_ttl_s = (cmd->induction_ttl_s > 0.0) ? cmd->induction_ttl_s
                                                          : cs->default_induction_ttl_s;
-            tc->ind_issue_time_s = cmd->source_time_s;
+            tc->ind_issue_time_s = -1.0;
             tc->source_time_s = cmd->source_time_s;
             tc->command_status_flags &= ~FCR_CMD_FLAG_INVALID_SEQ;
         } else if (cmd->induction_seq == tc->ind_seq_rx) {
@@ -126,7 +127,10 @@ void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
                                       FCR_CMD_FLAG_INDUCTION_STALE);
     }
 
-    /* ---- yaw TTL ---- */
+    /* ---- yaw TTL（issue_time<0 → 首次 refresh 激活，避免 source_time=0 误判）---- */
+    if (tc->yaw_issue_time_s < 0.0 && tc->yaw_valid && tc->yaw_ttl_s > 0.0) {
+        tc->yaw_issue_time_s = sim_time_s;
+    }
     if (tc->yaw_valid && tc->yaw_ttl_s > 0.0 &&
         (sim_time_s - tc->yaw_issue_time_s) > tc->yaw_ttl_s) {
         tc->yaw_valid = 0;               /* 通道失效（回退 ROSCO） */
@@ -136,7 +140,10 @@ void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
         tc->command_status_flags &= ~FCR_CMD_FLAG_YAW_TTL_EXPIRED;
     }
 
-    /* ---- induction TTL ---- */
+    /* ---- induction TTL（同上）---- */
+    if (tc->ind_issue_time_s < 0.0 && tc->ind_valid && tc->ind_ttl_s > 0.0) {
+        tc->ind_issue_time_s = sim_time_s;
+    }
     if (tc->ind_valid && tc->ind_ttl_s > 0.0 &&
         (sim_time_s - tc->ind_issue_time_s) > tc->ind_ttl_s) {
         tc->ind_valid = 0;

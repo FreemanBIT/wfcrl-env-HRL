@@ -1,0 +1,6 @@
+time_rel,turbine_id,channel,seq,value
+2.0,1,induction,1,0.20
+3.0,2,induction,1,0.30
+4.0,3,induction,1,0.40
+10.0,1,induction,2,0.30
+16.0,1,induction,3,1.50

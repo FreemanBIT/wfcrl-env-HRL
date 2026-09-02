@@ -14,6 +14,7 @@
 #include "fcr_internal.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
 {
@@ -90,11 +91,12 @@ int fcr_runtime_bind_turbines(FcrRuntime *rt, uint32_t n_turbines)
 void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id)
 {
     FcrRoscoExternalSetpoint sp;
+    FcrTurbineCommandState *tc = NULL;
     if (!rt || !rt->cs) return;
     fcr_command_store_get_setpoint(rt->cs, turbine_id, &sp);
     /* InductionSupervisor（Phase 6）：新 seq 计算映射并叠加到 setpoint */
-    if (rt->induction_supervisor) {
-        FcrTurbineCommandState *tc = fcr_command_store_turbine(rt->cs, turbine_id);
+    tc = fcr_command_store_turbine(rt->cs, turbine_id);
+    if (rt->induction_supervisor && tc) {
         FcrInductionSupervisor *sup = (FcrInductionSupervisor *)rt->induction_supervisor;
         if (tc) {
             fcr_induction_supervisor_update(sup, turbine_id, tc, rt->ss->sim_time_s);

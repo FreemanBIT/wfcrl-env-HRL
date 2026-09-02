@@ -52,8 +52,8 @@ static int map_ref(const FcrInductionSupervisor *s, double a, FcrInductionState 
     double pe, pe0, pr;
 
     if (!isfinite(a) || a < c->a_min || a > c->a_max) {
-        /* fallback：安全默认（额定语义） */
-        memset(out, 0, sizeof(*out));
+        /* fallback：安全默认（额定语义）。
+         * 注意：不得 memset 整个 out —— 上层已经写入 seq_applied/induction_ref。 */
         out->ct_ref = 4.0 * c->a0 * (1.0 - c->a0);
         out->power_ratio = 1.0;
         out->speed_ref_ratio = 1.0;

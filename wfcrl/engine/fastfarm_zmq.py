@@ -131,8 +131,10 @@ class FastFarmZmqEngine:
             cwd=self._ff._farm_base, stdout=self._log, stderr=subprocess.STDOUT,
             env=env, text=True,
         )
-        # 连接 ZMQ 客户端
-        self._client = FarmZmqClient(cmd_port=self.cmd_port, state_port=self.state_port)
+        # 连接 ZMQ 客户端（bind 模式；各 WT 进程 connect）
+        n_t = getattr(self.config, "num_turbines", 0) or 0
+        self._client = FarmZmqClient(cmd_port=self.cmd_port, state_port=self.state_port,
+                                     n_turbines=n_t)
         self._client.start()
         print(f"FAST.Farm pid {self._proc.pid}, ZMQ cmd://:{self.cmd_port} state://:{self.state_port}")
 
@@ -164,21 +166,28 @@ class FastFarmZmqEngine:
 
     # ---------- 收尾 ----------
     def stop(self, timeout_s: float = 60) -> None:
-        if self._client is not None:
-            self._client.close()
-            self._client = None
+        # 先终止仿真进程再关闭 ZMQ client（避免对端连接重置触发 pyzmq assert abort）
         if self._proc is not None:
             try:
                 self._proc.wait(timeout=timeout_s)
             except Exception:
                 try:
                     self._proc.terminate()
-                    self._proc.wait(timeout=10)
+                    self._proc.wait(timeout=15)
                 except Exception:
                     pass
             self._proc = None
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+            self._client = None
         if self._log is not None:
-            self._log.close()
+            try:
+                self._log.close()
+            except Exception:
+                pass
             self._log = None
 
     def close(self) -> None:

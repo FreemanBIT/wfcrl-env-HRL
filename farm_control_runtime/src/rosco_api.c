@@ -57,7 +57,7 @@ int fcr_rosco_api_init(uint32_t n_turbines_max, double dt_high_s)
     cfg.dt_high_s = (dt_high_s > 0.0) ? dt_high_s : 0.01;
     cfg.dt_low_s = 1.0;
     cfg.default_yaw_ttl_s = 60.0;
-    cfg.default_induction_ttl_s = 1.0;
+    cfg.default_induction_ttl_s = 5.0;  /* > 1 个状态帧周期（DT_low=3s） */
     cfg.stale_threshold_s = 5.0;
     cfg.flow_stale_threshold_s = 3.0;
     cfg.transport = NULL;
@@ -98,6 +98,14 @@ int fcr_rosco_api_register_turbine(int32_t turbine_id)
         g_rt->cs->n_turbines = (uint32_t)turbine_id;
     FCR_UNLOCK();
     return 0;
+}
+
+/* 诊断（Phase 8 定位用；交付可保留）：直接读 setpoint 槽的 yaw target */
+double fcr_rosco_debug_yaw_target(int32_t turbine_id)
+{
+    if (!g_rt) return -999.0;
+    if (turbine_id < 1 || turbine_id > (int32_t)FCR_MAX_TURBINES) return -999.0;
+    return g_rt->setpoint[turbine_id - 1].yaw_target_heading_rad;
 }
 
 int fcr_rosco_api_shutdown(void)

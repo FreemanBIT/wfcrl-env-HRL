@@ -91,6 +91,12 @@ MODULE FarmControlCBindings
          TYPE(FcrFastStateC)    :: st
       END FUNCTION fcr_rosco_publish_state_fc
 
+      ! 诊断（Phase 8）：直接读 setpoint 槽 target
+      REAL(C_DOUBLE) FUNCTION fcr_rosco_debug_yaw_target(turbine_id) BIND(C, NAME='fcr_rosco_debug_yaw_target')
+         IMPORT :: C_INT, C_DOUBLE
+         INTEGER(C_INT), VALUE :: turbine_id
+      END FUNCTION fcr_rosco_debug_yaw_target
+
       ! ZMQ Transport 状态（Phase 7 诊断）
       INTEGER(C_INT) FUNCTION fcr_zmq_transport_status() BIND(C, NAME='fcr_zmq_transport_status')
          IMPORT :: C_INT

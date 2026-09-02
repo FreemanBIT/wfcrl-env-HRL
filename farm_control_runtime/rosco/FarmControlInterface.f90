@@ -121,18 +121,12 @@ CONTAINS
       IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
          IF (setpoint_(turbine_id)%yaw_enable /= 0) THEN
             st%yaw_target_heading_rad = setpoint_(turbine_id)%yaw_target_heading_rad
-         END IF
-      END IF
-      st%yaw_target_heading_rad = 0.0_C_DOUBLE
-      IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
-         IF (setpoint_(turbine_id)%yaw_enable /= 0) THEN
             st%yaw_seq_applied = setpoint_(turbine_id)%yaw_seq
          END IF
          IF (setpoint_(turbine_id)%induction_enable /= 0) THEN
             st%induction_seq_applied = setpoint_(turbine_id)%induction_seq
          END IF
       END IF
-      st%controller_status_flags = 0
       rc = fcr_rosco_publish_state_fc(turbine_id, st)
    END SUBROUTINE FCR_PublishState
 

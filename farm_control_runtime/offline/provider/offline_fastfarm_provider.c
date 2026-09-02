@@ -125,7 +125,8 @@ int fcr_offline_provider_publish_fast(int32_t turbine_id, double sim_time_s,
     fcr_publish_rt_clock(rt, sim_time_s, fast_step,
                          (uint64_t)floor(sim_time_s / g_dt_low), FCR_RT_HEALTH_OK);
 
-    /* 1 s 边界：发布流场快照（AWAE 语义；ZOH 由 state store 维持） */
+    /* 1 s 边界：发布流场快照（AWAE 语义；ZOH 由 state store 维持）。
+     * 各 WT 进程都发布状态帧（各自槽位）；Python 侧按 turbine_id 合并。 */
     if (sim_time_s - g_last_flow_time >= g_dt_low - 1e-9) {
         publish_flow_snapshot(rt, sim_time_s);
         g_last_flow_time = sim_time_s;
