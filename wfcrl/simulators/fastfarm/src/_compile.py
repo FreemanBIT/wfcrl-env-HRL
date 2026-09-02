@@ -71,7 +71,7 @@ if mode == "farmcontrol":
     c_sources = [
         "angle_convention.c", "command_store.c", "state_store.c",
         "watchdog.c", "runtime.c", "rosco_api.c",
-        "signal_statistics.c", "state_aggregator.c",
+        "signal_statistics.c", "state_aggregator.c", "induction_supervisor.c",
         "shm_command_source.c",
         "offline_fastfarm_provider.c",
     ]

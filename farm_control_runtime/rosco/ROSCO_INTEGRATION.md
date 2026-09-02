@@ -107,7 +107,23 @@ python wfcrl/simulators/fastfarm/src/_compile.py --mode rosco
 - 结论：yaw_delta（CW+）方向、绝对目标锁存（只在新 seq 生效）、seq 幂等、
   通道独立性均验证通过。复现：farm_control_runtime/offline/harness/p3_yaw_e2e.py。
 
-## 10. 已知边界
+## 10. Phase 6 验收记录（诱导映射执行，2026-XX）
+
+- 映射（induction_supervisor.c + config/induction_mapping.yaml，V1 标定）：
+  ct_ref=4a(1-a)；power_ratio=[a(1-a)^2]/[a0(1-a0)^2]；
+  speed_ref_ratio=pr^(1/3)；torque_limit_ratio=pr^(2/3)；
+  min_pitch_rad=clamp(gain*(1-pr), 0, max)，gain=0.55（region2 标定）。
+- 执行（FCR_ApplyReferences，每 10 ms）：恢复标称后按 setpoint 覆盖
+  VS_RtPwr/VS_MaxTq/VS_RefSpd/PS_BldPitchMin；disabled 完全回退。
+- 端到端（Row3T 8 m/s 90 s；与无命令空白对照差分）：
+  - seq1 a=0.20：净 -13.9%（理论 -13.6%）✓
+  - seq2 a=0.30：净 ~0%（理论 -1.4%，风噪声内）✓
+  - seq3 a=1.20（越界）：fallback 回额定（与空白一致）✓
+  - 多机一致性 ✓；单位/坐标语义见 OFFLINE_PROVIDER.md。
+- 结论：1 s induction seq 更新、ZOH、越界/NaN fallback、disabled 回退均验证通过；
+  复现：offline/harness/p6_induction_e2e.py（或有空白对照脚本）。
+
+## 11. 已知边界
 
 
 - 模板 ServoDyn `YCMode=0`：avrSWAP(48) 偏航速率命令**不驱动 ServoDyn**；

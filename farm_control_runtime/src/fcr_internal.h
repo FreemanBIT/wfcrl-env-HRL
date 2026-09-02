@@ -186,6 +186,50 @@ int  fcr_yaw_manager_get(const FcrYawActionManager *mgr, int32_t turbine_id,
                          FcrYawActionState *out);
 
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* induction_supervisor.c (Phase 6)                                    */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    double a0;              /* 基线轴向诱导（默认 1/3） */
+    double a_min;           /* 最小允许诱导 */
+    double a_max;           /* 最大允许诱导 */
+    double ct_coef;         /* Ct 标定系数（动量理论修正） */
+    double min_pitch_gain;  /* 最小桨距增益（rad/功率缺额） */
+    double min_pitch_max;   /* 最小桨距上限（rad） */
+    double power_cap;       /* power_ratio 上限 */
+} FcrInductionMapConfig;
+
+typedef struct {
+    uint64_t seq_applied;
+    uint32_t valid;         /* 映射生效（非 fallback） */
+    uint32_t fallback;      /* 越界/NaN fallback 触发 */
+    double   induction_ref;
+    double   ct_ref;
+    double   power_ratio;
+    double   speed_ref_ratio;
+    double   torque_limit_ratio;
+    double   min_pitch_rad;
+    double   last_update_time_s;
+} FcrInductionState;
+
+struct FcrInductionSupervisor {
+    uint32_t n_turbines;
+    FcrInductionMapConfig cfg;
+    FcrInductionState t[FCR_MAX_TURBINES];
+};
+
+FcrInductionSupervisor *fcr_induction_supervisor_create(uint32_t n_turbines,
+                                                        const FcrInductionMapConfig *cfg);
+void fcr_induction_supervisor_destroy(FcrInductionSupervisor *s);
+void fcr_induction_supervisor_update(FcrInductionSupervisor *s, int32_t turbine_id,
+                                     const FcrTurbineCommandState *tc, double sim_time_s);
+void fcr_induction_supervisor_apply(const FcrInductionSupervisor *s, int32_t turbine_id,
+                                    FcrRoscoExternalSetpoint *sp);
+int  fcr_induction_supervisor_get(const FcrInductionSupervisor *s, int32_t turbine_id,
+                                  FcrInductionState *out);
+const FcrInductionMapConfig *fcr_induction_supervisor_cfg(const FcrInductionSupervisor *s);
+
 /* watchdog.c                                                         */
 /* ------------------------------------------------------------------ */
 

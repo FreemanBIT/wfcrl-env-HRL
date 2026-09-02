@@ -13,6 +13,7 @@ void test_yaw_action_manager_register(void);
 void test_offline_provider_register(void);
 void test_signal_statistics_register(void);
 void test_state_aggregator_register(void);
+void test_induction_supervisor_register(void);
 
 int main(void)
 {
@@ -26,6 +27,7 @@ int main(void)
     test_offline_provider_register();
     test_signal_statistics_register();
     test_state_aggregator_register();
+    test_induction_supervisor_register();
     failed += test_run_all("farm_control_runtime unit tests");
     return failed ? 1 : 0;
 }

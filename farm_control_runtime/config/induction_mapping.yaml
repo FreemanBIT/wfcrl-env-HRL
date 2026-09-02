@@ -1,0 +1,23 @@
+# induction_mapping.yaml — 诱导因子映射标定（Phase 6 V1 冻结）
+#
+# induction_ref (a) -> ROSCO references 的确定性映射。
+# V1：动量理论 + 标定；后续可替换 Ct 闭环 / PI / 机型表。
+
+defaults:
+  a0: 0.3333333333     # 基线轴向诱导（最大功率点近似）
+  a_min: 0.05
+  a_max: 0.45
+  ct_coef: 1.0         # Ct 标定系数
+  min_pitch_gain_rad: 0.55   # region2 主要执行项标定：1rad ≈ -5%~-7% 功率
+  min_pitch_max_rad: 0.30
+  power_cap: 1.0
+
+# 输出（冻结，见 fcr_rosco_api.h）：
+#   ct_ref = ct_coef * 4a(1-a)
+#   power_ratio = [a(1-a)^2]/[a0(1-a0)^2]  (clamped [0.05, power_cap])
+#   speed_ref_ratio = power_ratio^(1/3)
+#   torque_limit_ratio = power_ratio^(2/3)
+#   min_pitch_rad = clamp(min_pitch_gain*(1-power_ratio), 0, min_pitch_max)
+
+# 每机覆盖（可选）： turbines: { 1: {a0: 0.3}, ... }
+# 机型： nrel_5mw （单机型 V1）

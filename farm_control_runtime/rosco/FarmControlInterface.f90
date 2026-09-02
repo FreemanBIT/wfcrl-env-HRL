@@ -33,7 +33,7 @@ MODULE FarmControlInterface
    PUBLIC :: FCR_Init, FCR_Step, FCR_PublishState, FCR_Shutdown
    PUBLIC :: FCR_IsExternalEnabled, FCR_IsYawExternal, FCR_GetYawTargetHeadingDeg, &
              FCR_GetYawSeqApplied, FCR_GetPowerRatio, FCR_GetMinPitchDeg, &
-             FCR_GetCommandStatusFlags, FCR_Setpoint, FCR_CurrentTurbineId, FCR_PublishExtra, FCR_ProviderInit
+             FCR_GetCommandStatusFlags, FCR_Setpoint, FCR_CurrentTurbineId, FCR_PublishExtra, FCR_ProviderInit, FCR_ApplyReferences
 
 CONTAINS
 
@@ -113,8 +113,15 @@ CONTAINS
       st%pitch_cmd_rad(2) = avrSWAP(43)
       st%pitch_cmd_rad(3) = avrSWAP(44)
       st%yaw_target_heading_rad = 0.0_C_DOUBLE
-      st%yaw_seq_applied = 0
-      st%induction_seq_applied = 0
+      st%yaw_target_heading_rad = 0.0_C_DOUBLE
+      IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
+         IF (setpoint_(turbine_id)%yaw_enable /= 0) THEN
+            st%yaw_seq_applied = setpoint_(turbine_id)%yaw_seq
+         END IF
+         IF (setpoint_(turbine_id)%induction_enable /= 0) THEN
+            st%induction_seq_applied = setpoint_(turbine_id)%induction_seq
+         END IF
+      END IF
       st%controller_status_flags = 0
       rc = fcr_rosco_publish_state_fc(turbine_id, st)
    END SUBROUTINE FCR_PublishState
@@ -136,6 +143,60 @@ CONTAINS
       INTEGER(C_INT) :: rc
       rc = fcr_offline_provider_init()
    END SUBROUTINE FCR_ProviderInit
+
+   ! ------------------------------------------------------------------
+   ! FCR_ApplyReferences — 把 induction setpoint 注入 ROSCO 执行参考
+   !（Phase 6）：每 ~10 ms 调用；恢复标称后按 power_ratio/torque_limit_ratio/
+   ! speed_ref_ratio/min_pitch_rad 修改 CntrPar；disabled 时完全回退。
+   ! 无网络/文件 I/O（红线合规）。
+   ! ------------------------------------------------------------------
+   SUBROUTINE FCR_ApplyReferences(CntrPar)
+      USE ROSCO_Types, ONLY : ControlParameters
+      TYPE(ControlParameters), INTENT(INOUT) :: CntrPar
+      REAL(8), SAVE :: VS_RtPwr_nom = 0.0_8, VS_MaxTq_nom = 0.0_8
+      REAL(8), SAVE :: VS_RefSpd_nom = 0.0_8
+      LOGICAL, SAVE :: nom_ok = .FALSE.
+      TYPE(FcrSetpointC), POINTER :: sp
+      INTEGER :: tid
+      IF (.NOT. api_ok_) RETURN
+      tid = current_turbine_id_
+      IF (tid < 1 .OR. tid > n_turbines_) RETURN
+      IF (.NOT. nom_ok) THEN
+         VS_RtPwr_nom = CntrPar%VS_RtPwr
+         VS_MaxTq_nom = CntrPar%VS_MaxTq
+         VS_RefSpd_nom = CntrPar%VS_RefSpd
+         nom_ok = .TRUE.
+      END IF
+      ! 每步恢复标称（防累积）
+      CntrPar%VS_RtPwr = VS_RtPwr_nom
+      CntrPar%VS_MaxTq = VS_MaxTq_nom
+      CntrPar%VS_RefSpd = VS_RefSpd_nom
+      sp => FCR_Setpoint(tid)
+      IF (.NOT. ASSOCIATED(sp)) RETURN
+      IF (sp%induction_enable /= 0) THEN
+         ! 功率参考（VS_ConstPower 模式）
+         CntrPar%VS_ConstPower = 1
+         CntrPar%VS_RtPwr = VS_RtPwr_nom * sp%power_ratio
+         CntrPar%VS_MaxTq = VS_MaxTq_nom * sp%torque_limit_ratio
+         CntrPar%VS_RefSpd = VS_RefSpd_nom * sp%speed_ref_ratio
+         ! 最小桨距约束
+         IF (sp%min_pitch_rad > 0.001_8) THEN
+            CntrPar%PS_Mode = 1
+            CntrPar%PS_BldPitchMin_N = 1
+            IF (.NOT. ALLOCATED(CntrPar%PS_BldPitchMin)) ALLOCATE(CntrPar%PS_BldPitchMin(1))
+            IF (.NOT. ALLOCATED(CntrPar%PS_WindSpeeds))  ALLOCATE(CntrPar%PS_WindSpeeds(1))
+            CntrPar%PS_WindSpeeds(1)  = 0.0
+            CntrPar%PS_BldPitchMin(1) = sp%min_pitch_rad
+         ELSE
+            CntrPar%PS_Mode = 0
+         END IF
+      ELSE
+         ! disabled：完全回退 ROSCO 额定
+         CntrPar%VS_ConstPower = 0
+         CntrPar%PS_Mode = 0
+      END IF
+   END SUBROUTINE FCR_ApplyReferences
+
 
 
    ! ------------------------------------------------------------------

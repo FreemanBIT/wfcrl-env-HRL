@@ -31,6 +31,8 @@ FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
 
     rt->aggregator = fcr_state_aggregator_create(rt->cfg.n_turbines, 1.0);
     if (!rt->aggregator) { fcr_runtime_destroy(rt); return NULL; }
+    rt->induction_supervisor = fcr_induction_supervisor_create(rt->cfg.n_turbines, NULL);
+    if (!rt->induction_supervisor) { fcr_runtime_destroy(rt); return NULL; }
     rt->cs = fcr_command_store_create(rt->cfg.n_turbines,
                                       rt->cfg.default_yaw_ttl_s,
                                       rt->cfg.default_induction_ttl_s,
@@ -50,6 +52,8 @@ int fcr_runtime_destroy(FcrRuntime *rt)
 {
     if (!rt) return 0;
     if (rt->aggregator) fcr_state_aggregator_destroy((FcrStateAggregator *)rt->aggregator);
+    if (rt->induction_supervisor)
+        fcr_induction_supervisor_destroy((FcrInductionSupervisor *)rt->induction_supervisor);
     fcr_command_store_destroy(rt->cs);
     fcr_state_store_destroy(rt->ss);
     fcr_watchdog_destroy(rt->wd);
@@ -81,7 +85,15 @@ void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id)
     FcrRoscoExternalSetpoint sp;
     if (!rt || !rt->cs) return;
     fcr_command_store_get_setpoint(rt->cs, turbine_id, &sp);
-    /* 后续 Phase：YawActionManager/InductionSupervisor 在此叠加 */
+    /* InductionSupervisor（Phase 6）：新 seq 计算映射并叠加到 setpoint */
+    if (rt->induction_supervisor) {
+        FcrTurbineCommandState *tc = fcr_command_store_turbine(rt->cs, turbine_id);
+        FcrInductionSupervisor *sup = (FcrInductionSupervisor *)rt->induction_supervisor;
+        if (tc) {
+            fcr_induction_supervisor_update(sup, turbine_id, tc, rt->ss->sim_time_s);
+            fcr_induction_supervisor_apply(sup, turbine_id, &sp);
+        }
+    }
     rt->setpoint[turbine_id - 1] = sp;
 }
 

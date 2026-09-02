@@ -225,6 +225,8 @@ END IF
 #ifdef FCR_FARM_CONTROL
 ! ===== FARM CONTROL RUNTIME: 每 10 ms 驱动高速步（命令 refresh + setpoint 生成）=====
 CALL FCR_Step(wfcrl_turbine_id, LocalVar%Time)
+! ===== FARM CONTROL RUNTIME: 应用 induction 参考到 ROSCO 参数（Phase 6）=====
+CALL FCR_ApplyReferences(CntrPar)
 #endif
 
 ! Call external controller, if desired
