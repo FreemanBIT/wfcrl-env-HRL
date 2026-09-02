@@ -1,43 +1,108 @@
-"""编译 ROSCO + WFCRL Bridge → DISCON_WT1.dll"""
-import subprocess, os, sys
+"""编译 ROSCO + WFCRL Bridge → DISCON_WT1.dll
+
+--mode rosco   : 传统 ROSCO + WFCRL controls.txt 桥（legacy，等价 baseline）
+--mode farmcontrol : farm_control_runtime 新路径（-DFCR_FARM_CONTROL，默认）
+"""
+import subprocess, os, sys, shutil
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 DLL_DIR = os.path.join(SRC_DIR, "..", "servo_dll")
+FCR_ROOT = os.path.normpath(os.path.join(SRC_DIR, "..", "..", "..", "..", "farm_control_runtime"))
+
+# 默认：farmcontrol 模式
+mode = "farmcontrol"
+if len(sys.argv) > 1 and sys.argv[1] == "--mode":
+    mode = sys.argv[2]
+if len(sys.argv) > 1 and sys.argv[1] == "rosco":
+    mode = "rosco"
 
 f90_file = os.path.join(SRC_DIR, "DISCON.F90")
 dll_file = os.path.join(DLL_DIR, "DISCON_WT1.dll")
 
 if not os.path.exists(f90_file):
-    print(f"ERROR: {f90_file} not found")
-    sys.exit(1)
+    print(f"ERROR: {f90_file} not found"); sys.exit(1)
 
-# 查找 gfortran
-gfortran_paths = [
+def find_tool(name, paths):
+    for p in paths:
+        try:
+            r = subprocess.run([p, "--version"], capture_output=True, timeout=10)
+            if r.returncode == 0:
+                print(f"Found {name}: {p}"); return p
+        except Exception:
+            continue
+    shutil.which(name) and print(f"Found {name}: {shutil.which(name)}")
+    return shutil.which(name)
+
+gfortran = find_tool("gfortran", [
     r"D:\TDM-GCC-64\bin\gfortran.exe",
     r"C:\mingw64\bin\gfortran.exe",
     r"C:\msys64\mingw64\bin\gfortran.exe",
     "gfortran",
-]
-
-gfortran = None
-for p in gfortran_paths:
-    try:
-        r = subprocess.run([p, "--version"], capture_output=True, timeout=10)
-        if r.returncode == 0:
-            gfortran = p
-            print(f"Found gfortran: {p}")
-            break
-    except Exception:
-        continue
-
+])
 if gfortran is None:
-    print("ERROR: gfortran not found. Install MinGW-w64 or TDM-GCC.")
-    sys.exit(1)
+    print("ERROR: gfortran not found. Install MinGW-w64 or TDM-GCC."); sys.exit(1)
 
-# 编译
-cmd = [gfortran, "-shared", "-static", "-o", dll_file, f90_file]
-print(f"Running: {' '.join(cmd)}")
-result = subprocess.run(cmd, cwd=SRC_DIR, capture_output=True, text=True, timeout=120)
+if mode == "farmcontrol":
+    gcc = find_tool("gcc", [
+        r"D:\TDM-GCC-64\bin\gcc.exe",
+        r"C:\mingw64\bin\gcc.exe",
+        "gcc",
+    ])
+    if gcc is None:
+        print("ERROR: gcc not found (required for farm_control_runtime C core)."); sys.exit(1)
+
+FLAGS = "-ffree-line-length-0 -static-libgcc -static-libgfortran -static -fdefault-real-8 -fdefault-double-8 -cpp -DIMPLICIT_DLLEXPORT -O2"
+
+f90_sources = [
+    "Constants.f90", "ROSCO_Types.f90", "SysGnuWin.f90",
+    "Filters.f90", "Functions.f90", "ControllerBlocks.f90",
+    "ROSCO_Helpers.f90", "ReadSetParameters.f90", "ROSCO_IO.f90",
+    "Controllers.f90", "ExtControl.f90", "ZeroMQInterface.f90",
+]
+# DISCON.F90 依赖 FarmControlInterface（module 先后顺序），由各模式放最后
+dll_entry = ["DISCON.F90"]
+
+cmd = [gfortran, "-shared", "-static"] + FLAGS.split() + ["-o", dll_file]
+
+if mode == "farmcontrol":
+    # 1) 编译 C 核心（farm_control_runtime）
+    c_sources = [
+        "angle_convention.c", "command_store.c", "state_store.c",
+        "watchdog.c", "runtime.c", "rosco_api.c",
+    ]
+    c_objs = []
+    for src in c_sources:
+        obj = os.path.join(SRC_DIR, os.path.splitext(src)[0] + ".o")
+        r = subprocess.run([gcc, "-std=c11", "-O2", "-c",
+                            os.path.join(FCR_ROOT, "src", src),
+                            "-I", os.path.join(FCR_ROOT, "include"),
+                            "-I", os.path.join(FCR_ROOT, "src"),
+                            "-o", obj], cwd=SRC_DIR, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"C compile FAIL ({src}):"); print(r.stderr); sys.exit(1)
+        c_objs.append(obj)
+    cmd += c_objs
+    cmd += ["-D", "FCR_FARM_CONTROL"]
+    cmd += ["-I", os.path.join(FCR_ROOT, "rosco")]
+    cmd += ["-I", SRC_DIR]
+    f90_sources = f90_sources + [
+        os.path.join(FCR_ROOT, "rosco", "FarmControlCBindings.f90"),
+        os.path.join(FCR_ROOT, "rosco", "FarmControlInterface.f90"),
+    ] + dll_entry
+    print("== farm_control_runtime integration build (FCR_FARM_CONTROL) ==")
+else:
+    print("== legacy ROSCO + WFCRL bridge build ==")
+    cmd += ["-UFCR_FARM_CONTROL"]
+    f90_sources = f90_sources + dll_entry
+
+cmd += f90_sources
+print(f"Running: {' '.join(cmd[:6])} ... ({len(cmd)} args)")
+result = subprocess.run(cmd, cwd=SRC_DIR, capture_output=True, text=True, timeout=300)
+
+# 清理中间 .o/.mod
+for f in os.listdir(SRC_DIR):
+    if f.endswith(".o") or f.endswith(".mod"):
+        os.remove(os.path.join(SRC_DIR, f))
 
 if result.returncode == 0:
     size_kb = os.path.getsize(dll_file) / 1024

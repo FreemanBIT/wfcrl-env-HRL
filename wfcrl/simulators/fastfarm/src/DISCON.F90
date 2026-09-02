@@ -11,6 +11,16 @@
 ! -------------------------------------------------------------------------------------------
 
 ! High level run script
+!
+! =============================================================================
+! WFCRL FARM CONTROL INTEGRATION (Phase 2, farm_control_runtime)
+! -----------------------------------------------------------------------------
+! 编译宏 FCR_FARM_CONTROL：
+!   - 定义：接入 farm_control_runtime（USE FarmControlInterface；每 10 ms
+!            FCR_Step 驱动 runtime、发布快速状态；controls.txt 文件桥与
+!            ZeroMQInterface 从新主路径退出——保留在旧宏路径供对照）；
+!   - 未定义：与 legacy 完全等价（WFCRL controls.txt 桥 + ZeroMQ）。
+! =============================================================================
 
 !=======================================================================
 SUBROUTINE DISCON(avrSWAP, aviFAIL, accINFILE, avcOUTNAME, avcMSG) BIND (C, NAME='DISCON')
@@ -27,7 +37,11 @@ USE             :: Filters
 USE             :: Functions
 USE             :: ExtControl
 USE             :: ROSCO_IO
+#ifndef FCR_FARM_CONTROL
 USE             :: ZeroMQInterface
+#else
+USE             :: FarmControlInterface
+#endif
 
 IMPLICIT NONE
 ! Enable .dll export
@@ -65,9 +79,10 @@ CHARACTER(*),                   PARAMETER      :: RoutineName = 'ROSCO'
 
 ! ===== WFCRL BRIDGE: variable declarations =====
 INTEGER(IntKi), SAVE                 :: wfcrl_turbine_id = 0
-INTEGER(IntKi), SAVE                 :: wfcrl_applied_step = -1
 LOGICAL, SAVE                        :: wfcrl_init_done = .FALSE.
 ! Farm control protocol: 0-yaw, 1-power+minPitch, 2-pitch, 3-pitch+yaw, 4-power+minPitch+yaw
+#ifndef FCR_FARM_CONTROL
+INTEGER(IntKi), SAVE                 :: wfcrl_applied_step = -1
 INTEGER(IntKi), SAVE                 :: wfcrl_mode = -1
 REAL(ReKi), SAVE                     :: wfcrl_cmd_yaw = 0.0          ! yaw absolute (deg)
 REAL(ReKi), SAVE                     :: wfcrl_cmd_pitch = 0.0       ! pitch absolute (deg)
@@ -79,6 +94,12 @@ CHARACTER(256)                       :: wfcrl_line, wfcrl_token, wfcrl_tmp, wfcr
 CHARACTER(32)                        :: wfcrl_tstr
 LOGICAL                              :: wfcrl_fexist, wfcrl_found
 REAL(ReKi)                          :: wfcrl_tmp_val
+#else
+INTEGER(IntKi)                       :: wfcrl_c_len, wfcrl_io_stat
+CHARACTER(256)                       :: wfcrl_dll_infile
+LOGICAL                              :: wfcrl_fexist
+LOGICAL, SAVE                        :: fcr_init_done = .FALSE.
+#endif
 ! ===== END WFCRL BRIDGE declarations =====
 
 RootName = TRANSFER(avcOUTNAME, RootName)
@@ -98,7 +119,7 @@ END IF
 ! Read avrSWAP array into derived types/variables
 CALL ReadAvrSWAP(avrSWAP, LocalVar, CntrPar, ErrVar)
 
-! ===== WFCRL BRIDGE: Read turbine ID and external commands =====
+! ===== WFCRL BRIDGE: Read turbine ID (both paths) =====
 IF (.NOT. wfcrl_init_done) THEN
     ! Read turbine ID from accINFILE (DISCON_T{i}.IN, passed via DLL_InFile)
     wfcrl_dll_infile = ''
@@ -116,6 +137,16 @@ IF (.NOT. wfcrl_init_done) THEN
     wfcrl_init_done = .TRUE.
 END IF
 
+#ifdef FCR_FARM_CONTROL
+! ===== FARM CONTROL RUNTIME: 初始化（每机一次）=====
+IF (.NOT. fcr_init_done) THEN
+    CALL FCR_Init(wfcrl_turbine_id)
+    fcr_init_done = .TRUE.
+END IF
+#endif
+
+#ifndef FCR_FARM_CONTROL
+! ===== WFCRL BRIDGE: Read external commands from controls.txt ===== (legacy path)
 ! Read farm commands from controls.txt (5-mode protocol)
 INQUIRE(FILE='controls.txt', EXIST=wfcrl_fexist)
 IF (wfcrl_fexist) THEN
@@ -157,13 +188,15 @@ IF (wfcrl_fexist) THEN
     CLOSE(95)
 END IF
 ! ===== END WFCRL BRIDGE: external command read =====
+#endif
 
 ! Set Control Parameters
 IF (ErrVar%aviFAIL >= 0) THEN
     CALL SetParameters(avrSWAP, accINFILE, SIZE(avcMSG), CntrPar, LocalVar, objInst, PerfData, RootName, ErrVar)
 ENDIF
 
-! ===== WFCRL BRIDGE: Inject farm commands into ROSCO parameters =====
+#ifndef FCR_FARM_CONTROL
+! ===== WFCRL BRIDGE: Inject farm commands into ROSCO parameters ===== (legacy path)
 IF (wfcrl_applied_step >= 0 .AND. wfcrl_mode >= 0) THEN
     ! Modes 1 & 4: Power tracking with min pitch constraint
     IF (wfcrl_mode == 1 .OR. wfcrl_mode == 4) THEN
@@ -186,6 +219,12 @@ IF (wfcrl_applied_step >= 0 .AND. wfcrl_mode >= 0) THEN
     END IF
 END IF
 ! ===== END WFCRL BRIDGE: parameter injection =====
+#endif
+
+#ifdef FCR_FARM_CONTROL
+! ===== FARM CONTROL RUNTIME: 每 10 ms 驱动高速步（命令 refresh + setpoint 生成）=====
+CALL FCR_Step(wfcrl_turbine_id, LocalVar%Time)
+#endif
 
 ! Call external controller, if desired
 IF (CntrPar%Ext_Mode > 0 .AND. ErrVar%aviFAIL >= 0) THEN
@@ -200,9 +239,11 @@ IF (((LocalVar%iStatus >= 0) .OR. (LocalVar%iStatus <= -8)) .AND. (ErrVar%aviFAI
     IF ((LocalVar%iStatus == -8) .AND. (ErrVar%aviFAIL >= 0))  THEN ! Write restart files
         CALL WriteRestartFile(LocalVar, CntrPar, ErrVar, objInst, RootName, SIZE(avcOUTNAME))    
     ENDIF
+#ifndef FCR_FARM_CONTROL
     IF (CntrPar%ZMQ_Mode > 0) THEN
         CALL UpdateZeroMQ(LocalVar, CntrPar, ErrVar)
     ENDIF
+#endif
     
     CALL WindSpeedEstimator(LocalVar, CntrPar, objInst, PerfData, DebugVar, ErrVar)
     CALL ComputeVariablesSetpoints(CntrPar, LocalVar, objInst, DebugVar, ErrVar)
@@ -232,11 +273,14 @@ IF (((LocalVar%iStatus >= 0) .OR. (LocalVar%iStatus <= -8)) .AND. (ErrVar%aviFAI
     IF ( CntrPar%LoggingLevel > 0 ) THEN
         CALL Debug(LocalVar, CntrPar, DebugVar, ErrVar, avrSWAP, RootName, SIZE(avcOUTNAME))
     END IF 
+#ifndef FCR_FARM_CONTROL
 ELSEIF ((LocalVar%iStatus == -1) .AND. (CntrPar%ZMQ_Mode > 0)) THEN
         CALL UpdateZeroMQ(LocalVar, CntrPar, ErrVar)
+#endif
 END IF
 
-! ===== WFCRL BRIDGE: Apply post-control overrides based on mode =====
+#ifndef FCR_FARM_CONTROL
+! ===== WFCRL BRIDGE: Apply post-control overrides based on mode ===== (legacy path)
 IF (wfcrl_applied_step >= 0 .AND. wfcrl_mode >= 0) THEN
     ! Pitch override (modes 2, 3: absolute pitch command, direct overwrite)
     IF ((wfcrl_mode == 2 .OR. wfcrl_mode == 3) .AND. ABS(wfcrl_cmd_pitch) > 0.001) THEN
@@ -261,6 +305,7 @@ IF (wfcrl_applied_step >= 0 .AND. wfcrl_mode >= 0) THEN
     END IF
 END IF
 ! ===== END WFCRL BRIDGE: control override =====
+#endif
 
 
 ! Add RoutineName to error message
@@ -274,7 +319,13 @@ avcMSG = TRANSFER(ErrMsg//C_NULL_CHAR, avcMSG, SIZE(avcMSG))
 aviFAIL = ErrVar%aviFAIL
 ErrVar%ErrMsg = ''
 
-! ===== WFCRL BRIDGE: Write measurements =====
+#ifdef FCR_FARM_CONTROL
+! ===== FARM CONTROL RUNTIME: 发布快速状态（shared memory，无 I/O）=====
+CALL FCR_PublishState(wfcrl_turbine_id, LocalVar, avrSWAP)
+#endif
+
+#ifndef FCR_FARM_CONTROL
+! ===== WFCRL BRIDGE: Write measurements ===== (legacy path)
 wfcrl_meas_time = avrSWAP(2)
 WRITE(wfcrl_tstr, '(I0)') wfcrl_turbine_id
 OPEN(96, FILE='measurements_T'//TRIM(wfcrl_tstr)//'.txt', STATUS='REPLACE')
@@ -289,6 +340,7 @@ WRITE(96,'(A,F12.2,A,F12.2,A,F12.2)') ' mip1=',LocalVar%rootMOOP(1), &
     ' moop1=',LocalVar%rootMOOP(2),' mzb1=',LocalVar%rootMOOP(3)
 CLOSE(96)
 ! ===== END WFCRL BRIDGE: measurements =====
+#endif
 
 RETURN
 END SUBROUTINE DISCON

@@ -106,55 +106,68 @@ int fcr_command_store_accept_frame(FcrCommandStore *cs, const FarmCommandFrame *
     return 0;
 }
 
-/* TTL / stale 检查 + yaw 目标锁存（每高速步调用）                     */
+/* 单台机的 TTL / stale 检查 + yaw 目标锁存（每高速步调用）            */
+void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
+                                   double sim_time_s, double heading_now_rad,
+                                   uint64_t low_step)
+{
+    FcrTurbineCommandState *tc;
+    if (!cs) return;
+    tc = fcr_command_store_turbine(cs, turbine_id);
+    if (!tc) return;
+
+    /* ---- stale（命令来源时间过老）---- */
+    if (tc->source_time_s > 0.0 &&
+        (sim_time_s - tc->source_time_s) > cs->stale_threshold_s) {
+        tc->command_status_flags |= FCR_CMD_FLAG_YAW_STALE |
+                                    FCR_CMD_FLAG_INDUCTION_STALE;
+    } else {
+        tc->command_status_flags &= ~(FCR_CMD_FLAG_YAW_STALE |
+                                      FCR_CMD_FLAG_INDUCTION_STALE);
+    }
+
+    /* ---- yaw TTL ---- */
+    if (tc->yaw_valid && tc->yaw_ttl_s > 0.0 &&
+        (sim_time_s - tc->yaw_issue_time_s) > tc->yaw_ttl_s) {
+        tc->yaw_valid = 0;               /* 通道失效（回退 ROSCO） */
+        tc->yaw_target_latched = 0;
+        tc->command_status_flags |= FCR_CMD_FLAG_YAW_TTL_EXPIRED;
+    } else {
+        tc->command_status_flags &= ~FCR_CMD_FLAG_YAW_TTL_EXPIRED;
+    }
+
+    /* ---- induction TTL ---- */
+    if (tc->ind_valid && tc->ind_ttl_s > 0.0 &&
+        (sim_time_s - tc->ind_issue_time_s) > tc->ind_ttl_s) {
+        tc->ind_valid = 0;
+        tc->command_status_flags |= FCR_CMD_FLAG_INDUCTION_TTL_EXPIRED;
+    } else {
+        tc->command_status_flags &= ~FCR_CMD_FLAG_INDUCTION_TTL_EXPIRED;
+    }
+
+    /* ---- yaw 目标锁存：新 seq 且机舱方位已知，只执行一次 ----   */
+    if (tc->yaw_valid && !tc->yaw_target_latched) {
+        if (fcr_is_finite(heading_now_rad)) {
+            tc->yaw_target_heading =
+                fcr_compute_yaw_target(heading_now_rad, tc->yaw_delta_rad);
+            tc->yaw_target_latched = 1;
+            tc->yaw_seq_applied = tc->yaw_seq_rx;
+            if (low_step > 0) tc->yaw_effective_low_step = (int64_t)low_step;
+        }
+        /* 方位未知：保持未锁存，等待下一高速步 */
+    }
+}
+
+/* TTL / stale 检查 + yaw 目标锁存（整场版，供集中式 harness）         */
 void fcr_command_store_refresh(FcrCommandStore *cs, double sim_time_s,
                                const double *heading_now_rad, uint64_t low_step)
 {
     uint32_t i;
     if (!cs) return;
     for (i = 0; i < cs->n_turbines; ++i) {
-        FcrTurbineCommandState *tc = &cs->t[i];
-
-        /* ---- stale（命令来源时间过老）---- */
-        if (tc->source_time_s > 0.0 &&
-            (sim_time_s - tc->source_time_s) > cs->stale_threshold_s) {
-            tc->command_status_flags |= FCR_CMD_FLAG_YAW_STALE |
-                                        FCR_CMD_FLAG_INDUCTION_STALE;
-        } else {
-            tc->command_status_flags &= ~(FCR_CMD_FLAG_YAW_STALE |
-                                          FCR_CMD_FLAG_INDUCTION_STALE);
-        }
-
-        /* ---- yaw TTL ---- */
-        if (tc->yaw_valid && tc->yaw_ttl_s > 0.0 &&
-            (sim_time_s - tc->yaw_issue_time_s) > tc->yaw_ttl_s) {
-            tc->yaw_valid = 0;               /* 通道失效（回退 ROSCO） */
-            tc->yaw_target_latched = 0;
-            tc->command_status_flags |= FCR_CMD_FLAG_YAW_TTL_EXPIRED;
-        } else {
-            tc->command_status_flags &= ~FCR_CMD_FLAG_YAW_TTL_EXPIRED;
-        }
-
-        /* ---- induction TTL ---- */
-        if (tc->ind_valid && tc->ind_ttl_s > 0.0 &&
-            (sim_time_s - tc->ind_issue_time_s) > tc->ind_ttl_s) {
-            tc->ind_valid = 0;
-            tc->command_status_flags |= FCR_CMD_FLAG_INDUCTION_TTL_EXPIRED;
-        } else {
-            tc->command_status_flags &= ~FCR_CMD_FLAG_INDUCTION_TTL_EXPIRED;
-        }
-
-        /* ---- yaw 目标锁存：新 seq 且机舱方位已知，只执行一次 ----   */
-        if (tc->yaw_valid && !tc->yaw_target_latched) {
-            if (heading_now_rad && fcr_is_finite(heading_now_rad[i])) {
-                tc->yaw_target_heading =
-                    fcr_compute_yaw_target(heading_now_rad[i], tc->yaw_delta_rad);
-                tc->yaw_target_latched = 1;
-                tc->yaw_seq_applied = tc->yaw_seq_rx;
-                if (low_step > 0) tc->yaw_effective_low_step = (int64_t)low_step;
-            }
-            /* 方位未知：保持未锁存，等待下一高速步 */
-        }
+        double h = (heading_now_rad && fcr_is_finite(heading_now_rad[i]))
+                       ? heading_now_rad[i] : (0.0 / 0.0);
+        fcr_command_store_refresh_one(cs, (int32_t)(i + 1), sim_time_s, h, low_step);
     }
 }
 

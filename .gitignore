@@ -16,3 +16,7 @@ FarmInputs/*
 .hermes/*
 closed-loop-control/__simul__/*
 nul
+# ROSCO build artifacts
+wfcrl/simulators/fastfarm/src/*.mod
+wfcrl/simulators/fastfarm/src/*.o
+wfcrl/simulators/fastfarm/src/*.obj

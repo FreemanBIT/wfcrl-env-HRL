@@ -85,6 +85,11 @@ void fcr_command_store_refresh(FcrCommandStore *cs, double sim_time_s,
                                const double *heading_now_rad, /* [n_turbines] 或 NULL */
                                uint64_t low_step);
 
+/* 单机版（DLL 内每台机进程/线程调用；heading 为 NULL 时等待方位就绪） */
+void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
+                                   double sim_time_s, double heading_now_rad,
+                                   uint64_t low_step);
+
 /* 生成当前生效 setpoint（每机）                                       */
 void fcr_command_store_get_setpoint(const FcrCommandStore *cs, int32_t turbine_id,
                                     FcrRoscoExternalSetpoint *sp);
@@ -167,6 +172,7 @@ struct FcrRuntime {
 
 /* runtime 内部：更新每台机 setpoint（供 step_high 使用）              */
 void fcr_runtime_update_setpoints(FcrRuntime *rt, double sim_time_s, uint64_t low_step);
+void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id);
 
 #ifdef __cplusplus
 }

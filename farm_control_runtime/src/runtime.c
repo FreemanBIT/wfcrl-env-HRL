@@ -72,16 +72,23 @@ int fcr_runtime_bind_turbines(FcrRuntime *rt, uint32_t n_turbines)
     return 0;
 }
 
-/* 生成各机 ROSCO setpoint（供 Fortran 侧 10 ms 读取）                 */
+/* 生成单机 ROSCO setpoint（供 Fortran 侧 10 ms 读取）                 */
+void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id)
+{
+    FcrRoscoExternalSetpoint sp;
+    if (!rt || !rt->cs) return;
+    fcr_command_store_get_setpoint(rt->cs, turbine_id, &sp);
+    /* 后续 Phase：YawActionManager/InductionSupervisor 在此叠加 */
+    rt->setpoint[turbine_id - 1] = sp;
+}
+
+/* 生成各机 ROSCO setpoint（整场版）                                   */
 void fcr_runtime_update_setpoints(FcrRuntime *rt, double sim_time_s, uint64_t low_step)
 {
     uint32_t i;
-    FcrRoscoExternalSetpoint sp;
     if (!rt || !rt->cs) return;
     for (i = 0; i < rt->cfg.n_turbines; ++i) {
-        fcr_command_store_get_setpoint(rt->cs, (int32_t)(i + 1), &sp);
-        /* 后续 Phase：YawActionManager/InductionSupervisor 在此叠加 */
-        rt->setpoint[i] = sp;
+        fcr_runtime_update_setpoint_one(rt, (int32_t)(i + 1));
     }
     (void)sim_time_s; (void)low_step;
 }

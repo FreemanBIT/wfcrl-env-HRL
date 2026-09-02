@@ -8,6 +8,7 @@ void test_angle_convention_register(void);
 void test_command_store_register(void);
 void test_abi_register(void);
 void test_watchdog_register(void);
+void test_rosco_api_register(void);
 
 int main(void)
 {
@@ -16,6 +17,7 @@ int main(void)
     test_command_store_register();
     test_abi_register();
     test_watchdog_register();
+    test_rosco_api_register();
     failed += test_run_all("farm_control_runtime unit tests");
     return failed ? 1 : 0;
 }
