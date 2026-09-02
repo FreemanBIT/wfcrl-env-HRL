@@ -1,0 +1,67 @@
+# modbus_map.yaml — Modbus TCP 寄存器映射（Phase 9 冻结，同步 modbus_register_map.h）
+
+transport:
+  type: modbus_tcp
+  port: 502
+  byte_order: big-endian
+  function_codes:
+    read_holding: 0x03
+    write_single: 0x06
+    write_multiple: 0x10
+
+command_area:
+  base: 0x0000
+  per_turbine: 64
+  turbine1:
+    yaw_delta_rad: 0      # f64 rad, CW+
+    yaw_seq: 4            # u64
+    yaw_valid: 8          # u16
+    yaw_effective_low_step: 9  # i64
+    yaw_ttl_s: 13         # f64 s
+    induction_ref: 17     # f64
+    induction_seq: 21     # u64
+    induction_valid: 25   # u16
+    induction_effective_low_step: 26 # i64
+    induction_ttl_s: 30   # f64 s
+    source_time_s: 34     # f64 s
+    frame_seq: 38         # u64
+    commit_seq: 42        # u64
+
+clock_area:
+  base: 0x0800
+  sim_time_s: 0           # f64
+  fast_step: 4            # u64
+  low_step: 8             # u64
+  rt_health: 12           # u16
+
+state_area:
+  base: 0x1000
+  per_turbine: 128
+  turbine1:
+    turbine_id: 0         # u16
+    valid: 1              # u16
+    source_time: 2        # f64
+    gen_power_w: 10       # f64
+    gen_power_mean: 14    # f64
+    gen_power_rms: 18     # f64
+    rotor_thrust_n: 22    # f64
+    shaft_torque_nm: 26   # f64
+    nacelle_heading_rad: 30
+    nacelle_vane_rad: 34
+    hub_wind_mps: 38
+    rotor_speed_rad_s: 42
+    gen_speed_rad_s: 46
+    rotor_ct: 50
+    rotor_cp: 54
+    yaw_target_heading_rad: 58
+    yaw_seq_applied: 62   # u64
+    induction_seq_applied: 66 # u64
+    controller_status_flags: 70 # u16
+    disk_ambient_wind_mps: 71
+    disk_disturbed_wind_mps: 75
+    disk_ambient_ti: 79
+    flow_source_time_s: 83
+    flow_seq: 87          # u64
+
+# 并发模型：单客户端；RCP 轮询状态区（建议 100 ms）并异步写命令区。
+# 单位与坐标语义与 fcr_state_types.h / PROTOCOL_DECISIONS.md 一致。

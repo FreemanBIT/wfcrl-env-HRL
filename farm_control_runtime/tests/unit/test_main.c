@@ -1,8 +1,10 @@
 /*
  * test_main.c — farm_control_runtime 单元测试入口
  * 编译全部 test_*.c（含本文件）→ 运行。
+ * 定义 MB_STUB 时不注册 modbus 测试（链接隔离用）。
  */
 #include "test_framework.h"
+#include <stdlib.h>
 
 void test_angle_convention_register(void);
 void test_command_store_register(void);
@@ -14,6 +16,9 @@ void test_offline_provider_register(void);
 void test_signal_statistics_register(void);
 void test_state_aggregator_register(void);
 void test_induction_supervisor_register(void);
+#ifndef MB_STUB
+void test_modbus_register(void);
+#endif
 
 int main(void)
 {
@@ -28,6 +33,9 @@ int main(void)
     test_signal_statistics_register();
     test_state_aggregator_register();
     test_induction_supervisor_register();
+#ifndef MB_STUB
+    test_modbus_register();
+#endif
     failed += test_run_all("farm_control_runtime unit tests");
-    return failed ? 1 : 0;
+    return failed;
 }
