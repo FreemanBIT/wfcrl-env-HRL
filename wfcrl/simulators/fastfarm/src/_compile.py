@@ -25,7 +25,7 @@ if not os.path.exists(f90_file):
 def find_tool(name, paths):
     for p in paths:
         try:
-            r = subprocess.run([p, "--version"], capture_output=True, timeout=10)
+            r = subprocess.run([p, "--version"], capture_output=True, timeout=10, encoding="utf-8", errors="replace")
             if r.returncode == 0:
                 print(f"Found {name}: {p}"); return p
         except Exception:
@@ -83,7 +83,7 @@ if mode == "farmcontrol":
                             src_file,
                             "-I", os.path.join(FCR_ROOT, "include"),
                             "-I", os.path.join(FCR_ROOT, "src"),
-                            "-o", obj], cwd=SRC_DIR, capture_output=True, text=True)
+                            "-o", obj], cwd=SRC_DIR, capture_output=True, encoding="utf-8", errors="replace")
         if r.returncode != 0:
             print(f"C compile FAIL ({src}):"); print(r.stderr); sys.exit(1)
         c_objs.append(obj)
@@ -105,7 +105,7 @@ else:
 
 cmd += f90_sources
 print(f"Running: {' '.join(cmd[:6])} ... ({len(cmd)} args)")
-result = subprocess.run(cmd, cwd=SRC_DIR, capture_output=True, text=True, timeout=300)
+result = subprocess.run(cmd, cwd=SRC_DIR, capture_output=True, encoding="utf-8", errors="replace", timeout=300)
 
 # 清理中间 .o/.mod
 for f in os.listdir(SRC_DIR):

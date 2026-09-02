@@ -59,7 +59,7 @@ True          GenTiStp     - Method to stop the generator {T: timed using TimGen
     28116.2   HSSBrTqF     - Fully deployed HSS-brake torque (N-m)
 ---------------------- NACELLE-YAW CONTROL -------------------------------------
           5   YCMode       - Yaw control mode {0: none, 3: user-defined from routine UserYawCont, 4: user-defined from Simulink/Labview, 5: user-defined from Bladed-style DLL} (switch)   [FCR: DLL yaw-rate demand active]
-     9999.9   TYCOn        - Time to enable active yaw control (s) [unused when YCMode=0]
+        0   TYCOn        - Time to enable active yaw control (s) [unused when YCMode=0; FCR: immediate]
           0   YawNeut      - Neutral yaw position--yaw spring force is zero at this yaw (degrees)
 9.02832E+09   YawSpr       - Nacelle-yaw spring constant (N-m/rad)
    19160000   YawDamp      - Nacelle-yaw damping constant (N-m/(rad/s))
@@ -116,5 +116,4 @@ True          TabDelim     - Use tab delimiters in text tabular output file? (fl
 "GenPwr"                  - Electrical generator power and torque
 "GenTq"                   - Electrical generator power and torque
 END of ServoDyn input file (the word "END" must appear in the first 3 columns of this last line).
-
 

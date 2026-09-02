@@ -57,6 +57,11 @@ int fcr_rosco_api_init(uint32_t n_turbines_max, double dt_high_s)
     FCR_LOCK();
     if (!g_rt) g_rt = fcr_runtime_create(&cfg);
     FCR_UNLOCK();
+    if (g_rt) {
+        /* 离线命令注入源（Phase 3 预实现；Phase 7 由 ZeroMQ Transport 替换） */
+        extern int fcr_offline_shm_init(void);
+        fcr_offline_shm_init();
+    }
     return g_rt ? 0 : -1;
 }
 
@@ -77,6 +82,8 @@ int fcr_rosco_api_register_turbine(int32_t turbine_id)
 
 int fcr_rosco_api_shutdown(void)
 {
+    extern int fcr_offline_shm_fini(void);
+    fcr_offline_shm_fini();
     FCR_LOCK();
     if (g_rt) { fcr_runtime_destroy(g_rt); g_rt = NULL; }
     FCR_UNLOCK();

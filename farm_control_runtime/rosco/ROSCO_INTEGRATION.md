@@ -92,7 +92,22 @@ python wfcrl/simulators/fastfarm/src/_compile.py --mode rosco
   - Case.T1/T2/T3.outb（每机 25 通道 × 181 行）：**maxdiff = 0.0**（逐位一致）。
 - 结论：外部控制 disabled 时，FCR 路径与原 ROSCO 路径数值完全等价，无扰接入成立。
 
-## 9. 已知边界
+## 9. Phase 3 验收记录（偏航增量动作端到端，2026-XX）
+
+- 用例：Row3T（3 机）、8 m/s、270° 西风、TMax=42 s、DT_High=0.01 s；
+  模板配置：ServoDyn YCMode=5（DLL yaw 命令生效）、TYCOn=0；ElastoDyn YawDOF=True；
+  DISCON.IN：Y_ControlMode=1（ROSCO yaw 状态机启用）、Y_ErrThresh(2)。
+- 命令（共享内存通道注入 runtime，DLL 内线程每 10 ms 轮询）：
+  - seq1 t≈8s：+10° CW → 锁存目标 -10°（内部约定）；
+  - seq2 t≈19s：-15° CW → 重新锁存（heading0 + 15°）；
+  - seq3 t≈27s：+5° CW；t≈31s 重复 seq3（幂等，目标不变）。
+- T1 YawPzn 实测：-3.0°@12s → -5.0°@20s（+10°CW 方向正确）→ -1.0°@28s →
+  +3.0°@36s → +5.5°@41s（seq2 反转方向正确）；min=-6.0° max=+6.0°。
+- T2/T3 无命令 → YawPzn≈0（多机通道隔离正确）。
+- 结论：yaw_delta（CW+）方向、绝对目标锁存（只在新 seq 生效）、seq 幂等、
+  通道独立性均验证通过。复现：farm_control_runtime/offline/harness/p3_yaw_e2e.py。
+
+## 10. 已知边界
 
 
 - 模板 ServoDyn `YCMode=0`：avrSWAP(48) 偏航速率命令**不驱动 ServoDyn**；
