@@ -91,6 +91,18 @@ MODULE FarmControlCBindings
          TYPE(FcrFastStateC)    :: st
       END FUNCTION fcr_rosco_publish_state_fc
 
+      ! Offline Provider（Phase 4）：每 10 ms 发布 OpenFAST extra 状态
+      INTEGER(C_INT) FUNCTION fcr_offline_provider_init() BIND(C, NAME='fcr_offline_provider_init')
+         IMPORT :: C_INT
+      END FUNCTION fcr_offline_provider_init
+
+      INTEGER(C_INT) FUNCTION fcr_offline_provider_publish_fast(turbine_id, sim_time_s, avrSWAP) BIND(C, NAME='fcr_offline_provider_publish_fast')
+         IMPORT :: C_INT, C_DOUBLE, C_FLOAT
+         INTEGER(C_INT), VALUE :: turbine_id
+         REAL(C_DOUBLE), VALUE :: sim_time_s
+         REAL(C_FLOAT) :: avrSWAP(*)
+      END FUNCTION fcr_offline_provider_publish_fast
+
       INTEGER(C_INT) FUNCTION fcr_rosco_step_low(sim_time_s) BIND(C, NAME='fcr_rosco_step_low')
          IMPORT :: C_INT, C_DOUBLE
          REAL(C_DOUBLE), VALUE :: sim_time_s

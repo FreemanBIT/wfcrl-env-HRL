@@ -10,6 +10,7 @@ void test_abi_register(void);
 void test_watchdog_register(void);
 void test_rosco_api_register(void);
 void test_yaw_action_manager_register(void);
+void test_offline_provider_register(void);
 
 int main(void)
 {
@@ -20,6 +21,7 @@ int main(void)
     test_watchdog_register();
     test_rosco_api_register();
     test_yaw_action_manager_register();
+    test_offline_provider_register();
     failed += test_run_all("farm_control_runtime unit tests");
     return failed ? 1 : 0;
 }

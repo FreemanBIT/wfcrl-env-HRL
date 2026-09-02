@@ -79,3 +79,12 @@ const FcrFlowState *fcr_state_store_get_flow(const FcrStateStore *ss)
 {
     return ss ? &ss->flow : NULL;
 }
+
+int fcr_state_store_get_extra(const FcrStateStore *ss, int32_t turbine_id,
+                              FcrTurbineExtraState *out)
+{
+    if (!ss || !out) return -1;
+    if (turbine_id < 1 || turbine_id > (int32_t)ss->n_turbines) return -2;
+    *out = ss->extra[turbine_id - 1];
+    return 0;
+}

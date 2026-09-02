@@ -72,6 +72,7 @@ if mode == "farmcontrol":
         "angle_convention.c", "command_store.c", "state_store.c",
         "watchdog.c", "runtime.c", "rosco_api.c",
         "shm_command_source.c",
+        "offline_fastfarm_provider.c",
     ]
     c_objs = []
     for src in c_sources:
@@ -79,6 +80,10 @@ if mode == "farmcontrol":
         src_file = os.path.join(FCR_ROOT, "src", src)
         if not os.path.exists(src_file):
             src_file = os.path.join(FCR_ROOT, "offline", "harness", src)
+        if not os.path.exists(src_file):
+            src_file = os.path.join(FCR_ROOT, "offline", "provider", src)
+        if not os.path.exists(src_file):
+            print(f"C source not found: {src}"); sys.exit(1)
         r = subprocess.run([gcc, "-std=c11", "-O2", "-c",
                             src_file,
                             "-I", os.path.join(FCR_ROOT, "include"),

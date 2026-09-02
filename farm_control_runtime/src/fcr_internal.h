@@ -128,6 +128,8 @@ int fcr_state_store_set_flow(FcrStateStore *ss, const FcrFlowState *flow);
 int fcr_state_store_get_fast(const FcrStateStore *ss, int32_t turbine_id,
                              FcrRoscoFastState *out);
 const FcrFlowState *fcr_state_store_get_flow(const FcrStateStore *ss);
+int fcr_state_store_get_extra(const FcrStateStore *ss, int32_t turbine_id,
+                              FcrTurbineExtraState *out);
 
 /* ------------------------------------------------------------------ */
 /* yaw_action_manager.c                                               */

@@ -141,6 +141,7 @@ END IF
 ! ===== FARM CONTROL RUNTIME: 初始化（每机一次）=====
 IF (.NOT. fcr_init_done) THEN
     CALL FCR_Init(wfcrl_turbine_id)
+    CALL FCR_ProviderInit()
     fcr_init_done = .TRUE.
 END IF
 #endif
@@ -322,6 +323,7 @@ ErrVar%ErrMsg = ''
 #ifdef FCR_FARM_CONTROL
 ! ===== FARM CONTROL RUNTIME: 发布快速状态（shared memory，无 I/O）=====
 CALL FCR_PublishState(wfcrl_turbine_id, LocalVar, avrSWAP)
+CALL FCR_PublishExtra(wfcrl_turbine_id, LocalVar%Time, avrSWAP)
 ! 最后一步：关闭 runtime（停止离线命令线程，避免 DLL 卸载时访问冲突）
 IF (LocalVar%iStatus == -1) THEN
     CALL FCR_Shutdown()

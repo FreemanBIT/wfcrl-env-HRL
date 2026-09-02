@@ -33,7 +33,7 @@ MODULE FarmControlInterface
    PUBLIC :: FCR_Init, FCR_Step, FCR_PublishState, FCR_Shutdown
    PUBLIC :: FCR_IsExternalEnabled, FCR_IsYawExternal, FCR_GetYawTargetHeadingDeg, &
              FCR_GetYawSeqApplied, FCR_GetPowerRatio, FCR_GetMinPitchDeg, &
-             FCR_GetCommandStatusFlags, FCR_Setpoint, FCR_CurrentTurbineId
+             FCR_GetCommandStatusFlags, FCR_Setpoint, FCR_CurrentTurbineId, FCR_PublishExtra, FCR_ProviderInit
 
 CONTAINS
 
@@ -118,6 +118,25 @@ CONTAINS
       st%controller_status_flags = 0
       rc = fcr_rosco_publish_state_fc(turbine_id, st)
    END SUBROUTINE FCR_PublishState
+
+   ! ------------------------------------------------------------------
+   ! FCR_PublishExtra — 每 ~10 ms 发布 OpenFAST extra 状态（Offline Provider 入口）
+   ! ------------------------------------------------------------------
+   SUBROUTINE FCR_PublishExtra(turbine_id, sim_time_s, avrSWAP)
+      INTEGER, INTENT(IN) :: turbine_id
+      REAL(8), INTENT(IN) :: sim_time_s
+      REAL(C_FLOAT), INTENT(IN) :: avrSWAP(*)   ! Bladed DLL swap array（单精度）
+      INTEGER(C_INT) :: rc
+      IF (.NOT. api_ok_) RETURN
+      rc = fcr_offline_provider_publish_fast(turbine_id, sim_time_s, avrSWAP)
+   END SUBROUTINE FCR_PublishExtra
+
+   ! 初始化 Offline Provider（读取 env 配置；幂等）
+   SUBROUTINE FCR_ProviderInit()
+      INTEGER(C_INT) :: rc
+      rc = fcr_offline_provider_init()
+   END SUBROUTINE FCR_ProviderInit
+
 
    ! ------------------------------------------------------------------
    ! 查询函数（ROSCO 控制计算内调用；全部基于本地 setpoint 副本）
