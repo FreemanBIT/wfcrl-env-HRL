@@ -84,6 +84,9 @@ class FarmCase:
             layout_x=list(wfcrl_layout.xcoords),
             layout_y=list(wfcrl_layout.ycoords),
         )
+        # 行/列数跟随 wfcrl 布局（保证 n_turbines 一致）
+        kw['n_rows'] = 1
+        kw['n_cols'] = wfcrl_layout.num_turbines
         kw.update(overrides)
         return cls(**kw)
 
@@ -93,12 +96,13 @@ class FarmCase:
 
     @property
     def upstream_ids(self) -> list[int]:
-        """First column (streamwise-most upstream) turbine ids under westerly
-        inflow: T1 and T4 for the 2x3 layout."""
-        ids = []
-        for r in range(self.n_rows):
-            ids.append(r * self.n_cols + 1)  # 1-based first column of each row
+        """每行（按 y 分组）中 x 坐标最小的机组（最上游）1-based tid。"""
+        rows: dict = {}
+        for i, y in enumerate(self.layout_y):
+            rows.setdefault(round(float(y), 3), []).append((self.layout_x[i], i + 1))
+        ids = [min(pts)[1] for _, pts in sorted(rows.items())]
         return ids
+
 
     # -- file generation -------------------------------------------------------
     def write_discon_inputs(self, run_dir: Path) -> list[Path]:

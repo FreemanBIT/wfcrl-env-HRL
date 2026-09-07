@@ -77,15 +77,31 @@ def _parse_state_frame(data: bytes) -> dict:
         out["turbines"].append({
             "turbine_id": t.turbine_id, "valid": t.valid,
             "source_time_s": t.source_time_s,
-            "gen_power_w_mean": t.gen_power_w.mean, "gen_power_w": t.gen_power_w.instant,
+            "gen_power_w": t.gen_power_w.instant,
+            "gen_power_w_mean": t.gen_power_w.mean,
+            "gen_power_w_rms": t.gen_power_w.rms,
+            "gen_power_w_min": t.gen_power_w.min,
+            "gen_power_w_max": t.gen_power_w.max,
             "rotor_thrust_n": t.rotor_thrust_n.instant,
+            "rotor_thrust_n_mean": t.rotor_thrust_n.mean,
+            "tower_base_fa_moment_nm": t.tower_base_fa_moment_nm.instant,
+            "tower_base_ss_moment_nm": t.tower_base_ss_moment_nm.instant,
             "nacelle_heading_rad": t.nacelle_heading_rad,
+            "nacelle_vane_rad": t.nacelle_vane_rad,
             "hub_wind_speed_mps": t.hub_wind_speed_mps,
             "rotor_speed_rad_s": t.rotor_speed_rad_s,
+            "gen_speed_rad_s": t.gen_speed_rad_s,
+            "rotor_ct": t.rotor_ct,
+            "rotor_cp": t.rotor_cp,
+            "blade_pitch_rad": [float(t.blade_pitch_rad[k]) for k in range(3)],
             "yaw_target_heading_rad": t.yaw_target_heading_rad,
             "yaw_seq_applied": t.yaw_seq_applied, "induction_seq_applied": t.induction_seq_applied,
+            "controller_status_flags": t.controller_status_flags,
             "disk_disturbed_wind_mps": t.disk_disturbed_wind_mps,
             "disk_ambient_wind_mps": t.disk_ambient_wind_mps,
+            "disk_ambient_ti": t.disk_ambient_ti,
+            "flow_source_time_s": t.flow_source_time_s,
+            "flow_seq": t.flow_seq,
         })
     return out
 
@@ -111,6 +127,27 @@ class FastFarmZmqEngine:
         if self._ff is None:
             self._ff = ContinuousFastFarmInterface(self.config)
         self._ff.setup()
+        # FCR 偏航命令路径要求 YawDOF=True（Phase 3 惯例）
+        try:
+            import glob
+            from wfcrl.engine._outlist import _set_fast_scalar as _sfs
+            for ed in glob.glob(os.path.join(self._ff._farm_base, "*ElastoDyn*.dat")):
+                try:
+                    _sfs(ed, "YawDOF", "True")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # 集成 DLL 从运行目录动态加载 libzmq.dll（FCR_LIBZMQ_PATH 可覆盖）
+        try:
+            import shutil
+            _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            _zmq_bin = os.path.join(_root, "farm_control_runtime", "transport", "zmq",
+                                    "bin", "libzmq.dll")
+            if os.path.exists(_zmq_bin) and not os.environ.get("FCR_LIBZMQ_PATH"):
+                shutil.copy(_zmq_bin, os.path.join(self._ff._farm_base, "libzmq.dll"))
+        except Exception:
+            pass
         self._ff.reset(self.config.wind)
 
     def start(self, env_extra: Optional[Dict[str, str]] = None) -> None:
@@ -159,7 +196,7 @@ class FastFarmZmqEngine:
         self._client.send_yaw_delta(turbine_id, delta_rad, seq=seq, ttl_s=ttl_s)
 
     def send_induction(self, turbine_id: int, induction_ref: float,
-                       seq: Optional[int] = None, ttl_s: float = 1.0) -> None:
+                       seq: Optional[int] = None, ttl_s: float = 5.0) -> None:
         if self._client is None:
             raise RuntimeError("not started")
         self._client.send_induction(turbine_id, induction_ref, seq=seq, ttl_s=ttl_s)

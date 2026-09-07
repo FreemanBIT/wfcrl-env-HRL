@@ -36,7 +36,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .runner import Plant
+from .runner import Plant, ZmqPlant
 from .types import TurbineMeas, Cmd
 
 
@@ -218,3 +218,22 @@ def _coerce_measurements(raw, n: int, step: int) -> dict[int, TurbineMeas]:
 
 def _get(a: np.ndarray, i: int, default: float = 0.0) -> float:
     return float(a[i]) if i < a.size else default
+
+
+class FastFarmZmqPlant(ZmqPlant):
+    """新架构 Plant：直接包装 FastFarmZmqEngine（ZeroMQ 通道）。
+
+    用法：
+        from wfcrl.engine.fastfarm_zmq import FastFarmZmqEngine
+        engine = FastFarmZmqEngine(config)
+        engine.setup(); engine.start()
+        plant = FastFarmZmqPlant(engine, n_turbines=6, wind_direction=270.0)
+        runner = ClosedLoopRunner(plant, controller, sensing)
+    """
+
+    def __init__(self, engine, n_turbines: int, wind_direction: float = 270.0,
+                 step_timeout: float = 120.0):
+        from .bridge import ZmqFarmBridge
+        bridge = ZmqFarmBridge(engine, n_turbines, wind_direction=wind_direction)
+        super().__init__(bridge, step_timeout=step_timeout)
+        self.engine = engine

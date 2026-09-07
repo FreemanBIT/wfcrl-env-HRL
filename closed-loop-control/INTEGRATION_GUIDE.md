@@ -143,3 +143,48 @@ WFCRL 自带 `Turb6_Row2`（2 行 3 列）布局与 `cases.fastfarm_6t`，但其
 - 模块编号（M1–M9, A1–A3, B1–B5, C1–C5, D1–D4）↔《风电场闭环控制开发方案.md》
 - 公式编号（EnKF 2.11–2.20、MPC 2.21–2.27、标定 1.7–1.11 等）在各文件 docstring 中标注
 - 场站：NREL 5MW × 6（2×3 @ 4D）
+
+
+## 新架构（ZeroMQ / farm_control_runtime）迁移指南（Phase 7+）
+
+自 Phase 7 起，闭环链路已迁移到新架构，`controls.txt` / `measurements_T*.txt`
+文件桥不再使用（集成 DLL 内含 farm_control_runtime + ZeroMQ transport）。
+
+### 链路
+
+```text
+closedloop 控制器 -> ZmqFarmBridge -> FastFarmZmqEngine(send_yaw_delta/
+send_induction) -> ZeroMQ PUB -> 集成 DLL 内 CommandStore -> ROSCO
+FAST.Farm -> Offline Provider -> StateAggregator -> StateFrame -> ZeroMQ
+-> client 合并 -> engine.get_state() -> ZmqFarmBridge.meas_from_state -> TurbineMeas
+```
+
+### 通道映射（旧 Cmd -> 新通道）
+
+| Cmd 字段 | 新通道 | 备注 |
+|---|---|---|
+| yaw_deg（绝对，deg） | yaw_delta（CW+ 增量） | 由最近状态帧机舱方位换算；rub 至 [-180,180] |
+| power_mw | induction_ref（a = power_to_induction） | 首选降载通道 |
+| pitch_deg | induction_ref（Cp 比近似） | 新架构无直连变桨通道（近似标注） |
+| torque_nm | （无） | 忽略并告警 |
+
+### 脚本
+
+```bash
+# 一键启动（生成 case + 启动 FAST.Farm + 闭环 300 s）
+python examples/example_fastfarm_launcher.py --duration 300 --controller B --mode 1
+
+# 指定布局 / 风况 / 步数
+python examples/example_fastfarm_bridge.py --controller A --mode 4 --steps 60 \
+    --case 3T --wind_speed 8 --wind_direction 270
+
+# 顶层直接通道示例（5 模式，无 closedloop 控制器）
+python examples/example_FASTFarm_zmq.py --mode 0 --steps 12 --wind_speed 8
+```
+
+### 不可得量（新状态帧语义）
+
+- `gentq_nm` / `mip1_knm` / `mzb1_knm`：状态帧未包含（填 0；RT 扩展后补齐）；
+- `moop1_knm` 以 `rotor_thrust_n / 1000`（kN）作为载荷代理；
+- min_pitch / torque 直接通道：新协议未定义（induction 通道即 ROSCO 侧 min-pitch 执行路径）。
+

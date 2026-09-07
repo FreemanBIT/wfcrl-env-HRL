@@ -306,3 +306,35 @@ class ClosedLoopRunner:
                 print(f"  step {step:4d}/{n_steps}  farm_power={pf:8.1f} kW")
 
         return RunResult(trajectory=traj, n_steps=n_steps)
+
+
+class ZmqPlant(Plant):
+    """基于 ZeroMQ 新架构（FastFarmZmqEngine + ZmqFarmBridge）的实时 Plant。
+
+    与 FastFarmPlant 相比：命令经 ZeroMQ 通道（yaw_delta / induction_ref）下发，
+    状态经 FarmStateFrame 解析回读；不再依赖 controls.txt / measurements_T*.txt。
+
+    Parameters
+    ----------
+    bridge:
+        closedloop.bridge.ZmqFarmBridge（包装一个已启动的 FastFarmZmqEngine）。
+    step_timeout:
+        read() 等待每步状态的超时（秒）。
+    """
+
+    def __init__(self, bridge, step_timeout: float = 120.0):
+        self.bridge = bridge
+        self.step_timeout = step_timeout
+
+    def read(self, step: int) -> dict:
+        return self.bridge.wait_step(step, timeout=self.step_timeout)
+
+    def write(self, step: int, cmds: dict) -> None:
+        self.bridge.write(step, cmds)
+
+    def current_direction(self):
+        return self.bridge.current_direction()
+
+    def reset(self) -> None:
+        self.bridge.reset()
+
