@@ -273,6 +273,9 @@ def create_ff_case(case: Dict, output_dir=None):
     hubHeight = ed["TowerHt"]
     # x-extent of high res box in diamter around turbine location
     extent_X_high = 2.0  # np.round((fstf['NX_High'] * dX_High)/D,2)
+    # 低分辨域在最后排之后的尾流延伸（D 单位）：8D 在 4D 间距双排(6T)下偏短，
+    # 尾流面在域边界堆积→overtaken→运转中止；12D 留足行程。
+    EXTENT_WAKE = 12.0
     # y-extent of high res box in diamter around turbine location
     extent_YZ_high = 2.0  # np.round((fstf['NY_High'] * dYZ_High)/D,2)
     # maximum blade chord (m). Turbine specific.
@@ -331,7 +334,10 @@ def create_ff_case(case: Dict, output_dir=None):
         # 否则蜿蜒采样点会越出盒子（与湍流路径的 -408 同类问题）。
         turb_span_y = (max(ycoords) - min(ycoords)) if len(ycoords) else 0.0
         grid_half_need = turb_span_y / 2.0 + 2.5 * D_loc      # 低分辨率覆盖
-        box_half_need = grid_half_need + 1.0 * D_loc          # + 蜿蜒采样余量
+        # 蜿蜒余量 3D：f_c 较低时蜿蜒侧向偏移可达数 D，余量不足会在运行中
+        # 触发 Grid4DField_GetVel 'Outside the grid bounds'（实测 6T/8m/s 于
+        # t≈260s 中止）。3D 余量覆盖 8 m/s + Cmeander=1.9 的蜿蜒包络。 */
+        box_half_need = grid_half_need + 3.0 * D_loc          # + 蜿蜒采样余量
         ny = int(np.ceil((2.0 * box_half_need) / dY_des)) + 1
         ny = max(ny, int(fstf["NY_Low"]))           # 不低于模板规模
         nz = max(int(fstf["NZ_Low"]) - 1, int(np.ceil(340.0 / dZ_des)))
@@ -345,8 +351,15 @@ def create_ff_case(case: Dict, output_dir=None):
         # （报错只显示 X/Y/Z，越界的其实是第 4 维=时间，故 X/Y/Z 看起来都在界内）。
         # 实测 stU6_wd20_s8D 恰在 t=258s 崩溃，与 200s 盒时长耗尽吻合。
         # 修复：盒时长 = 仿真时长(max_time=max_iter*dt) + 余量，确保覆盖整个 TMax。
-        time = float(max_time) + 60.0    # TMax + 60s 余量
+        # t 上限需覆盖 TMax + 风场平流时间（机组下游查询 t_box = t ± (x-x0)/U，
+        # 不足时 Grid4D 时间维越界——报错只显示 X/Y/Z，实测 6T/8m/s 于 ~260s 中止）
+        _xspan = max(xcoords) + EXTENT_WAKE * D - (min(xcoords) - extent_X_high / 2.0 * D)
+        _delay = int(np.ceil(_xspan / max(mean_wind, 1.0)))
+        time = float(max_time) + 120.0 + _delay    # TMax + 平流 + 余量
         # =====================================================
+        import sys as _sys
+        print('[boxdbg] D_loc=%.1f span_y=%.1f grid_half=%.1f box_half=%.1f ny=%d nz=%d width=%.1f y0=%.1f y1=%.1f' % (
+            D_loc, turb_span_y, grid_half_need, box_half_need, ny, nz, width, -width / 2.0, width / 2.0), file=_sys.stderr)
         y = np.linspace(-width / 2.0, width / 2.0, ny)
         z = np.linspace(0.0, height, nz)
         t = np.arange(0, time, fstf["DT_High"] / 10)
@@ -364,6 +377,7 @@ def create_ff_case(case: Dict, output_dir=None):
             chord_max=chord_max,
             extent_X=extent_X_high,
             extent_YZ=extent_YZ_high,
+            extent_wake=EXTENT_WAKE,
         )
 
     # --- Write Fast Farm file with layout and Low and High res extent
@@ -520,7 +534,7 @@ def create_ff_case(case: Dict, output_dir=None):
     # 修复：显式写数值 = 0.85 * 1.28*U/R（低于推荐，防追越；物理损失可忽略）。
     try:
         _u_ref = mean_wind if 'mean_wind' in dir() or 'mean_wind' in locals() else 8.0
-        fstf_out['f_c'] = round(0.85 * 1.28 * float(_u_ref) / (float(D) / 2.0), 6)
+        fstf_out['f_c'] = round(0.65 * 1.28 * float(_u_ref) / (float(D) / 2.0), 6)
     except Exception:
         pass
     # ===== f_c 修复结束 =====

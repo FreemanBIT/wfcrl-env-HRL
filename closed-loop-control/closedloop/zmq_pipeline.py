@@ -39,8 +39,14 @@ def build_farm_case(case_name: str, wind_speed: float, wind_direction: float,
 
 
 def fastfarm_config_from_case(case: FarmCase, dt: float, max_iter: int,
-                              output_dir: str) -> FastFarmConfig:
-    wind = WindConfig(speed=case.wind_speed, direction=case.wind_direction)
+                              output_dir: str,
+                              wind_time_series: Optional[str] = None) -> FastFarmConfig:
+    from wfcrl.config.types import WindType
+    if wind_time_series:
+        wind = WindConfig(speed=case.wind_speed, direction=case.wind_direction,
+                          wind_type=WindType.TURBSIM_BTS, wind_file=wind_time_series)
+    else:
+        wind = WindConfig(speed=case.wind_speed, direction=case.wind_direction)
     return FastFarmConfig(
         case_name=case.name, num_turbines=case.n_turbines,
         xcoords=list(case.layout_x), ycoords=list(case.layout_y),
@@ -49,10 +55,12 @@ def fastfarm_config_from_case(case: FarmCase, dt: float, max_iter: int,
 
 
 def launch_farm(case: FarmCase, dt: float, max_iter: int, output_dir: str,
-                cmd_port: int = 5556, state_port: int = 5557, env_extra=None):
+                cmd_port: int = 5556, state_port: int = 5557, env_extra=None,
+                wind_time_series: Optional[str] = None):
     """生成 case、启动 FAST.Farm（FCR+ZeroMQ 集成 DLL），返回 (engine, plant)。"""
     os.makedirs(output_dir, exist_ok=True)
-    config = fastfarm_config_from_case(case, dt, max_iter, output_dir)
+    config = fastfarm_config_from_case(case, dt, max_iter, output_dir,
+                                       wind_time_series=wind_time_series)
     engine = FastFarmZmqEngine(config, cmd_port=cmd_port, state_port=state_port)
     engine.setup()
     engine.start(env_extra=env_extra)

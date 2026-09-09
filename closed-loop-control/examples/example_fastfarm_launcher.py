@@ -26,6 +26,10 @@ def main():
     p.add_argument('--wind_speed', type=float, default=8.0)
     p.add_argument('--wind_direction', type=float, default=270.0)
     p.add_argument('--floris-yaml', default='cases/farm_2x3_4D/floris_case.yaml')
+    p.add_argument('--wind_time_series', default=None,
+                   help='TurbSim .bts 文件名（相对 wfcrl FastFarm input 模板目录）。'
+                        '稳态(WindType=1)在 FAST.Farm 5.0 有 Grid4D 时间维限制（~260s），'
+                        '建议 300s 以上仿真使用 bts（如 uniform8_700s.bts 周期性均匀场）')
     p.add_argument('--plot', action='store_true', help='结束后绘制功率时序图')
     args = p.parse_args()
 
@@ -68,7 +72,8 @@ def main():
     sensing = Sensing(case.n_turbines, dt=args.dt, upstream_ids=case.upstream_ids,
                       wind_direction_ref=case.wind_direction)
 
-    engine, bridge, plant = launch_farm(case, args.dt, steps, out_dir)
+    engine, bridge, plant = launch_farm(case, args.dt, steps, out_dir,
+                                         wind_time_series=args.wind_time_series)
     try:
         wait_first_state(engine, timeout_s=90.0)
         runner = ClosedLoopRunner(plant, controller, sensing, CommandArbiter(yaw_deadband=0.5))
