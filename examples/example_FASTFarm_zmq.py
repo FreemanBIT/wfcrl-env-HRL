@@ -49,7 +49,7 @@ def _norm180(deg):
 
 def main():
     p = argparse.ArgumentParser(description='FAST.Farm ZeroMQ 场控示例（新架构）')
-    p.add_argument('--case', default='3T')
+    p.add_argument('--case', default='6T')
     p.add_argument('--steps', type=int, default=12)
     p.add_argument('--wind_speed', type=float, default=8.0)
     p.add_argument('--wind_direction', type=float, default=270.0)

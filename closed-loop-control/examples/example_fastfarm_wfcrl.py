@@ -19,7 +19,7 @@ def main():
     p.add_argument('--steps', type=int, default=60)
     p.add_argument('--dt', type=float, default=3.0)
     p.add_argument('--seed', type=int, default=0)
-    p.add_argument('--case', default='3T')
+    p.add_argument('--case', default='6T')
     p.add_argument('--wind_speed', type=float, default=8.0)
     p.add_argument('--wind_direction', type=float, default=270.0)
     p.add_argument('--fstf', default=None, help='（兼容保留，忽略）')

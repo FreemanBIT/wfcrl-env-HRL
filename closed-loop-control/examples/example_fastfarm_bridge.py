@@ -52,7 +52,7 @@ def main():
     p.add_argument('--steps', type=int, default=60, help='控制步数（= FAST.Farm 低速步数）')
     p.add_argument('--dt', type=float, default=3.0, help='FAST.Farm DT_low（秒）')
     p.add_argument('--seed', type=int, default=0)
-    p.add_argument('--case', default='3T', help='wfcrl 内置布局名（如 3T/6T/Turb3_Row1）')
+    p.add_argument('--case', default='6T', help='wfcrl 内置布局名（如 3T/6T/Turb3_Row1）')
     p.add_argument('--wind_speed', type=float, default=8.0)
     p.add_argument('--wind_direction', type=float, default=270.0)
     p.add_argument('--floris-yaml', default='cases/farm_2x3_4D/floris_case.yaml')
