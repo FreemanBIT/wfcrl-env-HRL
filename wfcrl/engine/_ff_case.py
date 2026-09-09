@@ -512,14 +512,15 @@ def create_ff_case(case: Dict, output_dir=None):
         fstf_out['WrDisDT'] = FFTS['DT_Low']
 
     # ===== 关键修复：让 FAST.Farm 自适应尾流低通截止频率 f_c =====
-    # 模板里 f_c=0.17 Hz 是**固定值**。FAST.Farm 推荐 f_c ≈ 1.28*U/R：
+    # 模板里 f_c=0.17 Hz 是固定值。FAST.Farm 推荐 f_c = 1.28*U/R：
     #   U=6 → 0.122，U=8 → 0.163，U=10 → 0.203。
-    # 对最低风速 U=6，0.17 比推荐值高 ~40%，会导致尾流面平流过快而**相互穿越**
-    # （日志：'wake plane ... has overtaken ... Reduce f_c'），随后尾流场损坏、
-    # AWAE 采样出错 → FAST.Farm 在中途（实测 ~258 s）abort。
-    # 设为 DEFAULT，让 FAST.Farm 按 1.28*U0/R 自动取值，从根本上消除低风速穿越。
+    # 注意：写 'DEFAULT' 时 FAST.Farm 取 12.5/R（约 0.198 Hz @R=63 m），
+    #   比推荐值高（低风速段更严重），实测 6T/300 s 仍在 t≈258-260 s 出现
+    #   'wake plane ... has overtaken ... Reduce f_c' 而中止。
+    # 修复：显式写数值 = 0.85 * 1.28*U/R（低于推荐，防追越；物理损失可忽略）。
     try:
-        fstf_out['f_c'] = 'DEFAULT'
+        _u_ref = mean_wind if 'mean_wind' in dir() or 'mean_wind' in locals() else 8.0
+        fstf_out['f_c'] = round(0.85 * 1.28 * float(_u_ref) / (float(D) / 2.0), 6)
     except Exception:
         pass
     # ===== f_c 修复结束 =====

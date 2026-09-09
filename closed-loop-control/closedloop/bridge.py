@@ -293,14 +293,19 @@ class ZmqFarmBridge:
                 meas = self.meas_from_state(st, self.n)
                 if len(meas) >= self.n:
                     return meas
-            # 仿真已完成（最后一步）：返回最近一帧
+            # 仿真提前退出（进程死亡且未到目标步）→ 立即报错，避免死数据空转
             proc = getattr(self.engine, '_proc', None)
             max_iter = getattr(getattr(self.engine, 'config', None), 'max_iter', 0)
-            if (proc is not None and proc.poll() is not None) or (max_iter and step >= max_iter):
-                if st is not None:
-                    meas = self.meas_from_state(st, self.n)
-                    if len(meas) >= self.n:
-                        return meas
+            if proc is not None and proc.poll() is not None:
+                if max_iter and step >= max_iter:
+                    if st is not None:
+                        meas = self.meas_from_state(st, self.n)
+                        if len(meas) >= self.n:
+                            return meas
+                t_last = st.get('sim_time_s', 0.0) if st else 0.0
+                raise RuntimeError(
+                    'FAST.Farm 提前退出（最后仿真时间 t=%.1f s，'
+                    '目标 low_step=%d 未达到）——请检查 fastfarm_zmq.log' % (t_last, step))
             time.sleep(poll)
         raise TimeoutError('timed out waiting for low_step >= %d' % step)
 

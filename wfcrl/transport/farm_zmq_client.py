@@ -77,7 +77,7 @@ class FarmZmqClient:
         self._recv_thread.start()
         self._started = True
 
-    _FRAME_HEADER = 64
+    _FRAME_HEADER = 56   # FarmStateFrame.turbines 实际偏移（flow_seq@48 + 8 对齐）
     _TURBINE_SIZE = 360
 
     def _recv_loop(self) -> None:
