@@ -1,6 +1,6 @@
 # REFACTOR_PLAN — ZMQ 场控链路收敛与架构重构（四部分修改计划）
 
-状态：计划（待执行）。基线：dev/farm-control-runtime @ 6e9c63a。
+状态：主体已执行完成（2026-09，dev/farm-control-runtime @ bc742ba，全部步骤经 300s 仿真回归）。
 原则：先删后验、每步可回滚（git revert / 独立 commit）、保持 wfcrl.compat 导入兼容。
 
 ================================================================
@@ -214,4 +214,20 @@ Step 5  文档收尾（README/INTEGRATION_GUIDE/PROTOCOL_DECISIONS）
 - Step A1: replay/fastfarm_zmq_replay.py + 单测
 - Step A2: run_replay.py / steady 切换 + --yaw_mode
 - Step A3: 60s 三组回放验证 + README 更新
-- 独立 commit，可单独 revert
+- 独立 commit，可单独 revert（已执行：A1-A3 落地并跑通）
+
+
+================================================================
+执行记录（完成度）
+================================================================
+
+| 步骤 | commit | 300s 回归 |
+|------|--------|-----------|
+| F 偏航动作指令直通 | 51244cf | ✓ 100/100 (310.2s wall) |
+| A 删除旧文件桥 | c3bbaf6, acbfe54 | ✓ 100/100 (310.2s wall) |
+| B 示例合一+factory | bed0215 | ✓ 100/100 (294.6s wall) |
+| E 研究目录 ZMQ 化 | 3f63a79 | ✓ 100/100 (288.1s wall) + 研究回放 derating ok |
+| C 架构归类 | c085050 | ✓ 100/100 (287.1s wall) |
+| D 5-mode→3 模式 | 4339f1e, f278462, bc742ba | ✓ 100/100 (286.6s wall, mode 3) |
+
+待办（非阻塞）：README/INTEGRATION_GUIDE 文档收尾（Step5）、合并器单测、6T smoke 固化为可选 pytest。
