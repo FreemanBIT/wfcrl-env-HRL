@@ -26,6 +26,8 @@ def main():
     p.add_argument('--wind_speed', type=float, default=8.0)
     p.add_argument('--wind_direction', type=float, default=270.0)
     p.add_argument('--floris-yaml', default='cases/farm_2x3_4D/floris_case.yaml')
+    p.add_argument('--mpc_t_ctrl', type=float, default=None,
+                   help='ControllerB 的 MPC 重规划周期（s），默认 20s')
     p.add_argument('--wind_time_series', default=None,
                    help='TurbSim .bts 文件名（相对 wfcrl FastFarm input 模板目录）。'
                         '稳态(WindType=1)在 FAST.Farm 5.0 有 Grid4D 时间维限制（~260s），'
@@ -50,24 +52,9 @@ def main():
                                case_yaml=args.floris_yaml, prefer_floris=True)
     print('Surrogate backend:', surrogate.backend)
 
-    m = ControlMode(args.mode)
-    name = args.controller.lower()
-    if name == 'greedy':
-        from closedloop.demos.greedy_baseline import GreedyController
-        controller = GreedyController(case.n_turbines, args.dt)
-    elif name == 'a':
-        from closedloop.scheme_a import ControllerA
-        controller = ControllerA(m, surrogate, case.n_turbines)
-    elif name == 'b':
-        from closedloop.scheme_b import ControllerB
-        controller = ControllerB(m, surrogate, case.layout_x, case.layout_y,
-                                 case.n_turbines, seed=args.seed)
-    elif name == 'c':
-        from closedloop.scheme_c import ControllerC
-        controller = ControllerC(m, surrogate, case.layout_x, case.layout_y,
-                                 case.n_turbines, seed=args.seed)
-    else:
-        raise ValueError(args.controller)
+    from closedloop.controller_factory import build_controller
+    controller = build_controller(args.controller, args.mode, case, surrogate,
+                                  args.dt, seed=args.seed, mpc_t_ctrl=args.mpc_t_ctrl)
 
     sensing = Sensing(case.n_turbines, dt=args.dt, upstream_ids=case.upstream_ids,
                       wind_direction_ref=case.wind_direction)

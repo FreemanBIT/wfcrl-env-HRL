@@ -33,29 +33,8 @@ from ..base_controller import CommandArbiter
 from ..runner import ClosedLoopRunner, MockPlant
 from ..evaluate import Trajectory
 from .. import wind_schedule as ws
-from ..control_mode import ControlMode
 
 from .greedy_baseline import GreedyController
-
-
-def build_controller(name: str, mode: int, case, surrogate, dt, seed):
-    """Instantiate the requested controller."""
-    m = ControlMode(mode)
-    name = name.lower()
-    if name == "greedy":
-        return GreedyController(case.n_turbines, dt)
-    if name == "a":
-        from ..scheme_a import ControllerA
-        return ControllerA(m, surrogate, case.n_turbines)
-    if name == "b":
-        from ..scheme_b import ControllerB
-        return ControllerB(m, surrogate, case.layout_x, case.layout_y,
-                           case.n_turbines, seed=seed)
-    if name == "c":
-        from ..scheme_c import ControllerC
-        return ControllerC(m, surrogate, case.layout_x, case.layout_y,
-                          case.n_turbines, seed=seed)
-    raise ValueError(f"unknown controller: {name}")
 
 
 def run_demo(
@@ -79,6 +58,7 @@ def run_demo(
     surrogate = SurrogateModel(case.layout_x, case.layout_y, prefer_floris=False)
     sensing = Sensing(case.n_turbines, dt=dt, upstream_ids=case.upstream_ids,
                       wind_direction_ref=case.wind_direction)
+    from ..controller_factory import build_controller
     ctrl = build_controller(controller, mode, case, surrogate, dt, seed)
 
     # 旧文件桥接入（fastfarm_dir）已随 FarmBridge 移除（REFACTOR_PLAN 第 1 部分）；
