@@ -2,7 +2,7 @@
 M4 — Axial-induction <-> power/torque/pitch set-point conversion.
 
 The optimizers work in axial-induction ``a`` (and yaw ``gamma``); the FAST.Farm
-bridge accepts ``power=`` / ``torque=`` / ``pitch=``. This module converts
+新架构（ZMQ）仅 induction_ref（a）通道；本模块提供 power<->a 换算（研究/兼容工具）。
 between them using actuator-disc theory, consistent with the derivation
 document:
 

@@ -41,7 +41,7 @@ class Config:
     paths: PathsConfig = field(default_factory=PathsConfig)
     timing: TimingConfig = field(default_factory=TimingConfig)
     seed: int = 0
-    # default control mode (1=YAW 2=TORQUE 3=PITCH 4=YAW_TORQUE 5=YAW_PITCH)
+    # default control mode (1=YAW 2=INDUCTION 3=YAW_INDUCTION)
     control_mode: int = 1
 
 

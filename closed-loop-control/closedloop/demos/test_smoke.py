@@ -54,7 +54,6 @@ def _greedy_traj(n=90, seed=1, wind=None):
     import tempfile, os
     d = tmp_path or tempfile.mkdtemp()
     case = default_case()
-    cmds = {tid: Cmd(turbine_id=tid, yaw_deg=10.0 + tid, power_mw=2.0)
             for tid in range(1, case.n_turbines + 1)}
     bridge.write_controls(5, cmds)
     text = (os.path.join(str(d), "controls.txt"))
