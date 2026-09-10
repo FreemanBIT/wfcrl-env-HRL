@@ -25,20 +25,6 @@ def _norm180_deg(x: float) -> float:
     return math.degrees(_wrap_pi_rad(math.radians(x)))
 
 
-def _induction_from_cp_ratio(ratio: float) -> float:
-    from .induction import cp_from_induction
-    ratio = max(0.0, min(1.0, ratio))
-    cp_target = ratio * (16.0 / 27.0)
-    lo, hi = 0.0, A_GREEDY
-    for _ in range(40):
-        mid = 0.5 * (lo + hi)
-        if cp_from_induction(mid) < cp_target:
-            lo = mid
-        else:
-            hi = mid
-    return 0.5 * (lo + hi)
-
-
 class ZmqFarmBridge:
     def __init__(self, engine, n_turbines: int, wind_direction: float = 270.0):
         self.engine = engine
@@ -111,16 +97,9 @@ class ZmqFarmBridge:
                 self._send_yaw_delta(tid, i, cmd.yaw_delta_deg)
             elif cmd.yaw_deg is not None:
                 self._send_yaw(tid, i, cmd.yaw_deg)
-            # 诱导：induction_a 直通；power/pitch 为兼容入口
+            # 诱导：induction_a 直通
             if cmd.induction_a is not None:
                 self._send_induction(tid, i, cmd.induction_a)
-            elif cmd.power_mw is not None:
-                self._send_power(tid, i, cmd.power_mw)
-            elif cmd.pitch_deg is not None:
-                self._send_pitch(tid, i, cmd.pitch_deg)
-            elif cmd.torque_nm is not None:
-                self._warn_once(tid, 'torque',
-                                '新架构（ZeroMQ）无发电机扭矩直接通道，已忽略 torque 命令')
 
     def _send_yaw_delta(self, tid: int, i: int, delta_deg: float) -> None:
         """偏航动作指令直通（CW+ 增量，deg -> rad）。SCADA/RCP 语义。"""

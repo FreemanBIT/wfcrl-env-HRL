@@ -93,24 +93,25 @@ def test_yaw_steering_gain():
 # --- M9 control modes -------------------------------------------------------
 def test_mode_decision_vars():
     assert ControlModeSpec(ControlMode.YAW).decision_vars() == ["yaw"]
-    assert ControlModeSpec(ControlMode.TORQUE).decision_vars() == ["a"]
-    assert ControlModeSpec(ControlMode.PITCH).decision_vars() == ["a"]
-    assert set(ControlModeSpec(ControlMode.YAW_TORQUE).decision_vars()) == {"yaw", "a"}
-    assert set(ControlModeSpec(ControlMode.YAW_PITCH).decision_vars()) == {"yaw", "a"}
+    assert ControlModeSpec(ControlMode.INDUCTION).decision_vars() == ["a"]
+    assert set(ControlModeSpec(ControlMode.YAW_INDUCTION).decision_vars()) == {"yaw", "a"}
 
 
 def test_mode_command_channels():
+    # YAW：仅偏航，不下发诱导
     spec_yaw = ControlModeSpec(ControlMode.YAW)
     c = spec_yaw.to_controls(1, yaw_deg=20.0, a=1 / 3, U_eff=8.0)
-    assert c.yaw_deg == 20.0 and c.power_mw is None  # yaw-only, no derating
+    assert c.yaw_deg == 20.0 and c.induction_a is None
 
-    spec_pitch = ControlModeSpec(ControlMode.PITCH)
-    c = spec_pitch.to_controls(1, yaw_deg=0.0, a=0.2, U_eff=8.0)
-    assert c.pitch_deg is not None and c.yaw_deg == 0.0
+    # INDUCTION：仅诱导，yaw 对齐来流
+    spec_ind = ControlModeSpec(ControlMode.INDUCTION)
+    c = spec_ind.to_controls(1, yaw_deg=0.0, a=0.2, U_eff=8.0)
+    assert c.induction_a == 0.2 and c.yaw_deg == 0.0
 
-    spec_yt = ControlModeSpec(ControlMode.YAW_TORQUE)
-    c = spec_yt.to_controls(1, yaw_deg=15.0, a=0.25, U_eff=8.0)
-    assert c.yaw_deg == 15.0 and c.power_mw is not None
+    # YAW_INDUCTION：双通道
+    spec_dual = ControlModeSpec(ControlMode.YAW_INDUCTION)
+    c = spec_dual.to_controls(1, yaw_deg=15.0, a=0.25, U_eff=8.0)
+    assert c.yaw_deg == 15.0 and c.induction_a == 0.25
 
 
 # --- B1 FLORIDyn ------------------------------------------------------------

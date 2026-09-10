@@ -94,8 +94,9 @@ class CommandArbiter:
                     y = prev + dy
                 cmd.yaw_deg = y
                 self._prev_yaw[tid] = y
-            if cmd.power_mw is not None:
-                cmd.power_mw = max(self.power_min_mw, min(self.power_max_mw, cmd.power_mw))
+            # 诱导因子夹紧（a ∈ [0, 1/3]）——替换旧 power_mw 通道（REFACTOR_PLAN D）
+            if cmd.induction_a is not None:
+                cmd.induction_a = max(0.0, min(1.0 / 3.0, cmd.induction_a))
         return cmds
 
     def reset(self) -> None:

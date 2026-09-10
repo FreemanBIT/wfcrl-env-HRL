@@ -44,41 +44,17 @@ class TurbineMeas:
 
 @dataclass
 class Cmd:
-    """One turbine's control command (current ZMQ architecture).
+    """One turbine's control command（新架构双通道）。
 
-    Primary channels (SCADA/RCP semantics):
-      yaw_delta_deg : 偏航动作指令——转动多少度（顺时针为正，deg）；直通 yaw_delta 通道
-      yaw_deg       : 绝对机舱方位目标（deg，OpenFAST 坐标）——控制器内部表示；
-                       桥内换算为动作指令（target - heading），语义等价
-      induction_a   : 诱导因子（无量纲，a=1/3 为贪婪）——直通 induction_ref 通道
-
-    Legacy fields (file-bridge era; deprecated, removed in refactor step D):
-      power_mw      : 功率目标（MW）——兼容入口，桥内先转 induction_a
-      pitch_deg     : 桨距（deg）——legacy 近似映射入口
-      torque_nm     : 扭矩（Nm）——新架构无直接通道，忽略并告警
+    yaw_delta_deg : 偏航动作指令（转动多少度，顺时针为正，deg）——SCADA/RCP 语义，直通 yaw_delta
+    yaw_deg       : 绝对机舱方位目标（deg，OpenFAST 坐标）——控制器内部表示，桥内换算为动作指令
+    induction_a   : 诱导因子（无量纲，a=1/3 为贪婪）——直通 induction_ref 通道
     """
+
     turbine_id: int
-    yaw_delta_deg: Optional[float] = None   # 偏航动作指令（CW+ 增量，deg）
-    yaw_deg: Optional[float] = None         # 绝对机舱方位目标（deg）
-    induction_a: Optional[float] = None     # 诱导因子（无量纲）
-    power_mw: Optional[float] = None        # (legacy) 功率目标 MW
-    pitch_deg: Optional[float] = None       # (legacy) 桨距 deg
-    torque_nm: Optional[float] = None       # (legacy) 扭矩 Nm
-
-    def to_line(self) -> str:
-        """(legacy) 文件桥行渲染——已弃用，仅测试引用保留。"""
-        parts = [f"T{self.turbine_id}"]
-        if self.yaw_deg is not None:
-            parts.append(f"yaw={self.yaw_deg:.4f}")
-        if self.pitch_deg is not None:
-            parts.append(f"pitch={self.pitch_deg:.4f}")
-        if self.torque_nm is not None:
-            parts.append(f"torque={self.torque_nm:.2f}")
-        if self.power_mw is not None:
-            parts.append(f"power={self.power_mw:.6f}")
-        return " ".join(parts)
-
-
+    yaw_delta_deg: Optional[float] = None
+    yaw_deg: Optional[float] = None
+    induction_a: Optional[float] = None
 
 @dataclass
 class TurbineFlow:

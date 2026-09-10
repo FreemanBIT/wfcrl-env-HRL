@@ -50,19 +50,17 @@ DIAGRAMS = r"""
 ║ M  │    Optimized │  YAW  (avrSw[48])  │ POWER (avrSw[47])  │ PITCH (avrSw[42-45])         ║
 ╠════╪══════════════╪═════════════════════╪═════════════════════╪══════════════════════════════╣
 ║ 1  │  yaw         │  ██ ENABLED ██    │  ── ROSCO pass ──  │  ── ROSCO pass ──            ║
-║    │  YAW         │  γ_opt → dγ/dt    │  greedy torque     │  greedy pitch                ║
+║    │  YAW         │  γ_opt → yaw_delta(CW+,动作指令)   │  a=1/3（贪婪）
 ╟────┼──────────────┼─────────────────────┼─────────────────────┼──────────────────────────────╢
 ║ 2  │  a           │  ── FIXED  ──     │  ██ ENABLED ██    │  ── ROSCO pass ──            ║
-║    │  POWER       │  γ = 0 (aligned)  │  a→P(MW)→PI track │  greedy pitch                ║
+║    │  INDUCTION   │  γ=0（对齐）        │  a → induction_ref
 ╟────┼──────────────┼─────────────────────┼─────────────────────┼──────────────────────────────╢
 ║ 3  │  a           │  ── FIXED  ──     │  ── ROSCO pass ──  │  ██ ENABLED ██              ║
-║    │  PITCH       │  γ = 0 (aligned)  │  greedy torque     │  a→β(deg)→avrSw[42-45]       ║
+║    │  YAW_INDUCTION│  γ_opt→yaw_delta   │  a → induction_ref
 ╟────┼──────────────┼─────────────────────┼─────────────────────┼──────────────────────────────╢
 ║ 4  │  yaw + a     │  ██ ENABLED ██    │  ██ ENABLED ██    │  ── ROSCO pass ──            ║
-║    │  YAW+POWER   │  γ_opt → dγ/dt    │  a→P(MW)→PI track │  greedy pitch                ║
 ╟────┼──────────────┼─────────────────────┼─────────────────────┼──────────────────────────────╢
 ║ 5  │  yaw + a     │  ██ ENABLED ██    │  ── ROSCO pass ──  │  ██ ENABLED ██              ║
-║    │  YAW+PITCH   │  γ_opt → dγ/dt    │  greedy torque     │  a→β(deg)→avrSw[42-45]       ║
 ╚════╧══════════════╧═════════════════════╧═════════════════════╧══════════════════════════════╝
 
 

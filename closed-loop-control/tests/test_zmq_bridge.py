@@ -77,17 +77,6 @@ def test_greedy_induction_not_sent():
     assert len(eng.ind_calls) == 0
 
 
-def test_power_legacy_maps_to_induction():
-    eng = FakeEngine()
-    br = ZmqFarmBridge(eng, 2)
-    br.get_state()
-    # 8 m/s 下单机满发约 2.5 MW；1.5 MW 目标 → a<1/3 降载（用 T2：heading=0，无偏航损失）
-    br.write(1, {2: Cmd(turbine_id=2, power_mw=1.5)})
-    assert len(eng.ind_calls) == 1
-    a = eng.ind_calls[0][1]
-    assert 0.0 < a < 1.0 / 3.0, a
-
-
 def test_meas_from_state_units():
     eng = FakeEngine()
     br = ZmqFarmBridge(eng, 2)

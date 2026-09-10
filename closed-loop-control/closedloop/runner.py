@@ -165,15 +165,8 @@ class MockPlant(Plant):
                     self._yaw[i] += 0.2 * (target - self._yaw[i]) * self.dt_low
             # induction: from power set-point or explicit; else greedy
             U = self._last_ueff[i] if hasattr(self, "_last_ueff") else 8.0
-            if cmd.power_mw is not None:
-                self._induction[i] = power_to_induction(
-                    cmd.power_mw * 1e6, max(U, 0.5), yaw_deg=self._yaw[i]
-                )
-            elif cmd.pitch_deg is not None:
-                # crude: map pitch back to a Cp reduction -> induction
-                ratio = max(0.0, 1.0 - cmd.pitch_deg * 0.04)
-                self._induction[i] = _induction_from_cp_ratio(ratio)
-            # torque handled implicitly via power path in this mock
+            if cmd.induction_a is not None:
+                self._induction[i] = max(0.0, min(1.0 / 3.0, cmd.induction_a))
 
     def read(self, step: int) -> dict[int, TurbineMeas]:
         """Advance the mock plant one step and return measurements."""

@@ -1,90 +1,47 @@
-"""
-M9 — Control-mode interface (5 modes), shared by schemes A / B / C.
+"""M9 — Control-mode interface（3 模式，双通道：偏航动作指令 + 诱导因子）。
 
-The 5 modes align with the actuation channels the project actually supports:
-the ZeroMQ ``setpoints(5)`` (torque=1, yaw=2, pitch=3..5) in
-``ZeroMQInterface.f90`` and the ``yaw / pitch / torque / power`` command fields
-of the file bridge ``DISCON_bridge.f90``.
+REFACTOR_PLAN 第 4 部分：新架构 FCR 仅两条控制通道（yaw_delta / induction_ref），
+原 TORQUE/PITCH 通道（文件桥时代）删除。控制模式收敛为：
 
-    mode 1  YAW          optimize gamma;  induction fixed at greedy a=1/3   -> yaw=
-    mode 2  TORQUE       optimize a (->torque); yaw fixed at 0             -> torque= (or power=)
-    mode 3  PITCH        optimize a (->pitch);  yaw fixed at 0             -> pitch=
-    mode 4  YAW_TORQUE   optimize gamma + a                                -> yaw= + torque=/power=
-    mode 5  YAW_PITCH    optimize gamma + a                                -> yaw= + pitch=
+    mode 1  YAW           仅偏航（a=1/3 贪婪）
+    mode 2  INDUCTION     仅诱导（yaw 对齐来流）
+    mode 3  YAW_INDUCTION 偏航 + 诱导（推荐主模式）
 
-Every controller (A2 / B3 / C5) queries ``ControlModeSpec`` to decide which
-variables to optimize and which command fields to emit. Defining it once here
-and reusing it in three places avoids divergence.
+控制器（A/B/C）查询 ControlModeSpec 决定优化变量与命令组装。
 """
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Optional
 
 from .types import Cmd
-from . import induction as ind
 
 
-# greedy (Betz-optimal) axial induction used when a turbine is not derating
 A_GREEDY = 1.0 / 3.0
 A_MIN = 0.0
 A_MAX = 1.0 / 3.0
-YAW_MAX = 30.0  # deg, absolute yaw magnitude limit
+YAW_MAX = 30.0
 
 
 class ControlMode(IntEnum):
     YAW = 1
-    TORQUE = 2
-    PITCH = 3
-    YAW_TORQUE = 4
-    YAW_PITCH = 5
+    INDUCTION = 2
+    YAW_INDUCTION = 3
 
 
-# which optimization variables are active in each mode
 _DECISION_VARS = {
-    ControlMode.YAW:         ["yaw"],
-    ControlMode.TORQUE:      ["a"],
-    ControlMode.PITCH:       ["a"],
-    ControlMode.YAW_TORQUE:  ["yaw", "a"],
-    ControlMode.YAW_PITCH:   ["yaw", "a"],
-}
-
-# how the induction/derating channel is delivered in each mode
-#   "power"  -> power= (bridge closed-loop power tracking, preferred/most stable)
-#   "torque" -> torque= (direct torque override)
-#   "pitch"  -> pitch= (collective pitch override)
-#   None     -> no derating channel (yaw-only)
-_DERATE_CHANNEL = {
-    ControlMode.YAW:         None,
-    ControlMode.TORQUE:      "power",   # torque-side derating, delivered via power set-point
-    ControlMode.PITCH:       "pitch",
-    ControlMode.YAW_TORQUE:  "power",
-    ControlMode.YAW_PITCH:   "pitch",
+    ControlMode.YAW:           ["yaw"],
+    ControlMode.INDUCTION:     ["a"],
+    ControlMode.YAW_INDUCTION: ["yaw", "a"],
 }
 
 
 class ControlModeSpec:
-    """Derives decision variables, fixed defaults, bounds, and command assembly
-    from a :class:`ControlMode`.
+    """从 :class:`ControlMode` 派生决策变量、默认值、边界与命令组装。"""
 
-    Parameters
-    ----------
-    mode:
-        The selected control mode.
-    use_power_for_torque:
-        If True (default), torque-side derating (modes 2/4) is delivered via the
-        bridge ``power=`` channel (closed-loop, more stable). If False, uses a
-        direct ``torque=`` override (requires a torque model; see note in
-        :meth:`to_controls`).
-    """
-
-    def __init__(self, mode: ControlMode, use_power_for_torque: bool = True):
+    def __init__(self, mode: ControlMode):
         self.mode = ControlMode(mode)
-        self.use_power_for_torque = use_power_for_torque
 
-    # -- introspection used by optimizers --------------------------------------
-    def decision_vars(self) -> list[str]:
-        """Return the active optimization variables, e.g. ``['yaw']`` or ``['yaw','a']``."""
+    def decision_vars(self) -> list:
         return list(_DECISION_VARS[self.mode])
 
     def optimizes_yaw(self) -> bool:
@@ -94,8 +51,7 @@ class ControlModeSpec:
         return "a" in _DECISION_VARS[self.mode]
 
     def fixed_defaults(self) -> dict:
-        """Return default values for variables NOT optimized in this mode."""
-        d: dict[str, float] = {}
+        d: dict = {}
         if not self.optimizes_yaw():
             d["yaw"] = 0.0
         if not self.optimizes_induction():
@@ -103,59 +59,35 @@ class ControlModeSpec:
         return d
 
     def bounds(self) -> dict:
-        """Return (lo, hi) bounds for each active decision variable."""
-        b: dict[str, tuple[float, float]] = {}
+        b: dict = {}
         if self.optimizes_yaw():
             b["yaw"] = (-YAW_MAX, YAW_MAX)
         if self.optimizes_induction():
             b["a"] = (A_MIN, A_MAX)
         return b
 
-    # -- command assembly ------------------------------------------------------
-    def to_controls(
-        self,
-        turbine_id: int,
-        yaw_deg: float,
-        a: float,
-        U_eff: float,
-        rho: float = 1.225,
-    ) -> Cmd:
-        """Assemble a :class:`Cmd` for one turbine given the (already-clamped)
-        optimizer solution ``(yaw_deg, a)`` and its effective inflow ``U_eff``.
+    # -- 命令组装（双通道：绝对偏航 + 诱导因子）--------------------
+    def to_controls(self, turbine_id: int, yaw_deg: float, a: float,
+                    U_eff: float, rho: float = 1.225) -> Cmd:
+        """由（已限幅的）优化解 (yaw_deg, a) 组装单机 Cmd。
 
-        The derating channel is chosen by the mode. Yaw is emitted whenever the
-        mode steers.
+        输出字段：yaw_deg（绝对机舱方位 deg，桥内换算为动作指令）与
+        induction_a（无量纲诱导因子）。YAW_INDUCTION 为推荐双通道模式。
         """
         cmd = Cmd(turbine_id=turbine_id)
-
-        # yaw channel
-        if self.optimizes_yaw():
-            cmd.yaw_deg = float(yaw_deg)
-        else:
-            cmd.yaw_deg = 0.0  # explicitly hold aligned in non-steering modes
-
-        # derating / induction channel
-        channel = _DERATE_CHANNEL[self.mode]
-        if channel == "power":
-            # induction_to_power returns W; bridge expects MW
-            p_mw = ind.induction_to_power(a, U_eff, yaw_deg=cmd.yaw_deg, rho=rho) / 1.0e6
-            cmd.power_mw = max(0.0, p_mw)
-        elif channel == "pitch":
-            # convert axial induction -> equivalent collective pitch (deg)
-            cmd.pitch_deg = ind.induction_to_pitch(a, U_eff)
-        elif channel is None:
-            # yaw-only: let the turbine run greedy internally (no derating field)
-            pass
-
+        cmd.yaw_deg = float(yaw_deg) if self.optimizes_yaw() else 0.0
+        if self.optimizes_induction():
+            cmd.induction_a = float(a)
         return cmd
 
 
 def greedy_cmd(turbine_id: int, U_eff: float, rho: float = 1.225) -> Cmd:
-    """Convenience: the greedy baseline command for one turbine (yaw=0, a=1/3).
+    """贪婪基线命令：yaw=0（对齐来流），a=1/3（不降载）。
 
-    Equivalent to ControlModeSpec(YAW).to_controls with zero yaw and greedy a,
-    but emitted through the power channel so the turbine tracks its Betz-optimal
-    power at the measured inflow.
+    新架构下不设功率目标字段——greedy 即“不下发诱导命令”（Runtime 默认 a=1/3）。
     """
-    p_mw = ind.induction_to_power(A_GREEDY, U_eff, yaw_deg=0.0, rho=rho) / 1.0e6
-    return Cmd(turbine_id=turbine_id, yaw_deg=0.0, power_mw=max(0.0, p_mw))
+    return Cmd(turbine_id=turbine_id, yaw_deg=0.0, induction_a=A_GREEDY)
+
+
+__all__ = ["ControlMode", "ControlModeSpec", "greedy_cmd",
+           "A_GREEDY", "A_MIN", "A_MAX", "YAW_MAX"]

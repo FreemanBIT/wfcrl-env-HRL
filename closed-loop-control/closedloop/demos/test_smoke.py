@@ -7,7 +7,7 @@ Turns the demos into assertions a CI can run after any change:
   * effect: each scheme's net gain vs greedy is >= 0 (not worse than baseline)
     on the standard yaw scenario.
   * stability: no NaN, no divergence.
-  * modes: all 5 control modes run and stay bounded.
+  * modes: all 3 control modes (YAW/INDUCTION/YAW_INDUCTION) run and stay bounded.
 
 Run with::  pytest closedloop/demos/test_smoke.py -v
 Or standalone:  python -m closedloop.demos.test_smoke

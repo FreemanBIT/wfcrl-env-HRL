@@ -19,7 +19,8 @@ def main():
     p = argparse.ArgumentParser(description='ZeroMQ 场控闭环（新架构，一键启动）')
     p.add_argument('--duration', type=float, default=300.0, help='仿真时长（秒）')
     p.add_argument('--controller', default='B', choices=['greedy', 'A', 'B', 'C', 'a', 'b', 'c'])
-    p.add_argument('--mode', type=int, default=1, choices=[1, 2, 3, 4, 5])
+    p.add_argument('--mode', type=int, default=3, choices=[1, 2, 3],
+                   help='1=YAW 仅偏航；2=INDUCTION 仅诱导；3=YAW_INDUCTION 双通道（默认）')
     p.add_argument('--dt', type=float, default=3.0, help='FAST.Farm DT_low（秒）')
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--case', default='6T')
