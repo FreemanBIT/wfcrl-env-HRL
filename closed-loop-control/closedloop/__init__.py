@@ -8,18 +8,23 @@ observer + controller (+ dynamic model):
     Scheme B : FLORIDyn + EnKF + MPC          (recommended main scheme)
     Scheme C : grey-box / digital-twin augmentation
 
-Integration surface with FAST.Farm is the file bridge implemented in
-``wfcrl/simulators/fastfarm/src/DISCON_bridge.f90``:
+Integration surface with FAST.Farm (current, ZeroMQ architecture):
+    controller -> Cmd -> ZmqFarmBridge -> FastFarmZmqEngine(FarmZmqClient)
+               -> ZeroMQ -> 集成 DLL 内 farm_control_runtime -> ROSCO
+    FAST.Farm  -> FarmStateFrame(~3s) -> client 合并 -> TurbineMeas
 
-    controller  ->  controls.txt            (yaw / pitch / torque / power per turbine)
-    FAST.Farm   ->  measurements_T<i>.txt   (power, wind_x, nacyaw, loads, ...)
-
-See ``开发方案.md`` (development plan) for the module map and equation references.
+Legacy file bridge (controls.txt / measurements_T*.txt, DISCON_bridge.f90)
+is retained only for historical reference and is non-functional with the
+current FCR_FARM_CONTROL DLL — see docs/farm_control/PROJECT_REVIEW.md.
 """
 
 from .types import TurbineMeas, Cmd, FlowEstimate, TurbineFlow
 from .control_mode import ControlMode, ControlModeSpec
 from .bridge import FarmBridge
+from .bridge import ZmqFarmBridge
+from .runner import ZmqPlant
+from .wfcrl_plant import FastFarmZmqPlant
+from .zmq_pipeline import launch_farm, build_farm_case
 from .sensing import Sensing
 from .induction import (
     induction_to_power,
@@ -37,6 +42,7 @@ from .runner import (
     FastFarmPlant,
     MockPlant,
     RunResult,
+    ZmqPlant,
 )
 from . import wind_schedule
 
@@ -48,6 +54,11 @@ __all__ = [
     "ControlMode",
     "ControlModeSpec",
     "FarmBridge",
+    "ZmqFarmBridge",
+    "ZmqPlant",
+    "FastFarmZmqPlant",
+    "launch_farm",
+    "build_farm_case",
     "Sensing",
     "induction_to_power",
     "power_to_induction",
