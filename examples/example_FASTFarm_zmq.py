@@ -1,7 +1,7 @@
 """
 FAST.Farm ZeroMQ 场控示例（新架构）— 直接通道版
 ======================================================
-与 example_FASTFarm.py 相同的 5 个模式，但通过新架构通道下发：
+与旧 5-mode 文件桥示例同源的模式，通过新架构通道下发（Step D 收敛为 3 模式前暂保留）：
     wfcrl.engine.fastfarm_zmq.FastFarmZmqEngine + farm_control_runtime（集成 DLL 内）
 
 通道映射：
