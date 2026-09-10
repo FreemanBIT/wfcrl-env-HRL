@@ -328,15 +328,34 @@ class ZmqFarmBridge:
             if not (1 <= tid <= self.n):
                 continue
             i = tid - 1
-            if cmd.yaw_deg is not None:
+            # 偏航：动作指令（CW+ 增量）直通；绝对目标为控制器内部表示，桥内换算
+            if cmd.yaw_delta_deg is not None:
+                self._send_yaw_delta(tid, i, cmd.yaw_delta_deg)
+            elif cmd.yaw_deg is not None:
                 self._send_yaw(tid, i, cmd.yaw_deg)
-            if cmd.power_mw is not None:
+            # 诱导：induction_a 直通；power/pitch 为兼容入口
+            if cmd.induction_a is not None:
+                self._send_induction(tid, i, cmd.induction_a)
+            elif cmd.power_mw is not None:
                 self._send_power(tid, i, cmd.power_mw)
             elif cmd.pitch_deg is not None:
                 self._send_pitch(tid, i, cmd.pitch_deg)
             elif cmd.torque_nm is not None:
                 self._warn_once(tid, 'torque',
                                 '新架构（ZeroMQ）无发电机扭矩直接通道，已忽略 torque 命令')
+
+    def _send_yaw_delta(self, tid: int, i: int, delta_deg: float) -> None:
+        """偏航动作指令直通（CW+ 增量，deg -> rad）。SCADA/RCP 语义。"""
+        self._yaw_seq[i] += 1
+        self.engine.send_yaw_delta(tid, math.radians(delta_deg),
+                                   seq=self._yaw_seq[i], ttl_s=60.0)
+
+    def _send_induction(self, tid: int, i: int, a: float) -> None:
+        """诱导因子直通（无量纲 a -> induction_ref）。"""
+        if a is None or a >= A_GREEDY - 1e-3:
+            return   # 满发（greedy）无需下令
+        self._ind_seq[i] += 1
+        self.engine.send_induction(tid, float(a), seq=self._ind_seq[i], ttl_s=30.0)
 
     def _send_yaw(self, tid: int, i: int, target_deg: float) -> None:
         hdg = self._heading_deg(tid)
