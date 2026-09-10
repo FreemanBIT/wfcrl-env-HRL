@@ -148,15 +148,16 @@ class FastFarmZmqEngine:
                 shutil.copy(_zmq_bin, os.path.join(self._ff._farm_base, "libzmq.dll"))
         except Exception:
             pass
-        # Grid4D（FAST.Farm 内部 ambient 场）时间维跟随 **Case.fstf 的 TMax**；
-        # 机组位置处查询叠加平流时间，TMax 仅等于仿真时长时会在尾部越界
-        # （'Grid4DField_GetVel: Outside the grid bounds'，实测 6T/8m/s 于 ~260 s）。
-        # 把每机 .fst 的 TMax 抬高（+平流余量），仿真本身由 engine.stop() 在
-        # max_iter 完成后终止，因此不影响交付语义。
+        # 仿真时长 = 用户时长（dt*max_iter）+ 一个低步。
+        # 注：Grid4D 时间维与 Case.fstf TMax 无关（实测抬到 390/850s 均无法推迟
+        # ~260s 崩溃点，最终以 bts 周期场路线解决），故不再加 90s 平流余量——
+        # 仿真精确在用户时长后不久结束，engine.stop() 可立即收尾；
+        # 此前 +90s 会让 Done 后进程多跑约 40s（6T_A_1789028169 实测 390s）。
         try:
             import glob as _glob
             _tm = float(getattr(self.config, "dt", 3.0)) * int(getattr(self.config, "max_iter", 0))
-            _tm_new = _tm + 90.0   # + 平流余量（Grid4D 查询 t_eff≈t+40s，TMax 需 > 用户时长+40）
+            _dt = float(getattr(self.config, "dt", 3.0))
+            _tm_new = _tm + _dt   # 用户时长 + 一个低步（保证 low_step=max_iter 状态帧落盘）
             for _fst in [os.path.join(self._ff._farm_base, "Case.fstf")] + _glob.glob(os.path.join(self._ff._farm_base, "FFTest_WT*.fst")):
                 try:
                     _txt = open(_fst, "r", encoding="ascii", errors="replace").read()
