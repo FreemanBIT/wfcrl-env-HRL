@@ -18,82 +18,10 @@ from induction_vs_yaw_study.replay.schedule import (
     build_control_input, control_inputs_for_recording,
 )
 
-from wfcrl.engine import ContinuousFastFarmInterface, FastFarmAborted
 from wfcrl.config import SimulationOutput
 
-
-def replay_fastfarm(
-    case: Case,
-    control_type: str,
-    settings: Dict[int, Dict[str, float]],
-    *,
-    output_dir: str = None,
-    collect_stepwise: bool = True,
-):
-    """
-    在 FAST.Farm 中回放某工况某控制类型。
-
-    流程：setup → reset → set_fixed_yaw（偏航经锁定 DOF 实现）→ start
-          → wait_step×N（推进）→ stop（拿 .outb 数据）。
-
-    偏航实现说明：yaw 控制通过在 ElastoDyn 中设固定 NacYaw + 锁定偏航 DOF 实现
-    （见 ContinuousFastFarmInterface.set_fixed_yaw），因为模板 ServoDyn 的 YCMode=0
-    会让 DLL 的偏航速率指令被忽略。derating 仍走 DLL 转矩通道（VSContrl=5）。
-    """
-    cfg = make_fastfarm_config(case, output_dir=output_dir)
-    ff = ContinuousFastFarmInterface(cfg)
-    ff.setup()
-    ff.reset(cfg.wind)
-
-    ci = build_control_input(
-        control_type, "fastfarm", settings,
-        wind_speed_ms=case.wind_speed_ms, n_turbines=3,
-    )
-    # 控制输入（用于记录到 timeseries）
-    yaw_cmd, ratio, ptgt = control_inputs_for_recording(
-        control_type, settings, n_turbines=3,
-    )
-
-    # 偏航：把每台风机的失准角写入 ED 并锁定偏航 DOF（在 start 之前）。
-    # 对 baseline/derating，yaw_cmd 全为 0 → 机舱对准来流并锁定，行为与之前一致。
-    ff.set_fixed_yaw(yaw_cmd)
-
-    ff.start()
-
-    final = None
-
-    n_total = cfg.max_iter
-    aborted = False
-    try:
-        # ---- 只推进仿真，不收集 wait_step 输出 ----
-        for _ in range(n_total):
-            ff.wait_step(ci)
-    except FastFarmAborted as e:
-        # FAST.Farm 中途 abort：不再逐步空等，立即收尾并尽量保存已推进的部分结果。
-        aborted = True
-        print(f"    [warn] FAST.Farm aborted mid-run: {e}")
-    finally:
-        # stop() 会解析已写出的 .outb（可能是部分时序），allow_partial 防止再抛。
-        try:
-            final = ff.stop(allow_partial=True)
-        except Exception as e:  # noqa
-            print(f"    [warn] stop() failed: {e}")
-            final = None
-        ff.close()
-
-    if final is None:
-        return None
-
-    if collect_stepwise:
-        out = _downsample_from_outb(final, cfg.dt, n_total)
-    else:
-        out = final
-    out = _attach_control_inputs(out, yaw_cmd, ratio, ptgt)
-    if out is not None and aborted:
-        md = dict(out.metadata or {})
-        md["aborted"] = True
-        out.metadata = md
-    return out
+# (REFACTOR_PLAN 附录 A) 旧文件桥驱动已移除，本入口代理到 ZMQ 驱动。
+from induction_vs_yaw_study.replay.fastfarm_zmq_replay import replay_fastfarm_zmq as _zmq_driver
 
 
 def _attach_control_inputs(out, yaw_cmd, ratio, ptgt):
@@ -147,4 +75,20 @@ def _downsample_from_outb(
         rotor_speed_rpm=_take(full.rotor_speed_rpm),
         blade_loads=_take(full.blade_loads),
         metadata=full.metadata,
+    )
+
+def replay_fastfarm(
+    case, control_type, settings, *, output_dir=None,
+    collect_stepwise=True, wind_time_series=None, yaw_mode="static",
+    cmd_port=24040, state_port=24041,
+):
+    """ZMQ 版回放驱动（替代旧文件桥实现，见 fastfarm_zmq_replay.py）。
+
+    参数与旧签名兼容；新增 wind_time_series / yaw_mode。
+    返回 SimulationOutput（time/power_mw/... + yaw_cmd/ratio/power_target）。
+    """
+    return _zmq_driver(
+        case, control_type, settings, output_dir=output_dir,
+        wind_time_series=wind_time_series, yaw_mode=yaw_mode,
+        cmd_port=cmd_port, state_port=state_port,
     )
