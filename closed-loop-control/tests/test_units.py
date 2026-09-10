@@ -2,7 +2,6 @@
 Module-level unit tests (per development plan §5.2 / test requirements).
 
 Focused, fast assertions on individual modules:
-  * M2 bridge  : controls.txt format + measurement round-trip
   * M4 induction: power<->induction inversion consistency
   * M5 surrogate: wake direction correctness, param monotonicity
   * M9 modes   : decision-variable selection per mode
@@ -17,7 +16,6 @@ import numpy as np
 import pytest
 
 from closedloop.case_config import default_case
-from closedloop.bridge import FarmBridge
 from closedloop.types import Cmd
 from closedloop import induction as ind
 from closedloop.surrogate import SurrogateModel
@@ -49,27 +47,6 @@ def test_yaw_reduces_power():
 
 
 # --- M2 bridge --------------------------------------------------------------
-def test_controls_format(tmp_path):
-    case = default_case()
-    b = FarmBridge(tmp_path, case.n_turbines)
-    cmds = {1: Cmd(1, yaw_deg=15.0, power_mw=2.5)}
-    b.write_controls(1, cmds)
-    content = (tmp_path / "controls.txt").read_text()
-    lines = content.strip().split("\n")
-    assert lines[0] == "step=1"
-    assert lines[-1] == "END"
-    assert "T1 yaw=15.0000 power=2.500000" in content
-
-
-def test_bridge_increasing_step(tmp_path):
-    b = FarmBridge(tmp_path, 6)
-    b.write_controls(1, {})
-    b.write_controls(2, {})
-    with pytest.raises(ValueError):
-        b.write_controls(2, {})  # non-increasing
-
-
-# --- M5 surrogate -----------------------------------------------------------
 def test_wake_direction_westerly():
     """Under 270 deg, higher-x (downstream column) turbines are waked."""
     case = default_case()

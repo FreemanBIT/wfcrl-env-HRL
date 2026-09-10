@@ -64,6 +64,15 @@ controllers_entry = ["Controllers.f90"]
 # DISCON.F90 依赖 FarmControlInterface（module 先后顺序），由各模式放最后
 dll_entry = ["DISCON.F90"]
 
+# legacy 桥源码（DISCON_bridge/ZeroMQInterface/compile.bat）已移至 src_legacy_bridge/
+# （REFACTOR_PLAN 第 1 部分）；--mode rosco 需先手工恢复（见 src_legacy_bridge/README）
+_legacy_note = "legacy bridge sources moved to src_legacy_bridge (see REFACTOR_PLAN part 1)"
+f90_sources = [s for s in f90_sources if os.path.exists(os.path.join(SRC_DIR, s))]
+if mode == "rosco" and not all(os.path.exists(os.path.join(SRC_DIR, s)) for s in ["DISCON_bridge.f90", "ZeroMQInterface.f90"]):
+    print("WARN: " + _legacy_note)
+    print("      restore from src_legacy_bridge/ or use --mode farmcontrol")
+    sys.exit(2)
+
 cmd = [gfortran, "-shared", "-static"] + FLAGS.split() + ["-o", dll_file]
 
 if mode == "farmcontrol":

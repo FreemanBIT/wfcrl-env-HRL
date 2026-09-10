@@ -30,8 +30,7 @@ from ..case_config import default_case
 from ..surrogate import SurrogateModel
 from ..sensing import Sensing
 from ..base_controller import CommandArbiter
-from ..bridge import FarmBridge
-from ..runner import ClosedLoopRunner, MockPlant, FastFarmPlant
+from ..runner import ClosedLoopRunner, MockPlant
 from ..evaluate import Trajectory
 from .. import wind_schedule as ws
 from ..control_mode import ControlMode
@@ -67,7 +66,7 @@ def run_demo(
     dt: float = 2.0,
     seed: int = 0,
     out: Optional[str] = None,
-    fastfarm_dir: Optional[str] = None,
+    fastfarm_dir: Optional[str] = None,  # (deprecated) 不再使用，保留签名兼容
     warmup_s: float = 60.0,
     verbose: bool = True,
 ) -> Trajectory:
@@ -82,12 +81,9 @@ def run_demo(
                       wind_direction_ref=case.wind_direction)
     ctrl = build_controller(controller, mode, case, surrogate, dt, seed)
 
-    if fastfarm_dir:
-        bridge = FarmBridge(fastfarm_dir, case.n_turbines)
-        plant = FastFarmPlant(bridge)
-        case.write_discon_inputs(Path(fastfarm_dir))
-    else:
-        plant = MockPlant(case, wind_fn, dt=dt, ti_noise=True, seed=seed)
+    # 旧文件桥接入（fastfarm_dir）已随 FarmBridge 移除（REFACTOR_PLAN 第 1 部分）；
+    # 实时 FAST.Farm 接入请使用 closedloop.zmq_pipeline / examples/example_fastfarm_launcher.py
+    plant = MockPlant(case, wind_fn, dt=dt, ti_noise=True, seed=seed)
 
     runner = ClosedLoopRunner(plant, ctrl, sensing, CommandArbiter(yaw_deadband=0.5))
     if verbose:

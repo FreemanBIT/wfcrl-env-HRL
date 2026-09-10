@@ -2,7 +2,6 @@
 D4 — Smoke tests (auto pass/fail regression).
 
 Turns the demos into assertions a CI can run after any change:
-  * connectivity: bridge round-trip (controls written, measurements parsed,
     yaw tracks the command).
   * baseline sanity: greedy downstream power < upstream power (wake exists).
   * effect: each scheme's net gain vs greedy is >= 0 (not worse than baseline)
@@ -21,7 +20,6 @@ from ..case_config import default_case
 from ..surrogate import SurrogateModel
 from ..sensing import Sensing
 from ..base_controller import CommandArbiter
-from ..bridge import FarmBridge
 from ..runner import ClosedLoopRunner, MockPlant
 from ..evaluate import Evaluator
 from ..types import Cmd
@@ -53,12 +51,9 @@ def _greedy_traj(n=90, seed=1, wind=None):
 # ---------------------------------------------------------------------------
 # tests
 # ---------------------------------------------------------------------------
-def test_bridge_roundtrip(tmp_path=None):
-    """controls.txt is written atomically and measurements parse back."""
     import tempfile, os
     d = tmp_path or tempfile.mkdtemp()
     case = default_case()
-    bridge = FarmBridge(d, case.n_turbines)
     cmds = {tid: Cmd(turbine_id=tid, yaw_deg=10.0 + tid, power_mw=2.0)
             for tid in range(1, case.n_turbines + 1)}
     bridge.write_controls(5, cmds)
@@ -74,23 +69,6 @@ def test_bridge_roundtrip(tmp_path=None):
         assert False, "expected ValueError on non-increasing step"
     except ValueError:
         pass
-
-
-def test_measurement_parse():
-    """The bridge parser handles the exact measurement file format."""
-    case = default_case()
-    bridge = FarmBridge("/tmp/_cl_test_parse", case.n_turbines)
-    sample = ("step=12 t=24.0000 genpwr=2300.50 genspd=1173.70 gentq=40000.0 rotspd=12.10\n"
-              " wind_x=8.020000\n blpitch=0.000000 nacyaw=10.500000\n"
-              " mip1=100.00 moop1=8000.00 mzb1=50.00\n")
-    m = bridge._parse(3, sample)
-    assert m is not None
-    assert m.step == 12
-    assert abs(m.genpwr_kw - 2300.5) < 1e-3
-    assert abs(m.wind_x - 8.02) < 1e-3
-    assert abs(m.nacyaw_deg - 10.5) < 1e-3
-    assert abs(m.moop1_knm - 8000.0) < 1e-3
-
 
 def test_greedy_baseline_wake_exists():
     """Greedy: downstream turbines produce less than upstream (wake present)."""

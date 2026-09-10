@@ -12,7 +12,6 @@ Drives one closed-loop episode:
         record trajectory
 
 The "plant" is either:
-  * :class:`FastFarmPlant` — talks to a live FAST.Farm through the file bridge
     (M2). You start FAST.Farm separately (e.g. via the project's runner), then
     point this at the same run directory.
   * :class:`MockPlant` — a lightweight surrogate-driven stand-in used for
@@ -31,7 +30,6 @@ from typing import Callable, Optional
 import numpy as np
 
 from .types import TurbineMeas, Cmd, FlowEstimate
-from .bridge import FarmBridge
 from .sensing import Sensing
 from .base_controller import BaseController, CommandArbiter
 from .surrogate import SurrogateModel
@@ -64,7 +62,6 @@ class Plant:
         pass
 
 
-class FastFarmPlant(Plant):
     """Live FAST.Farm plant via the file bridge (M2).
 
     Parameters
@@ -311,7 +308,6 @@ class ClosedLoopRunner:
 class ZmqPlant(Plant):
     """基于 ZeroMQ 新架构（FastFarmZmqEngine + ZmqFarmBridge）的实时 Plant。
 
-    与 FastFarmPlant 相比：命令经 ZeroMQ 通道（yaw_delta / induction_ref）下发，
     状态经 FarmStateFrame 解析回读；不再依赖 controls.txt / measurements_T*.txt。
 
     Parameters
@@ -337,4 +333,3 @@ class ZmqPlant(Plant):
 
     def reset(self) -> None:
         self.bridge.reset()
-

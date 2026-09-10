@@ -20,10 +20,9 @@ current FCR_FARM_CONTROL DLL — see docs/farm_control/PROJECT_REVIEW.md.
 
 from .types import TurbineMeas, Cmd, FlowEstimate, TurbineFlow
 from .control_mode import ControlMode, ControlModeSpec
-from .bridge import FarmBridge
 from .bridge import ZmqFarmBridge
 from .runner import ZmqPlant
-from .wfcrl_plant import FastFarmZmqPlant
+from .bridge import FastFarmZmqPlant
 from .zmq_pipeline import launch_farm, build_farm_case
 from .sensing import Sensing
 from .induction import (
@@ -39,7 +38,6 @@ from .case_config import FarmCase, default_case
 from .runner import (
     ClosedLoopRunner,
     Plant,
-    FastFarmPlant,
     MockPlant,
     RunResult,
     ZmqPlant,
@@ -53,7 +51,6 @@ __all__ = [
     "TurbineFlow",
     "ControlMode",
     "ControlModeSpec",
-    "FarmBridge",
     "ZmqFarmBridge",
     "ZmqPlant",
     "FastFarmZmqPlant",
@@ -73,7 +70,6 @@ __all__ = [
     "default_case",
     "ClosedLoopRunner",
     "Plant",
-    "FastFarmPlant",
     "MockPlant",
     "RunResult",
     "wind_schedule",
