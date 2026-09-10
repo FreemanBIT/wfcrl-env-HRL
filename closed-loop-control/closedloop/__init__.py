@@ -20,10 +20,8 @@ current FCR_FARM_CONTROL DLL — see docs/farm_control/PROJECT_REVIEW.md.
 
 from .types import TurbineMeas, Cmd, FlowEstimate, TurbineFlow
 from .control_mode import ControlMode, ControlModeSpec
-from .bridge import ZmqFarmBridge
-from .runner import ZmqPlant
-from .bridge import FastFarmZmqPlant
-from .zmq_pipeline import launch_farm, build_farm_case
+from .zmq_farm import (ZmqFarmBridge, FastFarmZmqPlant, ZmqPlant,
+                       launch_farm, build_farm_case)
 from .sensing import Sensing
 from .induction import (
     induction_to_power,
