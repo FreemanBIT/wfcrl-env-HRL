@@ -1,3 +1,12 @@
+_____________________________________________________________
+[deprecated] 本文档描述旧文件桥架构（controls.txt / measurements_T*、
+ContinuousFastFarmInterface、5-mode ControlInput），当前 FCR DLL 下不可用。
+新架构（ZeroMQ 双通道）：docs/farm_control/PROTOCOL_DECISIONS.md、
+FASTFARM_RT_PROVIDER_ICD.md、RT_INTEGRATION_GUIDE.md、
+closed-loop-control/examples/example_fastfarm_launcher.py。
+历史内容保留仅供回溯。
+_____________________________________________________________
+
 # 集成与运行指南（INTEGRATION GUIDE）
 
 本指南说明如何把 `closed-loop-control` 接到你的 **WFCRL / FAST.Farm** 工程并真正跑起来。分三种运行方式，按可靠性从高到低：

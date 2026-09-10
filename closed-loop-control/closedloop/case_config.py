@@ -108,7 +108,7 @@ class FarmCase:
     def write_discon_inputs(self, run_dir: Path) -> list[Path]:
         """Write per-turbine DISCON input files with full ROSCO v2.9 parameters.
 
-        The first line is the turbine ID (read by DISCON_bridge.f90). The
+        (DISCON_T*.IN 输入文件结构) The first line is the turbine ID. The
         remaining lines are ROSCO NREL 5MW controller parameters from the
         project template ``DISCON_ROSCO_TEMPLATE.IN``.
         """

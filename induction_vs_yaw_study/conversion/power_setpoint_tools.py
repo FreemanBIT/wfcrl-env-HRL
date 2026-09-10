@@ -14,7 +14,7 @@ power_setpoint_tools.py — 转换层核心 (Stage 1)
     并用一维制动盘关系由缩放后的 Cp 反解新的轴向诱导 a，
     再写回 Ct = 4a(1-a)。即 FLORIS 端是"按比例降额"。
 
-* FAST.Farm (DISCON_bridge.f90, mode 1/4)：
+* FAST.Farm（ZMQ 回放驱动）下发诱导因子 a = power_to_a(P_target, U)；
     `controls.power` 是 **绝对目标功率 (MW)**。
     bridge 用前馈 T_ff = P_target(W)/ω + PI 修正跟踪该功率。
 
@@ -31,7 +31,7 @@ power_thrust_table 查得。本模块提供解析近似 greedy_power_w()，但 *
 
 诱导因子 a 在本研究中是 **诊断/汇报量**（由 P_target 与 U 反算），不直接下发。
 
-依赖：numpy、scipy。复用 wfcrl.config.ControlInput 的工厂方法（5-mode）。
+依赖：numpy、scipy。仅提供换算工具（新架构由 closedloop.induction 完成 a 下发换算）。
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ import numpy as np
 
 from induction_vs_yaw_study import constants as C
 
-# wfcrl 的控制输入数据结构（5-mode）。本模块只调用其公开工厂方法。
+# 换算工具：P_target(MW) <-> ratio <-> 诱导因子 a（a 为新架构直接下发通道）。
 from wfcrl.config import ControlInput
 
 

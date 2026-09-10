@@ -1,10 +1,10 @@
 """
 fastfarm_replay.py — FAST.Farm 回放 (Stage 6)
 =============================================
-用工程的 ContinuousFastFarmInterface（一次启动、流场连续）按 schedule 回放。
+（REFACTOR_PLAN 附录 A）回放驱动已切换为 ZMQ（见 fastfarm_zmq_replay.py）。
 静态 LUT：每个控制步下发相同命令；前 t_settle 让尾流稳定，后段取稳态窗口。
 
-v2 — 使用 stop() 读取 .outb 文件，避免 DISCON 轮询的竞态条件。
+统计口径：仿真结束后 stop() 读取 .outb（与旧实现一致，可与历史结果对比）。
 """
 
 from __future__ import annotations

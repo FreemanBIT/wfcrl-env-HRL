@@ -3,7 +3,7 @@ stage0_probe.py — 接口探针与可行性自检 (Stage 0)
 ================================================
 在写/跑任何实验前，确认：
   1. wfcrl 的 ControlInput / 接口签名与本研究假设一致；
-  2. ControlInput 原生支持 5-mode（mode 0 偏航、mode 1 功率目标），
+  2. 新架构命令为双通道（yaw_delta 偏航动作指令 + induction_a 诱导因子）；
      即 **无需修改控制接口** 即可同时做偏航与降额控制；
   3. （可选）FLORIS 能 import 且 nrel_5MW 可解析；
   4. （可选）FAST.Farm 可执行文件存在。
@@ -34,7 +34,7 @@ def main():
 
     log(_section("Stage 0 Probe — induction_vs_yaw_study"))
 
-    # ---- 1. ControlInput 签名与 5-mode ----
+    # ---- 1. 新架构命令通道（yaw_delta + induction_a）----
     log(_section("1. wfcrl.config.ControlInput"))
     try:
         from wfcrl.config import ControlInput, WindConfig, WindType, SimulationOutput
@@ -57,9 +57,9 @@ def main():
     log(_section("2. wfcrl.interface 接口"))
     try:
         from wfcrl.engine import (
-            FlorisInterface, FastFarmInterface, ContinuousFastFarmInterface,
+            FlorisInterface, FastFarmInterface, FastFarmZmqEngine,
         )
-        for cls in (FlorisInterface, ContinuousFastFarmInterface):
+        for cls in (FlorisInterface, FastFarmZmqEngine):
             methods = [m for m in ("setup", "reset", "step", "start",
                                    "wait_step", "stop", "close")
                        if hasattr(cls, m)]

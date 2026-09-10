@@ -14,9 +14,9 @@ import math
 
 @dataclass
 class TurbineMeas:
-    """One turbine's raw measurement, parsed from ``measurements_T<id>.txt``.
+    """One turbine's raw measurement, parsed from FarmStateFrame（经 ZmqFarmBridge.meas_from_state）。
 
-    Fields mirror the FAST.Farm bridge output (``DISCON_bridge.f90``). Angles are
+    字段对应 FAST.Farm 状态帧/Provider 输出。角度量纲为
     in degrees, power in kW (as written by the bridge), speeds in rpm.
     """
     turbine_id: int

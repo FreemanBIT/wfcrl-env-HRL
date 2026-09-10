@@ -15,13 +15,13 @@ DIAGRAMS = r"""
   │  Estim.  │    │  (FLORIS/ana) │    │  (grid+ref)  │    ║  (γ,a) → Cmd    ║
   └────▲─────┘    └───────────────┘    └──────┬───────┘    ╚══════╤═══════════╝
        │                                      │                   │
-       │              P_farm, P_i             │          controls.txt
+       │              P_farm, P_i             │     FarmCommandFrame(5672B)
        │                                      │          step=N
        │                                      │    T1 mode=0 yaw=X power=Y pitch=Z
        │                                      │          ... T6 ...
        │                                      │                   │
        │                                      │    ┌──────────────┼──────────────┐
-       │                                      │    │        DISCON Bridge         │
+       │                                      │    │    ZmqFarmBridge→ZmqClient      │
        │                                      │    │                              │
        │                                      │    │  YAW   → avrSWap[48]=dγ/dt  │
        │                                      │    │  POWER → PI跟踪→ avrSWap[47] │
@@ -41,7 +41,7 @@ DIAGRAMS = r"""
        │                           └──────────────────┬───────────────────┘
        │                                              │
        └──────────────────────────────────────────────┘
-                       measurements_T*.txt , .out files
+                       FarmStateFrame(23096B)（~3s 聚合）/.out files
 
 
 ╔══════════════════════════════════════════════════════════════════════════════════════════════╗

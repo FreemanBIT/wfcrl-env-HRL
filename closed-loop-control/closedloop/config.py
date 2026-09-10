@@ -15,7 +15,7 @@ class PathsConfig:
     """Where FAST.Farm / FLORIS files live. Adjust for your machine."""
     # FLORIS case template — points to the pre-generated 2x3@4D case
     floris_case_yaml: str | None = "cases/farm_2x3_4D/floris_case.yaml"
-    # FAST.Farm run directory (where controls.txt / measurements_T*.txt live)
+    # FAST.Farm 仿真输出目录（案例生成/轨迹保存）
     fastfarm_run_dir: str | None = None
     # Path to the WFCRL project root (for FAST.Farm template / binary discovery)
     wfcrl_root: str | None = r"D:\HR_Project\wfcrl-env-HRL"

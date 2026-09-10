@@ -4,11 +4,11 @@ M8 — Experiment runner (closed-loop orchestration).
 Drives one closed-loop episode:
 
     for each control step k:
-        meas   = plant.read()                # measurements_T*.txt (or mock)
+        meas   = plant.read()                # 状态帧（ZMQ）-> TurbineMeas (or mock)
         flow   = sensing.estimate(meas)
         cmds   = controller.step(flow, meas)
         cmds   = arbiter.apply_limits(cmds)
-        plant.write(step, cmds)              # controls.txt (or mock)
+        plant.write(step, cmds)              # Cmd -> yaw_delta/induction_ref（ZMQ） (or mock)
         record trajectory
 
 The "plant" is either:
@@ -157,7 +157,7 @@ class MockPlant(Plant):
             cmd = cmds.get(tid)
             if cmd is None:
                 continue
-            # yaw: first-order dynamics matching DISCON bridge (0.2 gain per DT_low)
+            # yaw: 一阶动态（匹配 FCR 偏航执行近似，0.2 gain per DT_low）
             if cmd.yaw_deg is not None:
                 target = cmd.yaw_deg
                 n_sub = max(1, int(round(self.dt / self.dt_low)))

@@ -1,5 +1,8 @@
 # PROJECT_REVIEW — 场控机制更新后的工程现状与重构建议
 
+
+> 更新：本 review 中的重构建议（P0-P3）已由 REFACTOR_PLAN 执行（F/A/B/E/C/D 全部完成，
+> 每步 300s 仿真回归通过；详见 REFACTOR_PLAN.md 执行记录）。遗留项仅在 P3（测试加固）与文档收尾。
 生成日期：2026-09；分支：dev/farm-control-runtime（fab966c+）。
 
 ## 1. 当前架构（已实现）

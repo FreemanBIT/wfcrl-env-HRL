@@ -1,242 +1,83 @@
-# WFCRL — Wind Farm Control RL & Simulation Interface
+# WFCRL — 风电场控制仿真与场控闭环（ZeroMQ 架构）
 
-风电场控制仿真与强化学习框架，底层驱动 FAST.Farm（高保真 CFD/BEM）与 FLORIS（工程尾流模型）。
+风电场景控闭环控制框架：底层驱动 **FAST.Farm**（高保真）与 **FLORIS**（工程尾流模型），
+场控指令经 **ZeroMQ** 传输到集成在 DISCON DLL 内的 `farm_control_runtime` 中间层，
+翻译为 ROSCO 外部接口变量执行；状态（功率/载荷/方位/流场）按 ~1s 统计帧回传场控。
 
----
+## 仓库组成（当前架构）
 
-## 架构
+```text
+wfcrl/                       # 仿真库（无 RL 依赖）
+  engine/fastfarm_zmq.py     # ★ 唯一 FAST.Farm 运行引擎（FastFarmZmqEngine，ZMQ 双通道）
+  transport/                 # farm_protocol / farm_zmq_client（帧 ABI：命令 5672B / 状态 23096B）
+  config/ mdp/               # 配置 / RL 桥接（保留，非场控主链）
+  compat.py                  # 旧 import 路径兼容层（Deprecated）
 
-```
-wfcrl/
-├── config/                    纯数据类型（无 RL 依赖）
-│   ├── types.py               WindType, WindConfig, WindSegment
-│   ├── control.py             ControlInput（5-Mode 场控协议）
-│   ├── output.py              SimulationOutput（统一输出结构）
-│   ├── simulator.py           SimulationConfig, FastFarmConfig, FlorisConfig
-│   └── layout.py              FarmLayout + LayoutRegistry（11 个内置风场）
-│
-├── engine/                    仿真引擎层（零 RL 依赖，MPC/优化可直接使用）
-│   ├── base.py                SimulatorInterface ABC
-│   ├── state.py               SimulatorState（单步测量快照）
-│   ├── constraints.py         ActuatorConstraints（执行器物理约束）
-│   ├── angle_utils.py         风向/机舱朝向换算
-│   ├── fastfarm_step.py       FastFarmInterface（每步重启 subprocess）
-│   ├── fastfarm_continuous.py ContinuousFastFarmInterface（流场连续，DISCON bridge）
-│   ├── floris.py              FlorisInterface（FLORIS Python API）
-│   ├── _ff_case.py            FAST.Farm 输入文件生成
-│   ├── _floris_case.py        FLORIS 输入文件生成
-│   └── _outb.py / _outlist.py .outb 解析 / OutList 注入
-│
-├── mdp/                       RL 桥接层
-│   └── mdp.py                 WindFarmMDP（状态/动作空间 + 转换）
-│
-├── envs/                      RL 环境（Gymnasium + PettingZoo）
-│   ├── base.py                BaseWindFarmEnv
-│   ├── centralized.py         WindFarmEnv（单智能体）
-│   ├── multiagent.py          MAWindFarmEnv（多智能体）
-│   ├── wrappers.py            LogWrapper, AECLogWrapper
-│   └── rewards.py             RewardShaper
-│
-├── compat.py                  向后兼容层（旧 import 路径自动重导出）
-├── compat_data.py             FarmCase 等遗产类兼容桩
-└── registration.py            环境注册工厂
+closed-loop-control/         # 闭环控制器层（A/B/C/greedy，Mock 可离线跑）
+  closedloop/zmq_farm.py     # ★ 新架构统一入口（ZmqFarmBridge / ZmqPlant / launch_farm）
+  closedloop/controller_factory.py   # 控制器统一构建
+  closedloop/control_mode.py # 3 模式：YAW=1 / INDUCTION=2 / YAW_INDUCTION=3（双通道）
+  examples/example_fastfarm_launcher.py   # ★ 唯一 FAST.Farm 闭环示例入口
 
-FarmInputs/
-├── layouts/                   11 个风场布局 YAML
-│   ├── dafeng_h1.yaml        (24 × Goldwind 8.5MW)
-│   ├── horns_rev1.yaml       (80 × NREL 5MW)
-│   ├── horns_rev2.yaml       (92 × NREL 5MW)
-│   ├── ormonde.yaml          (31 × NREL 5MW)
-│   ├── wmr.yaml              (36 × NREL 5MW)
-│   ├── ablaincourt.yaml       (7 × NREL 5MW)
-│   ├── tcrwp.yaml            (32 × NREL 5MW)
-│   └── turb3_row1 ~ turb32_row5 (程序化生成)
-│
-└── output_channels/           输出通道/变量参考
-    ├── fastfarm_channels.yaml (OpenFAST OutList 通道定义)
-    └── floris_channels.yaml   (FLORIS 输出变量定义)
+farm_control_runtime/        # 场控中间层 C 库（离线集成 DLL / RT 独立链接，同一份代码）
+  src/ include/ rosco/       # CommandStore / YawActionManager / InductionSupervisor / 聚合器
+  transport/                 # zmq / modbus 双传输（modbus_map.yaml 冻结）
+  offline/                   # 离线 Provider（avrSWAP 探针）+ FCR_Step 10ms 链路
+  tests/                     # 单元 + 集成（ZMQ 端到端）
+
+induction_vs_yaw_study/      # 诱导 vs 偏航 对比研究（LUT + FAST.Farm ZMQ 回放）
+docs/farm_control/           # 协议决策/ICD/交付/集成指南/重构计划与复盘
 ```
 
----
+## 信息流（离线闭环）
 
-## 快速开始
+```text
+场控 Python（Controller A/B/C/greedy / 研究回放）
+  Cmd{ yaw_delta_deg（偏航动作指令，CW+ 增量 · SCADA 语义）
+       yaw_deg（绝对目标，控制器内部，桥内换算为动作指令）
+       induction_a（诱导因子，无量纲，a=1/3 贪婪）}
+  -> ZmqFarmBridge（量纲/协议翻译 + seq/TTL）
+  -> FastFarmZmqEngine -> FarmZmqClient（PUB/SUB，bind 5556/5557）
+  -> ZeroMQ FarmCommandFrame -> DISCON_WT1.dll 内 farm_control_runtime
+       CommandStore（可靠性）-> YawActionManager（增量->绝对目标锁存）
+                              -> InductionSupervisor（a->ct_ref/power_ratio/min_pitch）
+  -> FcrRoscoExternalSetpoint -> ROSCO（10ms 外部偏航目标+变桨/扭矩参考）-> OpenFAST
+  -> Offline Provider 探针 + FCR_PublishState -> state_store(10ms) -> 1s 统计聚合
+  -> FarmStateFrame(~3s) -> ZeroMQ -> 客户端按 turbine_id 合并 -> TurbineMeas -> 场控
 
-### 纯仿真使用（MPC / 优化 — 零 RL 依赖）
-
-```python
-from wfcrl.config import FastFarmConfig, WindConfig
-from wfcrl.engine import ContinuousFastFarmInterface
-from wfcrl.config.layout import LayoutRegistry
-
-layouts = LayoutRegistry.from_builtin()
-layout = layouts.get("dafeng_h1")
-
-config = FastFarmConfig(
-    case_name="demo",
-    num_turbines=layout.num_turbines,
-    xcoords=layout.xcoords,
-    ycoords=layout.ycoords,
-    dt=3.0, max_iter=100,
-    wind=WindConfig(speed=10, direction=270),
-    output_preset="standard",
-)
-
-sim = ContinuousFastFarmInterface(config)
-sim.setup()
-sim.reset(config.wind)
-sim.start()
-
-for step in range(config.max_iter):
-    controls = my_controller.compute(sim.read_measurements())
-    sim.apply(controls)
-
-final = sim.stop()
-sim.close()
-final.to_csv("results.csv")
+时序：内部 10ms；闭环控制步 dt=3s；状态帧约 3s（1s 统计窗口）。
+可靠性：命令帧每机独立 seq、TTL 过期回退、乱序拒绝（CommandStore）。
 ```
 
-### RL 使用
-
-```python
-from wfcrl.envs.centralized import WindFarmEnv
-from wfcrl.mdp.mdp import WindFarmMDP
-from wfcrl.config import FastFarmConfig, WindConfig
-from wfcrl.engine import ContinuousFastFarmInterface
-
-sim = ContinuousFastFarmInterface(config)
-sim.setup(); sim.reset(config.wind); sim.start()
-
-mdp = WindFarmMDP(simulator=sim, layout=layout,
-                  controls={"yaw": (-20, 20, 5)}, warmup_steps=33)
-env = WindFarmEnv(mdp=mdp)
-
-obs = env.reset()
-for _ in range(500):
-    action = policy(obs)
-    obs, reward, done, _, info = env.step(action)
-```
-
-### 兼容旧代码
-
-```python
-# 旧 import 路径仍然有效
-from wfcrl import WindConfig, ControlInput, FastFarmInterface
-```
-
----
-
-## 仿真器接口
-
-### 三种接口对比
-
-| 接口 | 模式 | 流场 | 适用场景 |
-|------|------|------|---------|
-| `FastFarmInterface` | 每步重启 subprocess | 不连续 | 离线批量对比 |
-| `ContinuousFastFarmInterface` | 一次启动，DISCON bridge | 物理连续 | 闭环控制 / MPC / RL |
-| `FlorisInterface` | Python API 调用 | 稳态 | 快速迭代 / 优化 / LUT |
-
-### ContinuousFastFarmInterface — 两步式 API
-
-```python
-sim.apply(controls)            # 写 controls.txt，立即返回
-state = sim.read_measurements() # 轮询等待 DISCON 测量值
-```
-
-也提供便捷一步式 `sim.wait_step(controls)`。
-
-### 5-Mode Farm Control Protocol
-
-| Mode | 控制量 | 说明 |
-|------|--------|------|
-| 0 | yaw | 偏航绝对值 |
-| 1 | power + min_pitch | 功率目标 + 最小变桨约束 |
-| 2 | pitch | 变桨绝对值 |
-| 3 | pitch + yaw | 变桨 + 偏航 |
-| 4 | power + min_pitch + yaw | 全组合 |
-
-```python
-controls = ControlInput.mode0_yaw(n_turbines=24, yaw_deg=15.0)
-controls = ControlInput.mode1_power(n_turbines=24, power_mw=4.0, min_pitch_deg=3.0)
-```
-
----
-
-## 输出配置
-
-通过 `output_preset` 或 `output_channels` 选择输出变量：
-
-```python
-config = FastFarmConfig(
-    ...,
-    output_preset="standard",   # minimal / standard / loads / full
-    # 或精确指定：
-    # output_channels=["GenPwr", "YawPzn", "BldPitch1", "RootMIP1"],
-)
-```
-
-通道定义文件：`FarmInputs/output_channels/fastfarm_channels.yaml`，可按需扩展。
-
-### SimulationOutput
-
-所有接口返回统一的 `SimulationOutput`：
-
-| 属性 | 形状 | 说明 |
-|------|------|------|
-| `time` | (n_steps,) | 时间向量 |
-| `power_mw` | (n_steps, n_turbines) | 每台风机功率 |
-| `farm_power_mw` | (n_steps,) | 风场总功率 |
-| `yaw_deg` | (n_steps, n_turbines) | 偏航失准角 |
-| `pitch_deg` | (n_steps, n_turbines) | 变桨角 |
-| `wind_speed` | (n_steps, n_turbines) | 风速 |
-| `rotor_speed_rpm` | (n_steps, n_turbines) | 风轮转速 |
-| `blade_loads` | (n_steps, n_turbines, 3) | 叶根弯矩 |
-
-```python
-output.to_csv("results.csv")
-df = output.to_dataframe()
-```
-
----
-
-## 风场布局
-
-| 布局 | 风机数 | 类型 |
-|------|--------|------|
-| dafeng_h1 | 24 | Goldwind 8.5MW |
-| horns_rev1 | 80 | NREL 5MW |
-| horns_rev2 | 92 | NREL 5MW |
-| ormonde | 31 | NREL 5MW |
-| wmr | 36 | NREL 5MW |
-| tcrwp | 32 | NREL 5MW |
-| ablaincourt | 7 | NREL 5MW |
-| turb3_row1 ~ turb32_row5 | 3~32 | NREL 5MW（程序化） |
-
-```python
-from wfcrl.config.layout import LayoutRegistry
-layouts = LayoutRegistry.from_builtin()
-layout = layouts.get("horns_rev1")
-```
-
----
-
-## 安装
+## 快速开始（FAST.Farm 闭环 300s）
 
 ```bash
-pip install -e ".[rl]"        # 含 RL 依赖 (gymnasium, pettingzoo)
-pip install -e "."            # 仅仿真引擎 (MPC / 优化)
+cd D:\HR_Project\wfcrl-env-HRL
+
+# 湍流入流（300s+ 建议使用 FarmInputs/ 下 TurbSim .bts，如 inflow_08ms_TI10_s8D.bts；
+#  稳态 WindType=1 在 prebuilt 二进制下存在 Grid4D 时间墙 ~260s）
+
+# 闭环（greedy 冒烟 / Controller B 完整）
+python closed-loop-control\examples\example_fastfarm_launcher.py --duration 300 \
+  --controller B --mode 3 --case 6T --wind_speed 8 --wind_time_series inflow_08ms_TI10_s8D.bts
+
+# 直连通道示例（不经闭环控制器）
+python examples\example_FASTFarm_zmq.py --mode 3 --a 0.20 --steps 12
+
+# Mock 闭环（无需 FAST.Farm）
+python -m closedloop.demos.run_demo --controller B --mode 3 --duration 400
 ```
 
-依赖：`numpy`, `pandas`, `PyYAML`, `matplotlib`, `FLORIS>=4.5`, `openfast_toolbox`
+## 文档
 
-FAST.Farm 使用需额外：
-1. 下载 `FAST.Farm_x64_OMP.exe` (OpenFAST v5.0.0) → 放入 `wfcrl/simulators/fastfarm/bin/`
-2. 编译 DISCON bridge：`gfortran -shared -static -o DISCON_WT1.dll DISCON.F90`
+- `wfcrl/simulators/fastfarm/src_legacy_bridge/` —— 旧文件桥 Fortran（DISCON_bridge/ZeroMQInterface）已移此处
+- `docs/farm_control/FASTFARM_RT_PROVIDER_ICD.md` —— 实时状态提供 ICD
+- `docs/farm_control/REALTIME_DELIVERY.md` / `RT_INTEGRATION_GUIDE.md` —— RT 集成（runtime 在调度器）
+- `docs/farm_control/PROTOCOL_DECISIONS.md` —— 通道语义/单位约定
+- `docs/farm_control/REFACTOR_PLAN.md` —— ZMQ 收敛重构计划与执行记录
+- `docs/farm_control/PROJECT_REVIEW.md` —— 工程现状 review
 
----
+## 分支与发布
 
-## 相关文档
-
-- `docs/REFACTOR_PLAN.md` — 架构重构方案
-- `docs/INTERFACE.md` — 仿真接口详细文档
-- `docs/BENCHMARK.md` — 基准测试说明
-- `DEVELOPMENT_LOG.md` — 开发记录
+- 主开发分支：`dev/farm-control-runtime`（勿修改 main/master）
+- 里程碑 tag：`phase11-rt-delivery`（ZMQ 传输 + RT Provider ICD）
