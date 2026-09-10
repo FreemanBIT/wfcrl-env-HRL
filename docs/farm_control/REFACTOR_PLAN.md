@@ -163,3 +163,55 @@ Step 5  文档收尾（README/INTEGRATION_GUIDE/PROTOCOL_DECISIONS）
   （计划中已查：FCR 宏路径不编译它们；compile.bat 为旧入口）
 - 第 1 部分待确认项（induction_vs_yaw_study）不在自动执行清单内，等你确认
 - 所有删除/移动均可用 git revert 整步回滚；分支已有 phase11-rt-delivery tag 兜底
+
+================================================================
+附录 A — induction_vs_yaw_study ZMQ 化（方案 A：仅换驱动层）
+================================================================
+
+目标：保留研究目录结构与 LUT/换算/分析逻辑，只把 FAST.Farm 执行驱动
+从文件桥（ContinuousFastFarmInterface + mode0/1）换成 ZMQ 链路；
+默认保持旧口径（偏航静态锁定 + .outb 统计），保证与新结果可比。
+
+### A.1 新增：replay/fastfarm_zmq_replay.py（约 200 行）
+- 复用 closedloop.zmq_pipeline（build_farm_case/launch_farm）启动仿真：
+  make_fastfarm_config 的布局/风况字段 -> FastFarmConfig（--wind_time_series 支持 bts）
+- 命令下发（每控制步，静态 LUT 每步相同 / ZOH 保持）：
+  * derating：LUT 的 power_target_mw -> ratio(=P/P_greedy) -> a = power_to_induction()
+    （U 取 case.wind_speed_ms；沿用 closedloop.induction），下发 induction_ref + seq
+  * yaw：两个模式：
+    --yaw_mode static（默认，保口径）：首个状态帧后按 当前heading -> 目标absolute 换算
+      一次性下发 yaw_delta 并每步重发（Heading latch 保持绝对目标不变，效果=静态失准，
+      与旧“锁 DOF”的稳态一致）；
+    --yaw_mode control：动态通道（每步重发目标，允许 ROSCO 偏航动态）
+  * baseline：不下发任何命令（a=greedy 1/3 默认）
+- 推进/采集：wait 到 low_step>=目标步（bridge.wait_step）；仿真结束后仍解析
+  .outb 取功率（保持研究统计口径），不做闭环状态帧直接统计（除 yaw_mode 需要的 heading）
+- 返回结构复用 SimulationOutput（time/power_mw/wind_speed/yaw_deg/pitch/torque/rotor/
+  blade_loads + 附 yaw_cmd/ratio/power_target）→ 与旧 replay_fastfarm 输出兼容
+
+### A.2 编排与入口修改
+- run/run_replay.py：--sim fastfarm 时调用 replay_fastfarm_zmq；新增 --yaw_mode；
+  --controls 不变（baseline/yaw/derating）
+- steady/replay_steady.py、steady/run_replay_steady.py：同样切换（稳态 WindType=1 也可，
+  但 300s+ 建议 bts；研究用例通常 <300s 不受 260s 影响）
+- tests/test_conversion.py 等纯逻辑测试不动；新增驱动单测（mock engine）：
+  验证 derating 下发 a、yaw_mode static 下发 delta 转换
+
+### A.3 行为差异（文档标注于 README）
+- 旧浏览器 mode1 功率跟踪（前馈+PI）-> 新 a 通道（诱导因子直接设定）：稳态功率等价，
+  动态跟踪特性不同（研究用静态 LUT，无影响）
+- 偏航：旧=锁 DOF 静止；新 static 模式=ZMQ 下发一次并 latch 保持（稳态等价）；
+  control 模式=动态
+- 断点续跑/失败日志（run_log.csv）/aborted 部分结果逻辑保留
+
+### A.4 验证（实施后）
+- 3 机 + inflow_08ms_TI10_s8D.bts（或研究原有的 90m_08mps.bts）跑 60s：
+  baseline / derating(ratio 0.7) / yaw(失准 20°) 三组，抽查功率曲线合理性与
+  与旧记录（docs/PROBE_RESULTS.md / results/）趋势一致
+- git grep 确认研究目录不再引用 ContinuousFastFarmInterface
+
+### A.5 执行顺序
+- Step A1: replay/fastfarm_zmq_replay.py + 单测
+- Step A2: run_replay.py / steady 切换 + --yaw_mode
+- Step A3: 60s 三组回放验证 + README 更新
+- 独立 commit，可单独 revert
