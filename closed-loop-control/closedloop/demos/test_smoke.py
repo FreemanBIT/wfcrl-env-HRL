@@ -51,24 +51,6 @@ def _greedy_traj(n=90, seed=1, wind=None):
 # ---------------------------------------------------------------------------
 # tests
 # ---------------------------------------------------------------------------
-    import tempfile, os
-    d = tmp_path or tempfile.mkdtemp()
-    case = default_case()
-            for tid in range(1, case.n_turbines + 1)}
-    bridge.write_controls(5, cmds)
-    text = (os.path.join(str(d), "controls.txt"))
-    with open(text) as f:
-        content = f.read()
-    assert content.startswith("step=5")
-    assert "END" in content
-    assert "T1 yaw=11.0000" in content
-    # step must strictly increase
-    try:
-        bridge.write_controls(5, cmds)
-        assert False, "expected ValueError on non-increasing step"
-    except ValueError:
-        pass
-
 def test_greedy_baseline_wake_exists():
     """Greedy: downstream turbines produce less than upstream (wake present)."""
     traj = _greedy_traj()

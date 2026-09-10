@@ -1,168 +1,202 @@
+"""bridge.py — ZMQ 场控桥（ZmqFarmBridge）。
+历史文件桥（FarmBridge）已移除（REFACTOR_PLAN 第 1 部分）。
 """
-D4 — Smoke tests (auto pass/fail regression).
+import math
+import time
+import warnings as _warnings
+from typing import Optional
 
-Turns the demos into assertions a CI can run after any change:
-    yaw tracks the command).
-  * baseline sanity: greedy downstream power < upstream power (wake exists).
-  * effect: each scheme's net gain vs greedy is >= 0 (not worse than baseline)
-    on the standard yaw scenario.
-  * stability: no NaN, no divergence.
-  * modes: all 3 control modes (YAW/INDUCTION/YAW_INDUCTION) run and stay bounded.
-
-Run with::  pytest closedloop/demos/test_smoke.py -v
-Or standalone:  python -m closedloop.demos.test_smoke
-"""
-from __future__ import annotations
-
-import numpy as np
-
-from ..case_config import default_case
-from ..surrogate import SurrogateModel
-from ..sensing import Sensing
-from ..base_controller import CommandArbiter
-from ..runner import ClosedLoopRunner, MockPlant
-from ..evaluate import Evaluator
-from ..types import Cmd
-from .. import wind_schedule as ws
-from ..control_mode import ControlMode
-from .greedy_baseline import GreedyController
-
-DT = 2.0
+from .types import TurbineMeas, Cmd
+from .induction import power_to_induction, A_GREEDY
+from .runner import ZmqPlant
 
 
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
-def _run(controller_factory, n=90, seed=1, wind=None, mode=1):
-    case = default_case()
-    wind = wind or ws.steady(8, 270, 0.06)
-    plant = MockPlant(case, wind, dt=DT, ti_noise=True, seed=seed)
-    sensing = Sensing(case.n_turbines, dt=DT, upstream_ids=case.upstream_ids,
-                      wind_direction_ref=270.0)
-    ctrl = controller_factory(case)
-    runner = ClosedLoopRunner(plant, ctrl, sensing, CommandArbiter(yaw_deadband=0.5))
-    return runner.run(n, controller_name="test", mode=mode, warmup_steps=30).trajectory
 
 
-def _greedy_traj(n=90, seed=1, wind=None):
-    return _run(lambda case: GreedyController(case.n_turbines, DT), n, seed, wind)
+def _wrap_pi_rad(x: float) -> float:
+    while x > math.pi:
+        x -= 2.0 * math.pi
+    while x < -math.pi:
+        x += 2.0 * math.pi
+    return x
 
 
-# ---------------------------------------------------------------------------
-# tests
-# ---------------------------------------------------------------------------
-    import tempfile, os
-    d = tmp_path or tempfile.mkdtemp()
-    case = default_case()
-            for tid in range(1, case.n_turbines + 1)}
-    bridge.write_controls(5, cmds)
-    text = (os.path.join(str(d), "controls.txt"))
-    with open(text) as f:
-        content = f.read()
-    assert content.startswith("step=5")
-    assert "END" in content
-    assert "T1 yaw=11.0000" in content
-    # step must strictly increase
-    try:
-        bridge.write_controls(5, cmds)
-        assert False, "expected ValueError on non-increasing step"
-    except ValueError:
-        pass
-
-def test_greedy_baseline_wake_exists():
-    """Greedy: downstream turbines produce less than upstream (wake present)."""
-    traj = _greedy_traj()
-    P = traj.P.mean(axis=0)   # per-turbine mean
-    # upstream T1,T4 (indices 0,3) vs downstream T3,T6 (indices 2,5)
-    assert P[0] > P[2], "T1 should exceed waked T3"
-    assert P[3] > P[5], "T4 should exceed waked T6"
-    assert np.all(np.isfinite(P))
+def _norm180_deg(x: float) -> float:
+    return math.degrees(_wrap_pi_rad(math.radians(x)))
 
 
-def test_scheme_a_not_worse_than_greedy():
-    g = _greedy_traj()
-    from ..scheme_a import ControllerA
-    sur = SurrogateModel(default_case().layout_x, default_case().layout_y, prefer_floris=False)
-    a = _run(lambda case: ControllerA(ControlMode.YAW, sur, case.n_turbines))
-    ev = Evaluator(transient_s=50.0)
-    gain = ev.gain_vs(a, g)
-    assert np.isfinite(gain["gain_pct"])
-    assert gain["gain_pct"] >= -1.0, f"Scheme A worse than greedy: {gain['gain_pct']:.2f}%"
+class ZmqFarmBridge:
+    def __init__(self, engine, n_turbines: int, wind_direction: float = 270.0):
+        self.engine = engine
+        self.n = int(n_turbines)
+        self.wind_direction = float(wind_direction)
+        self._yaw_seq = [0] * self.n
+        self._ind_seq = [0] * self.n
+        self._last_state = None
+        self._heading_cache = {}   # tid -> 上次有效机舱方位（deg）
+        self._warned = set()
+
+    # -- 状态读取 -------------------------------------------------------------
+    def get_state(self, timeout_s: float = 15.0):
+        st = self.engine.get_state(timeout_s=timeout_s)
+        if st is not None:
+            self._last_state = st
+        return st
+
+    def read(self, step: int) -> dict:
+        st = self.get_state()
+        if st is None:
+            raise TimeoutError('no state frame within timeout (bridged FAST.Farm)')
+        return self.meas_from_state(st, self.n)
+
+    def wait_step(self, step: int, timeout: float = 120.0, poll: float = 0.5) -> dict:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            st = self.get_state(timeout_s=poll)
+            if st is not None and st.get('low_step', 0) >= step:
+                meas = self.meas_from_state(st, self.n)
+                if len(meas) >= self.n:
+                    return meas
+            # 仿真进程已退出
+            proc = getattr(self.engine, '_proc', None)
+            max_iter = getattr(getattr(self.engine, 'config', None), 'max_iter', 0)
+            if proc is not None and proc.poll() is not None:
+                last_low = st.get('low_step', 0) if st else 0
+                done_ok = bool(max_iter) and last_low >= max_iter - 1
+                if done_ok or (max_iter and step >= max_iter):
+                    # 仿真正常到达终点（或 python 落后于仿真完成）：返回最近帧收尾
+                    if st is not None:
+                        meas = self.meas_from_state(st, self.n)
+                        if len(meas) >= self.n:
+                            return meas
+                t_last = st.get('sim_time_s', 0.0) if st else 0.0
+                raise RuntimeError(
+                    'FAST.Farm 提前退出（最后仿真时间 t=%.1f s，low_step=%d，'
+                    '目标 low_step=%d 未达到）——请检查 fastfarm_zmq.log'
+                    % (t_last, last_low, step))
+            time.sleep(poll)
+        raise TimeoutError('timed out waiting for low_step >= %d' % step)
+
+    def current_direction(self) -> float:
+        return self.wind_direction
+
+    def reset(self) -> None:
+        self._yaw_seq = [0] * self.n
+        self._ind_seq = [0] * self.n
+        self._warned = set()
+        self._heading_cache = {}
+
+    # -- 命令下发 -------------------------------------------------------------
+    def write(self, step: int, cmds: dict) -> None:
+        for tid, cmd in cmds.items():
+            if not (1 <= tid <= self.n):
+                continue
+            i = tid - 1
+            # 偏航：动作指令（CW+ 增量）直通；绝对目标为控制器内部表示，桥内换算
+            if cmd.yaw_delta_deg is not None:
+                self._send_yaw_delta(tid, i, cmd.yaw_delta_deg)
+            elif cmd.yaw_deg is not None:
+                self._send_yaw(tid, i, cmd.yaw_deg)
+            # 诱导：induction_a 直通
+            if cmd.induction_a is not None:
+                self._send_induction(tid, i, cmd.induction_a)
+
+    def _send_yaw_delta(self, tid: int, i: int, delta_deg: float) -> None:
+        """偏航动作指令直通（CW+ 增量，deg -> rad）。SCADA/RCP 语义。"""
+        self._yaw_seq[i] += 1
+        self.engine.send_yaw_delta(tid, math.radians(delta_deg),
+                                   seq=self._yaw_seq[i], ttl_s=60.0)
+
+    def _send_induction(self, tid: int, i: int, a: float) -> None:
+        """诱导因子直通（无量纲 a -> induction_ref）。"""
+        if a is None or a >= A_GREEDY - 1e-3:
+            return   # 满发（greedy）无需下令
+        self._ind_seq[i] += 1
+        self.engine.send_induction(tid, float(a), seq=self._ind_seq[i], ttl_s=30.0)
+
+    def _send_yaw(self, tid: int, i: int, target_deg: float) -> None:
+        hdg = self._heading_deg(tid)
+        if hdg is None:
+            self._warn_once(tid, 'nohdg',
+                            '尚无状态帧提供 T%d 机舱方位，本次 yaw 命令未发送' % tid)
+            return
+        delta_deg = _norm180_deg(target_deg - hdg)
+        self._yaw_seq[i] += 1
+        self.engine.send_yaw_delta(tid, math.radians(delta_deg),
+                                   seq=self._yaw_seq[i], ttl_s=60.0)
+
+    def _warn_once(self, tid: int, key: str, msg: str) -> None:
+        k = (tid, key)
+        if k not in self._warned:
+            _warnings.warn(msg, UserWarning, stacklevel=3)
+            self._warned.add(k)
+
+    # -- 状态转换 -------------------------------------------------------------
+    def _heading_deg(self, tid: int):
+        st = self._last_state
+        if st is not None and tid <= len(st.get('turbines', [])):
+            t = st['turbines'][tid - 1] or {}
+            if t.get('valid'):
+                h = t.get('nacelle_heading_rad', float('nan'))
+                if h == h and abs(h) <= 2.0 * math.pi:  # 合理性防御（含合并帧瞬时垃圾）
+                    deg = math.degrees(h)
+                    self._heading_cache[tid] = deg
+                    return deg
+        # 当前帧无效时回退到上次有效方位（合并帧瞬时缺失容忍）
+        return self._heading_cache.get(tid)
+
+    @staticmethod
+    def meas_from_state(state: dict, n_turbines: int) -> dict:
+        tstep = int(state.get('low_step', -1))   # 控制步（low-resolution step）
+        tsim = float(state.get('sim_time_s', 0.0))
+        turbs = state.get('turbines', [])
+        out = {}
+        for tid in range(1, n_turbines + 1):
+            if tid > len(turbs):
+                continue
+            t = turbs[tid - 1] or {}
+            valid = bool(t.get('valid'))
+            p_w = float(t.get('gen_power_w', 0.0) or 0.0)
+            gen_rads = float(t.get('gen_speed_rad_s', 0.0) or 0.0)
+            rot_rads = float(t.get('rotor_speed_rad_s', 0.0) or 0.0)
+            pitch_deg = 0.0
+            bp = t.get('blade_pitch_rad')
+            if bp:
+                pitch_deg = math.degrees(sum(bp) / max(1, len(bp)))
+            out[tid] = TurbineMeas(
+                turbine_id=tid,
+                step=tstep,
+                t=tsim,
+                genpwr_kw=p_w / 1e3 if valid else 0.0,
+                genspd_rpm=gen_rads * 30.0 / math.pi,
+                gentq_nm=0.0,
+                rotspd_rpm=rot_rads * 30.0 / math.pi,
+                wind_x=float(t.get('hub_wind_speed_mps', 0.0) or 0.0),
+                blpitch_deg=pitch_deg,
+                nacyaw_deg=math.degrees(float(t.get('nacelle_heading_rad', 0.0) or 0.0)),
+                mip1_knm=0.0,
+                moop1_knm=float(t.get('rotor_thrust_n', 0.0) or 0.0) / 1e3,
+                mzb1_knm=0.0,
+            )
+        return out
 
 
-def test_scheme_b_not_worse_than_greedy():
-    g = _greedy_traj()
-    from ..scheme_b import ControllerB
-    from ..scheme_b.enkf import EnKFConfig
-    from ..scheme_b.mpc import MPCConfig
-    case = default_case()
-    sur = SurrogateModel(case.layout_x, case.layout_y, prefer_floris=False)
-    def mk(case):
-        return ControllerB(ControlMode.YAW, sur, case.layout_x, case.layout_y,
-                           case.n_turbines,
-                           enkf_config=EnKFConfig(n_ensemble=16),
-                           mpc_config=MPCConfig(dt=DT, n_passes=1, yaw_refine_levels=1),
-                           seed=2)
-    b = _run(mk)
-    ev = Evaluator(transient_s=50.0)
-    gain = ev.gain_vs(b, g)
-    assert np.isfinite(gain["gain_pct"])
-    assert gain["gain_pct"] >= -1.0, f"Scheme B worse than greedy: {gain['gain_pct']:.2f}%"
+__all__ = ['ZmqFarmBridge']
 
 
-def test_scheme_c_safety_never_below_baseline():
-    """Scheme C rl_safety route must never fall below the physical baseline."""
-    g = _greedy_traj()
-    from ..scheme_c import ControllerC
-    from ..scheme_c.controller_c import SchemeCConfig
-    case = default_case()
-    sur = SurrogateModel(case.layout_x, case.layout_y, prefer_floris=False)
-    c = _run(lambda case: ControllerC(ControlMode.YAW, sur, case.layout_x,
-             case.layout_y, case.n_turbines,
-             config=SchemeCConfig(dt=DT, route="rl_safety"), seed=3))
-    ev = Evaluator(transient_s=50.0)
-    gain = ev.gain_vs(c, g)
-    assert gain["gain_pct"] >= -1.0, f"Scheme C below baseline: {gain['gain_pct']:.2f}%"
+class FastFarmZmqPlant(ZmqPlant):
+    """新架构 Plant：直接包装 FastFarmZmqEngine（ZeroMQ 通道）。
 
+    用法：
+        from wfcrl.engine.fastfarm_zmq import FastFarmZmqEngine
+        engine = FastFarmZmqEngine(config)
+        engine.setup(); engine.start()
+        plant = FastFarmZmqPlant(engine, n_turbines=6, wind_direction=270.0)
+        runner = ClosedLoopRunner(plant, controller, sensing)
+    """
 
-def test_all_control_modes_run():
-    """All 5 modes instantiate and produce bounded commands (Scheme A)."""
-    from ..scheme_a import ControllerA
-    case = default_case()
-    for mode in ControlMode:
-        sur = SurrogateModel(case.layout_x, case.layout_y, prefer_floris=False)
-        traj = _run(lambda case: ControllerA(mode, sur, case.n_turbines),
-                    n=50, mode=int(mode))
-        P = traj.P
-        assert np.all(np.isfinite(P)), f"mode {mode} produced non-finite power"
-        yaw = np.array(traj.yaw)
-        assert np.all(np.abs(yaw) <= 30.5), f"mode {mode} yaw out of bounds"
-
-
-def test_no_divergence_long_run():
-    """A longer greedy run stays finite and bounded."""
-    traj = _greedy_traj(n=150)
-    assert np.all(np.isfinite(traj.P))
-    assert traj.P_farm.max() < 1e5
-
-
-# ---------------------------------------------------------------------------
-def _run_all():
-    tests = [v for k, v in globals().items() if k.startswith("test_")]
-    passed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"PASS  {t.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"FAIL  {t.__name__}: {e}")
-        except Exception as e:
-            print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
-    print(f"\n{passed}/{len(tests)} smoke tests passed")
-    return passed == len(tests)
-
-
-if __name__ == "__main__":
-    import sys
-    sys.exit(0 if _run_all() else 1)
+    def __init__(self, engine, n_turbines: int, wind_direction: float = 270.0,
+                 step_timeout: float = 120.0):
+        bridge = ZmqFarmBridge(engine, n_turbines, wind_direction=wind_direction)
+        super().__init__(bridge, step_timeout=step_timeout)
+        self.engine = engine
