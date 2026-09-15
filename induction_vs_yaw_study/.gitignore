@@ -1,0 +1,8 @@
+# 生成物不入库（V2 约束 2：产出在 study 下，但大体积/可再生内容不提交）
+FarmInputs/
+results/
+*.bts
+*.inp
+*.sum
+*.log
+__pycache__/
