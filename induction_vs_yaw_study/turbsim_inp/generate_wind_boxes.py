@@ -205,7 +205,8 @@ def build_inp_text(cfg: dict, speed: float, ti: float, seed_id: int) -> str:
     )
 
 
-def run_turbsim(exe: Path, inp_path: Path, timeout_s: int = 14400) -> int:
+def run_turbsim(exe: Path, inp_path: Path, timeout_s: Optional[int] = None) -> int:
+    # 实测该尺寸盒 TurbSim 需 ~4h+；设 None 表示不限时（宁可等待，不可误杀）
     """在 inp 所在目录运行 TurbSim（输出 .bts 与 .inp 同名同目录）。"""
     return subprocess.run(
         [str(exe), inp_path.name], cwd=str(inp_path.parent),
