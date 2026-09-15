@@ -47,14 +47,18 @@ def _series(ts: dict, spec: str):
     """
     y = np.asarray(ts["y"], dtype=float)
     z = np.asarray(ts["z"], dtype=float)
-    arr = np.asarray(ts[spec], dtype=float)
     iy = int(np.argmin(np.abs(y - 0.0)))
     iz = int(np.argmin(np.abs(z - 90.0)))
+    comp = {"u": 0, "v": 1, "w": 2}
+    # openfast_toolbox 3.5.1：u/v/w 堆叠在 'u' 键，shape (3, T, NY, NZ)
+    arr = np.asarray(ts.get(spec, ts["u"]), dtype=float)
+    if arr.ndim == 4 and arr.shape[0] == 3:
+        return arr[comp[spec], :, iy, iz]   # (3, T, NY, NZ) 堆叠布局
     if arr.ndim == 3:
         if len(y) == arr.shape[2] and len(z) == arr.shape[1]:
-            return arr[:, iz, iy]          # (t, z, y)
+            return arr[:, iz, iy]           # (T, Z, Y)
         if len(y) == arr.shape[1] and len(z) == arr.shape[0]:
-            return arr[iz, iy, :]          # (z, y, t)
+            return arr[iz, iy, :]           # (Z, Y, T)
     raise ValueError(f"unexpected {spec} shape {arr.shape} (y={y.shape}, z={z.shape})")
 
 
