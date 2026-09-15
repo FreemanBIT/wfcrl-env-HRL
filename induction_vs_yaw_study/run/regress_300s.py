@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 # 必须在导入 wfcrl.engine 之前设置（wfcrl/engine/_ff_case.py 模块级读取）
-_STUDY_ROOT = Path(__file__).resolve().parents[2]
+_STUDY_ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault(
     "WFCRL_FARMINPUTS_DIR", str(_STUDY_ROOT / "FarmInputs"),
 )

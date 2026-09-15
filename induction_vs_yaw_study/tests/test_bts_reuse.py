@@ -14,7 +14,7 @@ from induction_vs_yaw_study.cases.three_nrel5mw import (
     iter_seeded_cases, n_cases, n_seeded_cases, Case,
 )
 
-STUDY_ROOT = Path(__file__).resolve().parents[2]
+STUDY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_seed_name_format():

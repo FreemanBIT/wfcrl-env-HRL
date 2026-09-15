@@ -84,7 +84,8 @@ def resolve_bts_file(
     - require_exists=True 时要求文件实际存在（找不到返回 None）；
     - fine=True 时查 FarmInputs/fine/（DEL 阶段精细盒）。
     """
-    name = bts_name(wind_speed_ms, turbulence_intensity, seed_id) + ".bts"
+    # bts_name 已含 .bts 后缀（seed 键新样式）；勿再拼接
+    name = bts_name(wind_speed_ms, turbulence_intensity, seed_id)
     base = _FINE_DIR if fine else _COARSE_DIR
     if require_exists and not (base / name).exists():
         return None
@@ -340,7 +341,7 @@ def make_fastfarm_config(
     else:
         expected = bts_name(case.wind_speed_ms, case.turbulence_intensity, case.seed_id)
         msg = (f"No matching .bts for U={case.wind_speed_ms} TI={case.turbulence_intensity} "
-               f"seed={case.seed_id} (expected '{expected}.bts' in {_COARSE_DIR}). "
+               f"seed={case.seed_id} (expected '{expected}' in {_COARSE_DIR}). "
                f"Generate it with generate_wind_boxes.py (或设 strict_inflow=False 回退稳态，不推荐)。")
         if strict_inflow:
             raise FileNotFoundError(msg)

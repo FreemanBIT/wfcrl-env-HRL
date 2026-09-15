@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-STUDY_ROOT = Path(__file__).resolve().parents[2]
+STUDY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = STUDY_ROOT / "FarmInputs" / "coarse"
 DEFAULT_CONFIG = STUDY_ROOT / "config" / "wind_conditions.yaml"
 DEFAULT_QA_OUT = STUDY_ROOT / "FarmInputs" / "qa"

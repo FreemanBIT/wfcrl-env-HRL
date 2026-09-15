@@ -25,7 +25,7 @@ from pathlib import Path
 
 import yaml
 
-STUDY_ROOT = Path(__file__).resolve().parents[2]
+STUDY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = STUDY_ROOT / "config" / "wind_conditions.yaml"
 DEFAULT_OUT = STUDY_ROOT / "FarmInputs" / "coarse"
 DEFAULT_MANIFEST = STUDY_ROOT / "config" / "seed_manifest.csv"
@@ -146,7 +146,8 @@ def write_seed_manifest(path: Path, seeds) -> None:
     print(f"seed manifest -> {path}")
 
 
-def bts_name(speed: float, ti: float, seed_id: int) -> str:
+def inp_stem(speed: float, ti: float, seed_id: int) -> str:
+    """TurbSim 输入/输出根名（不含扩展名；TurbSim 产出 {stem}.bts）。"""
     s = int(round(speed))
     t = int(round(ti * 100))
     return f"inflow_U{s:02d}_TI{t:02d}_seed{int(seed_id):02d}"
@@ -228,17 +229,24 @@ def main():
     for seed_id in seeds:
         for speed in speeds:
             for ti in tis:
-                name = bts_name(speed, ti, seed_id)
+                stem = inp_stem(speed, ti, seed_id)
                 txt = build_inp_text(cfg, speed, ti, seed_id)
-                p = out / f"{name}.inp"
+                p = out / f"{stem}.inp"
                 p.write_text(txt, encoding="ascii")
                 inps.append(p)
     print(f"Wrote {len(inps)} .inp")
 
     if args.run:
-        exe = args.turbsim or (STUDY_ROOT.parent / "FarmInputs" / "TurbSim_x64.exe")
-        if not Path(exe).exists():
-            ap.error(f"TurbSim exe not found: {exe}")
+        if args.turbsim:
+            exe = Path(args.turbsim)
+        else:
+            exe = next((p for p in (
+                STUDY_ROOT / "FarmInputs" / "TurbSim_x64.exe",
+                Path(r"D:\OpenFAST\Turbsim\bin\TurbSim_x64.exe"),
+                Path(r"D:\HR_Project\wfcrl-env-HRL\FarmInputs\TurbSim_x64.exe"),
+            ) if p.exists()), None)
+        if exe is None:
+            ap.error("TurbSim exe not found (用 --turbsim 指定)")
         def _one(p: Path):
             print(f"== TurbSim: {p.name} ==", flush=True)
             rc = run_turbsim(Path(exe), p)

@@ -21,7 +21,7 @@ from induction_vs_yaw_study.cases.three_nrel5mw import (
     load_grid, iter_seeded_cases, resolve_bts_file,
 )
 
-STUDY_ROOT = Path(__file__).resolve().parents[2]
+STUDY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = STUDY_ROOT / "config" / "wind_conditions.yaml"
 DEFAULT_OUT = STUDY_ROOT / "results" / "_manifests" / "case_manifest.csv"
 QA_CSV = STUDY_ROOT / "FarmInputs" / "qa" / "wind_box_metrics.csv"
