@@ -35,6 +35,9 @@ def main():
     ap.add_argument("--subset", action="store_true", help="只跑冒烟子集")
     ap.add_argument("--only", choices=["yaw", "derating"], default=None)
     ap.add_argument("--grid", default=None, help="自定义 grid.yaml 路径")
+    ap.add_argument("--quick", action="store_true",
+                    help="快速第一版：降额粗网格 step=0.1 且跳过 Nelder-Mead 细化"
+                         "（默认全精度 step=0.05+细化，每工况 ~270 次模型重建，很慢）")
     args = ap.parse_args()
 
     grid = load_grid(args.grid)
@@ -47,10 +50,13 @@ def main():
 
     lut = empty_lut()
 
+    der_step = 0.1 if args.quick else ds.get("ratio_grid_step", 0.05)
+    der_refine = not args.quick
+
     for k, case in enumerate(cases, 1):
         print(f"\n[{k}/{len(cases)}] case {case.id}  "
               f"U={case.wind_speed_ms} wd+{case.wind_direction_offset_deg} "
-              f"TI={case.turbulence_intensity} s={case.spacing_D}D")
+              f"TI={case.turbulence_intensity} s={case.spacing_D}D", flush=True)
 
         # ---- 偏航 ----
         if args.only in (None, "yaw"):
@@ -92,7 +98,8 @@ def main():
                 der_res = optimize_derating(
                     case,
                     ratio_min=ds.get("ratio_min", 0.4),
-                    ratio_grid_step=ds.get("ratio_grid_step", 0.05),
+                    ratio_grid_step=der_step,
+                    refine=der_refine,
                 )
                 print(f"  derating opt: ratios={['%.2f'%r for r in der_res['ratios']]} "
                       f"P(MW)={['%.2f'%p for p in der_res['power_target_mw']]} "
