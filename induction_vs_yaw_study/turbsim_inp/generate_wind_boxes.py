@@ -153,18 +153,38 @@ def inp_stem(speed: float, ti: float, seed_id: int) -> str:
     return f"inflow_U{s:02d}_TI{t:02d}_seed{int(seed_id):02d}"
 
 
+def analysis_time_for(cfg: dict, speed: float) -> float:
+    """按风速自适应 AnalysisTime（覆盖 1200s DOE + 尾流平流）。
+
+    需要覆盖的查询时刻 = Tsim(1200) + margin + (x_span_max / U)，
+    x_span = 首个风机前 ~1D 至末台后 12D（8D 间距最严 ≈ 29D = 3654 m）。
+    以 config 的 analysis_time_s 为下限，向上取整到 50s。
+    """
+    tb = cfg["turbsim"]
+    doe = cfg.get("doe", {})
+    tsim = float(doe.get("simulation_time_s", 1200.0))
+    margin = float(doe.get("margin_s", 120.0))
+    max_s = float(doe.get("max_spacing_D", 8.0))
+    D = 126.0  # NREL 5MW 转子直径（与 constants 一致）
+    x_span = (2.0 * max_s + 13.0) * D
+    needed = tsim + margin + x_span / max(speed, 1.0)
+    floor = float(tb.get("analysis_time_s", needed))
+    return float(max(floor, math.ceil(needed / 50.0) * 50.0))
+
+
 def build_inp_text(cfg: dict, speed: float, ti: float, seed_id: int) -> str:
     tb = cfg["turbsim"]
     width = float(tb["grid_width_m"])
     ny = numgrid_y_for(width, float(tb["target_grid_spacing_m"]))
     rs1 = read_seed_manifest(DEFAULT_MANIFEST)[int(seed_id)]
+    analysis_time = analysis_time_for(cfg, speed)
     return TEMPLATE.format(
         seed=rs1,
         seed2=seed2_of(rs1),
         numgrid_z=int(tb["num_grid_z"]),
         numgrid_y=ny,
         time_step=float(tb["time_step_s"]),
-        analysis_time=float(tb["analysis_time_s"]),
+        analysis_time=analysis_time,
         usable_time=tb["usable_time"],
         hub_ht=float(tb["artificial_hub_height_m"]),
         grid_height=float(tb["grid_height_m"]),
@@ -185,7 +205,7 @@ def build_inp_text(cfg: dict, speed: float, ti: float, seed_id: int) -> str:
     )
 
 
-def run_turbsim(exe: Path, inp_path: Path, timeout_s: int = 7200) -> int:
+def run_turbsim(exe: Path, inp_path: Path, timeout_s: int = 14400) -> int:
     """在 inp 所在目录运行 TurbSim（输出 .bts 与 .inp 同名同目录）。"""
     return subprocess.run(
         [str(exe), inp_path.name], cwd=str(inp_path.parent),
@@ -222,6 +242,8 @@ def main():
                        float(cfg["turbsim"]["target_grid_spacing_m"]))
     dy = float(cfg["turbsim"]["grid_width_m"]) / (ny - 1)
     print(f"Box: W={cfg['turbsim']['grid_width_m']} m, NumGrid_Y={ny}, dY={dy:.2f} m")
+    for _u in speeds:
+        print(f"  U={_u:g}: AnalysisTime={analysis_time_for(cfg, _u):.0f} s")
     print(f"Generating {len(speeds)}U x {len(tis)}TI x {len(seeds)}seed "
           f"= {len(speeds)*len(tis)*len(seeds)} .inp -> {out.resolve()}")
 

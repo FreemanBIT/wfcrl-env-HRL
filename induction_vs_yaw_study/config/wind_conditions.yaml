@@ -15,7 +15,7 @@ turbsim:
   grid_bottom_m: 5.0
   target_grid_spacing_m: 9.0       # coarse 验收 8 <= dy,dz <= 10
   num_grid_z: 40
-  analysis_time_s: 1600.0          # >= Tsim(1200) + GridWidth/min_U(250) + 余量；6m/s 最严
+  analysis_time_s: 1600.0          # 下限；实际按 doe 参数随 U 自适应（见 generate_wind_boxes.analysis_time_for）
   usable_time: "ALL"
   time_step_s: 0.10                # TurbSim 内部=输出步长 0.1s（旧盒实证 .bts=10Hz；0.05 徒增一倍生成时长）
   vertical_flow_angle_deg: 0.0
@@ -29,6 +29,14 @@ turbsim:
     incdec_2: "12.0 0.00035273"
     incdec_3: "12.0 0.00035273"
     coh_exp: 0.0
+
+# DOE 时长：风盒时间轴须覆盖 1200s 仿真 + 尾流平流（8D 最严 ~29D）。
+doe:
+  simulation_time_s: 1200.0   # t_settle(600) + n_control_steps(200) * dt(3.0)
+  settling_time_s: 600.0
+  n_control_steps: 200
+  margin_s: 120.0
+  max_spacing_D: 8.0
 
 # 12 m/s（Region III，额定风速 11.4 m/s 之上）：
 #   机组进入额定功率平台（桨距控制）+ Ct 下降 -> 尾流减弱、可控收益变小；
