@@ -17,7 +17,7 @@ turbsim:
   num_grid_z: 40
   analysis_time_s: 1600.0          # >= Tsim(1200) + GridWidth/min_U(250) + 余量；6m/s 最严
   usable_time: "ALL"
-  time_step_s: 0.05                # TurbSim 内部步长（旧盒实证 .bts 输出步长 ~0.1s）
+  time_step_s: 0.10                # TurbSim 内部=输出步长 0.1s（旧盒实证 .bts=10Hz；0.05 徒增一倍生成时长）
   vertical_flow_angle_deg: 0.0
   horizontal_flow_angle_deg: 0.0
   shear_power_law_exponent: 0.0    # 主实验；0.2 剪切敏感性后续再加
