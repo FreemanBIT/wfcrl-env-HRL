@@ -1,0 +1,22 @@
+# experiment.yaml — DOE 组合与批跑参数（开发计划 §5）
+# 约束 1：风向仅 {0,10,20}（负风向与正风向对称，效果一致，不测）
+wind_direction_offsets_deg: [0.0, 10.0, 20.0]
+spacings_D: [2.0, 4.0, 6.0, 8.0]
+
+controls: [baseline, yaw, induction]
+
+floris:
+  dt: 60.0
+  max_iter: 3
+
+fastfarm:
+  dt: 3.0
+  t_settle_s: 600.0                # 显式结算窗口起点（0-600 行波+机组过渡）
+  n_control_steps: 200             # 600-1200 s 统计窗口（200 步 x 3s）
+
+batch:
+  workers: 4                       # 并行 FAST.Farm 实例数（实现阶段压测后调优）
+  max_retries: 2
+  cmd_port_base: 5556
+  state_port_base: 5557
+  wind_time_series_default: null   # null -> 全部走 (U,TI,seed) 解析盒

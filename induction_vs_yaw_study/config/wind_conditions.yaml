@@ -1,0 +1,35 @@
+# wind_conditions.yaml — 风工质统一配置（开发计划 §4.1 / 方案 V2 §4-§8）
+# 约束 4：风速集 {6, 8, 10, 12}；约束 1：风向仅 {0,10,20}（风向在 experiment.yaml/grid.yaml）
+# 约束 3：不依赖任何旧盒；全部盒按 (U, TI, seed) 唯一键生成到 FarmInputs/coarse/
+wind_speeds_ms: [6.0, 8.0, 10.0, 12.0]
+turbulence_intensities: [0.05, 0.10, 0.15]
+seeds: [1, 2, 3, 4, 5, 6]          # seed_id -> rand_seed_1 见 config/seed_manifest.csv
+
+turbsim:
+  turbulence_model: IECKAI
+  iec_wind_type: NTM
+  hub_height_ref_m: 90.0
+  artificial_hub_height_m: 175.0   # 仅 TurbSim 网格定位；绝不改 turbine 轮毂高度(90m)
+  grid_width_m: 1500.0             # 统一盒宽，覆盖 8D/20° 最不利几何（~±345 m + 转子/走廊/蜿蜒余量）
+  grid_height_m: 340.0
+  grid_bottom_m: 5.0
+  target_grid_spacing_m: 9.0       # coarse 验收 8 <= dy,dz <= 10
+  num_grid_z: 40
+  analysis_time_s: 1600.0          # >= Tsim(1200) + GridWidth/min_U(250) + 余量；6m/s 最严
+  usable_time: "ALL"
+  time_step_s: 0.05                # TurbSim 内部步长（旧盒实证 .bts 输出步长 ~0.1s）
+  vertical_flow_angle_deg: 0.0
+  horizontal_flow_angle_deg: 0.0
+  shear_power_law_exponent: 0.0    # 主实验；0.2 剪切敏感性后续再加
+  coherence:
+    scmod_1: IEC
+    scmod_2: IEC
+    scmod_3: IEC
+    incdec_1: "12.0 0.00035273"
+    incdec_2: "12.0 0.00035273"
+    incdec_3: "12.0 0.00035273"
+    coh_exp: 0.0
+
+# 12 m/s（Region III，额定风速 11.4 m/s 之上）：
+#   机组进入额定功率平台（桨距控制）+ Ct 下降 -> 尾流减弱、可控收益变小；
+#   分析按 Region II/III 分层，12m/s 的 derating LUT 可能退回 ratio=1。
