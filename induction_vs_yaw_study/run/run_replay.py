@@ -30,7 +30,7 @@ from induction_vs_yaw_study.replay.fastfarm_replay import replay_fastfarm
 
 
 def _dirs():
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]  # study 根（约束 2：产出全在 study 下）
     ts = root / "results" / "timeseries"
     ts.mkdir(parents=True, exist_ok=True)
     return root, ts

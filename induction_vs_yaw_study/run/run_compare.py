@@ -83,7 +83,7 @@ def _write_report(summary: pd.DataFrame, fig_paths, out_md: Path):
 
 
 def main():
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]  # study 根（约束 2：产出全在 study 下）
     ts_dir = root / "results" / "timeseries"
     fig_dir = root / "results" / "figures"
     grid = load_grid()

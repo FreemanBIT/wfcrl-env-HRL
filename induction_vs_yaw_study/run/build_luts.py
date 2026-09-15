@@ -24,7 +24,7 @@ from induction_vs_yaw_study.lut.schema import empty_lut, append_row, save_lut
 
 
 def _results_dir() -> Path:
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]  # study 根（约束 2：产出全在 study 下）
     d = root / "results" / "luts"
     d.mkdir(parents=True, exist_ok=True)
     return d
