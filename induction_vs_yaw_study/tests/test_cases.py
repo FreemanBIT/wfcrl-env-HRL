@@ -1,9 +1,8 @@
 """
-test_cases.py — Stage 2 算例与网格测试
-======================================
+test_cases.py — Stage 2 算例与网格测试（V2：4U x 3TI x 3WD x 4S，seed 键 BTS）
+==========================================
 运行：pytest induction_vs_yaw_study/tests/test_cases.py -v
 """
-
 from __future__ import annotations
 
 import numpy as np
@@ -32,11 +31,11 @@ def test_base_spacing_is_4D():
     assert C.BASE_SPACING_D == pytest.approx(4.0)
 
 
-# ---- case_id 唯一且稳定 ----
+# ---- case_id 唯一且稳定（含 seed）----
 
 def test_case_id_stable():
-    c1 = Case(8.0, 0.0, 0.06, 6.0)
-    c2 = Case(8.0, 0.0, 0.06, 6.0)
+    c1 = Case(8.0, 0.0, 0.06, 6.0, seed_id=1)
+    c2 = Case(8.0, 0.0, 0.06, 6.0, seed_id=1)
     assert case_id(c1) == case_id(c2)  # 稳定
 
 
@@ -55,19 +54,19 @@ def test_wind_direction_offset():
     assert c2.wind_direction_deg == pytest.approx(290.0)
 
 
-# ---- 入流映射 (speed, TI) ----
+# ---- 入流映射（旧样式兼容 + V2 seed 键见 test_bts_reuse）----
 
-def test_bts_naming():
-    # 与用户示例一致：inflow_06ms_TI05.bts
+def test_bts_naming_legacy():
+    # 与用户旧示例一致（seed_id=None 保持兼容）：inflow_06ms_TI05.bts
     assert bts_name(6.0, 0.05) == "inflow_06ms_TI05.bts"
     assert bts_name(10.0, 0.15) == "inflow_10ms_TI15.bts"
     assert bts_name(8.0, 0.10) == "inflow_08ms_TI10.bts"
 
 
 def test_available_bts_covers_grid():
-    # 9 个组合：风速{6,8,10} × TI{0.05,0.10,0.15}
-    assert len(AVAILABLE_BTS) == 9
-    for s in (6.0, 8.0, 10.0):
+    # V2：4 风速{6,8,10,12} x 3 TI{0.05,0.10,0.15} = 12（旧样式兼容表）
+    assert len(AVAILABLE_BTS) == 12
+    for s in (6.0, 8.0, 10.0, 12.0):
         for ti in (0.05, 0.10, 0.15):
             assert (s, ti) in AVAILABLE_BTS
 
@@ -84,12 +83,11 @@ def test_inflow_no_match_returns_none():
     assert inflow_bts_for_case(7.0, 0.10, require_exists=False) is None
 
 
-# ---- 网格规模 ----
+# ---- 网格规模（V2：4U x 3WD x 3TI x 4S = 144；不展开 seed）----
 
 def test_grid_size():
     grid = load_grid()
-    # 3 风速 × 5 风向 × 3 TI × 4 间距 = 180
     n_full = n_cases(grid, subset=False)
     n_sub = n_cases(grid, subset=True)
-    assert n_full == 180
+    assert n_full == 144
     assert n_sub == 1
