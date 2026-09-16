@@ -88,6 +88,12 @@ def main():
             print("FAIL no-output")
             return 1
         out.to_csv(str(case_dir / "timeseries.csv"))
+        # P2-1：case 级 metadata
+        try:
+            from induction_vs_yaw_study.run.provenance import write_case_metadata
+            write_case_metadata(case_dir, row, ff_cfg)
+        except Exception:
+            pass
         print(f"OK {row['case_id']} {row['control']} wall={time.time()-t0:.0f}s")
         return 0
     except Exception as e:  # noqa

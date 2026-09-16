@@ -135,6 +135,13 @@ def main():
     out_dir = args.out or (_STUDY_ROOT / "results" / ("run_%s" % time.strftime("%Y%m%d_%H%M%S")))
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # P2-1：run 级 provenance
+    from induction_vs_yaw_study.run.provenance import write_run_provenance
+    write_run_provenance(out_dir, extra={
+        "manifest": str(args.manifest), "workers": args.workers,
+        "max_retries": args.max_retries, "filter": args.filter,
+    })
+
     global args_exp, args_lut
     args_exp, args_lut = args.experiment, args.lut
     lut = None  # LUT 由 _case_worker 子进程按 --lut 自行加载
