@@ -204,15 +204,20 @@ def _state_frame_output(state_rows, dt, n_total, final, aborted):
 
     time = np.arange(1, len(state_rows) + 1) * dt
     n = len(state_rows)
-    p_mw = np.full((n, 3), np.nan)
-    yaw = np.full((n, 3), np.nan)
-    pitch = np.full((n, 3), np.nan)
-    rps = np.full((n, 3), np.nan)
-    wnd = np.full((n, 3), np.nan)
+    # 列数 = 状态帧中实际出现的最大 turbine_id（3T=3 列，1T=1 列；避免恒 NaN 列）
+    nt_cols = 1
+    for st in state_rows:
+        for t in st.get("turbines", []):
+            nt_cols = max(nt_cols, int(t.get("turbine_id", 1)))
+    p_mw = np.full((n, nt_cols), np.nan)
+    yaw = np.full((n, nt_cols), np.nan)
+    pitch = np.full((n, nt_cols), np.nan)
+    rps = np.full((n, nt_cols), np.nan)
+    wnd = np.full((n, nt_cols), np.nan)
     for i, st in enumerate(state_rows):
         for t in st.get("turbines", []):
             tid = int(t.get("turbine_id", 0)) - 1
-            if not (0 <= tid < 3):
+            if not (0 <= tid < nt_cols):
                 continue
             p_mw[i, tid] = float(t.get("gen_power_w", np.nan)) / 1e6
             yaw[i, tid] = float(t.get("nacelle_heading_rad", np.nan)) * 180.0 / np.pi
