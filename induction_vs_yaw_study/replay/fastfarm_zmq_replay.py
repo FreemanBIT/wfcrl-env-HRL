@@ -62,7 +62,7 @@ def replay_fastfarm_zmq(
         cfg.wind = WindConfig(speed=w0.speed, direction=w0.direction,
                               wind_type=WindType.TURBSIM_BTS, wind_file=wind_time_series)
 
-    n_turbines = 3
+    n_turbines = int(getattr(case, "n_turbines", 3))
     # 总控制步数由 t_sim/control_dt 派生（审查 P0-5）
     n_total = max(1, int(getattr(case, "n_total_control_steps", cfg.max_iter)))
     wind_dir = float(cfg.wind.direction)

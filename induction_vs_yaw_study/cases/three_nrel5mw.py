@@ -152,6 +152,7 @@ class Case:
     turbulence_intensity: float
     spacing_D: float
     seed_id: int = 1
+    n_turbines: int = 3          # 1 用于标定/时间步测试
     # 仿真参数（从 grid.yaml 注入；审查 P0-5：时长只存 t_sim/t_settle/control_dt，计数派生）
     floris_dt: float = 60.0
     floris_max_iter: int = 3
@@ -357,7 +358,8 @@ def make_fastfarm_config(
     约束 3/5：新盒只位于 study/FarmInputs/（WFCRL_FARMINPUTS_DIR 注入解析）；
     无匹配盒时 strict_inflow=True 抛错（拒绝悄悄回退稳态，TI 维度失真）。
     """
-    xs, ys = layout_for_case(case.spacing_D, case.wind_direction_offset_deg, n_turbines=3)
+    n_t = int(getattr(case, "n_turbines", 3))
+    xs, ys = layout_for_case(case.spacing_D, case.wind_direction_offset_deg, n_turbines=n_t)
 
     bts = resolve_bts_file(
         case.wind_speed_ms, case.turbulence_intensity, case.seed_id,
@@ -402,7 +404,7 @@ def make_fastfarm_config(
     max_iter = case.n_total_control_steps
     cfg = FastFarmConfig(
         case_name=f"ff_{case.id}",
-        num_turbines=3,
+        num_turbines=n_t,
         xcoords=xs, ycoords=ys,
         dt=case.control_dt_s,
         max_iter=max_iter,

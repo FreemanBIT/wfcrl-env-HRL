@@ -153,13 +153,16 @@ def inp_stem(speed: float, ti: float, seed_id: int) -> str:
     return f"inflow_U{s:02d}_TI{t:02d}_seed{int(seed_id):02d}"
 
 
-def analysis_time_for(cfg: dict, speed: float) -> float:
+def analysis_time_for(cfg: dict, speed: float, override_s: Optional[float] = None) -> float:
     """按风速自适应 AnalysisTime（覆盖 1200s DOE + 尾流平流）。
 
     需要覆盖的查询时刻 = Tsim(1200) + margin + (x_span_max / U)，
     x_span = 首个风机前 ~1D 至末台后 12D（8D 间距最严 ≈ 29D = 3654 m）。
     以 config 的 analysis_time_s 为下限，向上取整到 50s。
+    --analysis-time 覆盖用于 Timestep Compatibility Test 的短盒。
     """
+    if override_s is not None:
+        return float(override_s)
     tb = cfg["turbsim"]
     doe = cfg.get("doe", {})
     tsim = float(doe.get("simulation_time_s", 1200.0))
@@ -172,12 +175,16 @@ def analysis_time_for(cfg: dict, speed: float) -> float:
     return float(max(floor, math.ceil(needed / 50.0) * 50.0))
 
 
-def build_inp_text(cfg: dict, speed: float, ti: float, seed_id: int) -> str:
-    tb = cfg["turbsim"]
+def build_inp_text(cfg: dict, speed: float, ti: float, seed_id: int,
+                    analysis_override: Optional[float] = None,
+                    dt_override: Optional[float] = None) -> str:
+    tb = dict(cfg["turbsim"])
+    if dt_override is not None:
+        tb = {**tb, "time_step_s": float(dt_override)}
     width = float(tb["grid_width_m"])
     ny = numgrid_y_for(width, float(tb["target_grid_spacing_m"]))
     rs1 = read_seed_manifest(DEFAULT_MANIFEST)[int(seed_id)]
-    analysis_time = analysis_time_for(cfg, speed)
+    analysis_time = analysis_time_for(cfg, speed, analysis_override)
     return TEMPLATE.format(
         seed=rs1,
         seed2=seed2_of(rs1),
@@ -225,6 +232,10 @@ def main():
     ap.add_argument("--turbsim", type=Path, default=None,
                     help="TurbSim 可执行文件路径（--run 时必需）")
     ap.add_argument("--jobs", type=int, default=1, help="--run 并行实例数")
+    ap.add_argument("--analysis-time", type=float, default=None,
+                    help="覆盖 AnalysisTime（Timestep Compatibility Test 短盒用）")
+    ap.add_argument("--time-step", type=float, default=None,
+                    help="覆盖 TurbSim TimeStep（=bts dt；Timestep 测试用 0.05/0.01）")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -253,7 +264,8 @@ def main():
         for speed in speeds:
             for ti in tis:
                 stem = inp_stem(speed, ti, seed_id)
-                txt = build_inp_text(cfg, speed, ti, seed_id)
+                txt = build_inp_text(cfg, speed, ti, seed_id,
+                                     args.analysis_time, args.time_step)
                 p = out / f"{stem}.inp"
                 p.write_text(txt, encoding="ascii")
                 inps.append(p)
