@@ -73,13 +73,15 @@ def main():
         print(f"  yaw {y:+5.1f}° -> " + ", ".join(f"{k}={v:.2f}" for k, v in a.items())
               + f"  wall={time.time()-t0:.0f}s", flush=True)
 
-    out_csv = args.out / "yaw_sign_calibration.csv"
+    # 按 WD 分文件（多 WD 标定时不得互相覆盖）
+    wd_tag = str(args.wd).replace("-", "m").replace(".0", "")
+    out_csv = args.out / f"yaw_sign_calibration_wd{wd_tag}.csv"
     with open(out_csv, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["yaw_deg", "farm_kw", "t1_kw", "t2_kw",
-                                          "t3_kw", "wt2_wind", "wall_s"])
+        w = csv.DictWriter(f, fieldnames=["wd", "yaw_deg", "farm_kw", "t1_kw",
+                                          "t2_kw", "t3_kw", "wt2_wind", "wall_s"])
         w.writeheader()
         for r_ in rows:
-            w.writerow(r_)
+            w.writerow({"wd": args.wd, **r_})
     print(f"-> {out_csv}")
 
 
