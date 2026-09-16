@@ -18,6 +18,16 @@
 | 14 | BTS 共享引用 | ✅ | engine 只引用源盒 |
 | 15 | pilot DOE 通过 | ⬜ | 缺 U8 盒（5/18）+ 全精度 LUT 可跑（quick LUT 已有） |
 
+
+## DEL 多机 .outb 通道（2026-09-16 定位解决）
+- 根因实证：ZMQ 客户端在线（引擎轮询状态）时，集成 FAST.Farm 只写 Case.T1.outb（T2/T3 缺失；
+  先关客户端再收尾还会触发 FAST.Farm 0xC0000005 崩溃）。
+- 解决：**乙模式 = 无客户端 direct exe 运行** -> 正常收尾且 Case.T1/T2/T3.outb 全部写出。
+- 落地：run/outb_only_run.py（direct exe + 解析多机 outb -> 原始高频 CSV + summary），
+  无须修改 wfcrl 源码（case 由 ContinuousFastFarmInterface 生成后直接 exe）。
+- 载荷通道：turbine .fst OutList 现缺 blade/tower 载荷通道（RootMyb/RotThrust 等）——
+  Phase 7 时对生成 case 的 WT*.fst 追加载荷 OutList 即可（仍在 study 侧）。
+- 分工：功率统计=ZMQ 模式（全机状态）；DEL/载荷=乙模式（全机 outb，代表 case）。
 ## 工程里程碑（今日）：
 - 批跑器子进程化（_case_worker）：libzmq 致命 assert 只杀单 case；quick smoke 验证（baseline/yaw ok）
 - 自动随机端口：TIME_WAIT "Address in use" 根治
