@@ -162,6 +162,22 @@ def replay_fastfarm_zmq(
 
     out = _state_frame_output(state_rows, cfg.dt, n_total, final, aborted)
     out = _attach_control_inputs(out, yaw_cmd, ratio, ptgt)
+    if state_rows and output_dir:
+        # 保存原始 ZMQ 状态（含 rotor_ct/cp 等），供标定/诊断读取
+        try:
+            import json as _json
+            slim = []
+            for st in state_rows:
+                slim.append([{k: t.get(k) for k in (
+                    "turbine_id", "gen_power_w", "rotor_ct", "rotor_cp",
+                    "nacelle_heading_rad", "blade_pitch_rad", "rotor_speed_rad_s",
+                    "hub_wind_speed_mps", "disk_ambient_wind_mps")}
+                    for t in st.get("turbines", [])])
+            with open(_os.path.join(output_dir, "zmq_state_rows.json"), "w",
+                      encoding="utf-8") as f:
+                _json.dump(slim, f)
+        except Exception:
+            pass
     if out is not None and aborted:
         md = dict(out.metadata or {})
         md["aborted"] = True
