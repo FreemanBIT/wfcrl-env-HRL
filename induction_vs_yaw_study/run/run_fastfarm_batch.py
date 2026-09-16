@@ -84,28 +84,34 @@ def _write_status_row(status_path: Path, row, res, wall_s: float) -> None:
 
 
 def _run_one(row, lut, ff_cfg, out_dir: Path, ports) -> dict:
-    case = _case_from_row(row, ff_cfg)
-    if not row.get("bts_file"):
-        return {"ok": False, "error": "no bts_file"}
-    # manifest control 名 -> replay control_type：induction == derating（同一控制）
-    ctype = "derating" if row["control"] == "induction" else row["control"]
-    settings = _lut_settings(lut, row["case_id"], ctype)
-    case_dir = out_dir / "cases" / (f"{row['case_id']}_" + row["control"])
-    case_dir.mkdir(parents=True, exist_ok=True)
+    """以**子进程**跑单个 case（_case_worker）。
+
+    libzmq 致命 assert（Connection reset / Socket op on non-socket）会杀死进程；
+    子进程隔离保证批跑父进程与其他 case 不受影响（全 DOE 可靠性）。
+    端口默认自动（replay 按 PID 派生），无需显式分配。
+    """
+    import json as _json
+    import subprocess as _sp
+    row_path = out_dir / "_rows" / (f"{row['case_id']}_{row['control']}.json")
+    row_path.parent.mkdir(parents=True, exist_ok=True)
+    row_path.write_text(_json.dumps(row), encoding="utf-8")
     t0 = time.time()
+    cmd = [
+        sys.executable, "-m", "induction_vs_yaw_study.run._case_worker",
+        "--row", str(row_path), "--out", str(out_dir),
+        "--experiment", str(args_exp), "--lut", str(args_lut),
+    ]
     try:
-        out = replay_fastfarm_zmq(
-            case, ctype, settings, output_dir=str(case_dir),
-            wind_time_series=row["bts_file"], yaw_mode="static",
-            cmd_port=ports[0], state_port=ports[1],
-        )
-        if out is None or out.time is None or len(out.time) == 0:
-            return {"ok": False, "error": "no output", "wall_s": time.time() - t0}
-        csv_path = case_dir / "timeseries.csv"
-        out.to_csv(str(csv_path))
-        return {"ok": True, "error": "", "csv": str(csv_path), "wall_s": time.time() - t0}
+        done = _sp.run(cmd, capture_output=True, text=True, timeout=None)
+        out_txt = (done.stdout or "") + (done.stderr or "")
+        wall = time.time() - t0
+        if done.returncode == 0 and "OK " in out_txt:
+            return {"ok": True, "error": "", "wall_s": wall}
+        # 失败时打日志片段便于排查
+        tail = out_txt.strip().splitlines()
+        err = " | ".join(tail[-3:])[:300] if tail else f"rc={done.returncode}"
+        return {"ok": False, "error": err, "wall_s": wall}
     except Exception as e:  # noqa
-        traceback.print_exc()
         return {"ok": False, "error": repr(e)[:300], "wall_s": time.time() - t0}
 
 
@@ -129,15 +135,9 @@ def main():
     out_dir = args.out or (_STUDY_ROOT / "results" / ("run_%s" % time.strftime("%Y%m%d_%H%M%S")))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # LUT
-    lut = None
-    lut_path = args.lut
-    if lut_path.exists():
-        import pandas as pd
-        try:
-            lut = pd.read_parquet(lut_path)
-        except Exception:
-            lut = pd.read_csv(lut_path)
+    global args_exp, args_lut
+    args_exp, args_lut = args.experiment, args.lut
+    lut = None  # LUT 由 _case_worker 子进程按 --lut 自行加载
 
     # manifest
     with open(args.manifest, newline="", encoding="utf-8") as f:
@@ -174,23 +174,24 @@ def main():
     global _STATUS_LOCK
     _STATUS_LOCK = threading.Lock()
 
-    def worker(port_base, jobs):
-        results = []
-        for j in jobs:
-            ports = (port_base, port_base + 1)
-            res = _run_one(j, lut, ff_cfg, out_dir, ports)
-            _write_status_row(status_log, j, res, res.get("wall_s", 0.0))
-            print(f"  [{j['case_id']}/{j['control']}] {'ok' if res['ok'] else 'FAILED'} "
-                  f"({res.get('wall_s', 0):.0f}s)", flush=True)
-            results.append((j, res))
-        return results
+    def run_one_with_retry(j, lut_local, ff_cfg_local):
+        res = {"ok": False, "error": "unrun", "wall_s": 0.0}
+        for attempt in range(max(1, args.max_retries + 1)):
+            res = _run_one(j, lut_local, ff_cfg_local, out_dir, None)
+            if res["ok"]:
+                break
+            print(f"  [{j['case_id']}/{j['control']}] attempt{attempt+1} FAILED: "
+                  f"{res.get('error','')[:120]}", flush=True)
+        _write_status_row(status_log, j, res, res.get("wall_s", 0.0))
+        print(f"  [{j['case_id']}/{j['control']}] {'ok' if res['ok'] else 'FAILED'} "
+              f"({res.get('wall_s', 0):.0f}s)", flush=True)
+        return j, res
 
     results = []
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
-        chunks = [todo[i::max(1, args.workers)] for i in range(max(1, args.workers))]
-        futs = [pool.submit(worker, 5556 + 2 * k, chunks[k]) for k in range(len(chunks))]
+        futs = [pool.submit(run_one_with_retry, j, lut, ff_cfg) for j in todo]
         for fut in futs:
-            results.extend(fut.result())
+            results.append(fut.result())
 
     n_ok = sum(1 for _, res in results if res["ok"])
     print(f"done: {n_ok}/{len(results)}; incremental status -> {status_log}")
