@@ -190,16 +190,20 @@ def with_seed(case: Case, seed_id: int) -> Case:
     return replace(case, seed_id=int(seed_id))
 
 
-# 风场旋转法下的 yaw 目标约定（审查 P0-3）：
-#   FAST.Farm inflow 恒为 270°（AXIAL），WD offset 由 layout 旋转表达；
-#   因此对齐目标恒 = 270°，与 case WD 无关；yaw 命令只表达失准角。
-ALIGN_YAW_DEG = 270.0
+# 风场旋转法下的 yaw 目标约定（审查 P0-3，identity 实测校准）：
+#   FAST.Farm inflow 气象风向恒为 270°（AXIAL），WD offset 由 layout 旋转表达；
+#   风机初始 NacYaw_i = (270 - direction) = 0°（OpenFAST 惯例：NacYaw=0 == 机舱对齐 +X/迎风）。
+#   因此**对齐参考 = NacYaw 系的 0°**，与 case WD 无关；yaw 命令只表达失准角。
+#   绝对目标（NacYaw 系）= 0 + misalignment（%360）。
+#   警示：身份测试实测“对齐=270°”的版本会把 yaw0 命令错算成 ~270°，导致
+#   机舱大幅偏航、farm 功率下降 ~3.9% 越限 —— 必须用 NacYaw 系（identity 先于 DOE 的价值）。
+ALIGN_YAW_DEG = 0.0  # NacYaw 系的对齐参考（等价于气象 270° 来风、机舱正对 +X）
 
 
 def yaw_target_deg(yaw_misalignment_deg: float) -> float:
-    """由失准角求绝对 yaw 目标（deg）。
+    """由失准角求绝对 yaw 目标（OpenFAST NacYaw 系，deg）。
 
-    仅用于旋转法 inflow=270° 的坐标系；禁止把 (270 - wd) 再计入
+    仅用于旋转法 inflow=270°（气象）的坐标系；禁止把 (270 - wd) 再计入
     （wd 已由 layout 旋转表达，重复计入会造成 WD 双计）。
     """
     return float((ALIGN_YAW_DEG + float(yaw_misalignment_deg)) % 360.0)
