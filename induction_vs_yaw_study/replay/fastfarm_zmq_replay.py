@@ -57,7 +57,7 @@ def replay_fastfarm_zmq(
     返回结构与旧 replay_fastfarm 兼容（SimulationOutput + yaw_cmd/ratio/power_target）。
     """
     if cmd_port is None or state_port is None:
-        base = 24000 + (os.getpid() % 1500) * 2
+        base = 24000 + (_os.getpid() % 1500) * 2
         cmd_port = cmd_port or base
         state_port = state_port or base + 1
     import time as _time
