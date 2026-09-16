@@ -47,13 +47,19 @@ def replay_fastfarm_zmq(
     output_dir: str = None,
     wind_time_series: Optional[str] = None,
     yaw_mode: str = 'static',
-    cmd_port: int = 24040,
-    state_port: int = 24041,
+    cmd_port: Optional[int] = None,
+    state_port: Optional[int] = None,
 ):
     """在 FAST.Farm（ZMQ 链路）中回放某工况某控制类型。
 
+    cmd_port/state_port 默认 None -> 按 PID 自动选择（避免多进程/多次调用间的
+    TIME_WAIT 端口冲突）；显式传值（批跑器按 worker 分配）。
     返回结构与旧 replay_fastfarm 兼容（SimulationOutput + yaw_cmd/ratio/power_target）。
     """
+    if cmd_port is None or state_port is None:
+        base = 24000 + (os.getpid() % 1500) * 2
+        cmd_port = cmd_port or base
+        state_port = state_port or base + 1
     import time as _time
 
     cfg = make_fastfarm_config(case, output_dir=output_dir)
