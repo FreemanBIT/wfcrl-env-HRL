@@ -190,6 +190,21 @@ def with_seed(case: Case, seed_id: int) -> Case:
     return replace(case, seed_id=int(seed_id))
 
 
+# 风场旋转法下的 yaw 目标约定（审查 P0-3）：
+#   FAST.Farm inflow 恒为 270°（AXIAL），WD offset 由 layout 旋转表达；
+#   因此对齐目标恒 = 270°，与 case WD 无关；yaw 命令只表达失准角。
+ALIGN_YAW_DEG = 270.0
+
+
+def yaw_target_deg(yaw_misalignment_deg: float) -> float:
+    """由失准角求绝对 yaw 目标（deg）。
+
+    仅用于旋转法 inflow=270° 的坐标系；禁止把 (270 - wd) 再计入
+    （wd 已由 layout 旋转表达，重复计入会造成 WD 双计）。
+    """
+    return float((ALIGN_YAW_DEG + float(yaw_misalignment_deg)) % 360.0)
+
+
 # =========================================================================
 # 布局（间距替换 —— 不改模板；风场旋转法不变）
 # =========================================================================

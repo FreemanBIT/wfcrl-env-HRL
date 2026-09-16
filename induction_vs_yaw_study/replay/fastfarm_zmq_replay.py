@@ -25,7 +25,9 @@ from typing import Dict, Optional
 
 import numpy as np
 
-from induction_vs_yaw_study.cases.three_nrel5mw import Case, make_fastfarm_config
+from induction_vs_yaw_study.cases.three_nrel5mw import (
+    Case, make_fastfarm_config, yaw_target_deg,
+)
 from induction_vs_yaw_study.replay.schedule import control_inputs_for_recording
 
 from wfcrl.config import WindConfig, SimulationOutput
@@ -74,13 +76,14 @@ def replay_fastfarm_zmq(
             if np.isfinite(p_mw) and p_mw > 0:
                 a = power_to_induction(p_mw * 1e6, case.wind_speed_ms, yaw_deg=0.0)
             yaw_mis = st.get("yaw_deg", 0.0) or 0.0
-            abs_yaw = float(((270.0 - wind_dir) + yaw_mis) % 360.0)
+            # 旋转法：inflow 恒 270°，WD 由 layout 旋转表达；目标只含失准角（审查 P0-3）
+            abs_yaw = yaw_target_deg(yaw_mis)
             cmds[tid] = Cmd(turbine_id=tid, yaw_deg=abs_yaw, induction_a=a)
     elif control_type == "yaw":
         for tid in range(1, n_turbines + 1):
             st = settings.get(tid) or {}
             yaw_mis = st.get("yaw_deg", 0.0) or 0.0
-            abs_yaw = float(((270.0 - wind_dir) + yaw_mis) % 360.0)
+            abs_yaw = yaw_target_deg(yaw_mis)
             cmds[tid] = Cmd(turbine_id=tid, yaw_deg=abs_yaw, induction_a=None)
     elif control_type != "baseline":
         raise ValueError(f"unknown control_type {control_type!r}")
