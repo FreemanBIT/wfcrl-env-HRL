@@ -48,6 +48,8 @@ def _mean_farm_power(out) -> tuple:
 
 
 def main():
+    from induction_vs_yaw_study.run._proc_utils import cleanup_stale_fastfarm
+    cleanup_stale_fastfarm(min_age_s=300.0)
     ap = argparse.ArgumentParser()
     ap.add_argument("--wind-time-series", default="coarse/inflow_U08_TI10_seed01.bts")
     ap.add_argument("--out", type=Path, default=_STUDY_ROOT / "results" / "_identity")

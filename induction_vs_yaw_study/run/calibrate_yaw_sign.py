@@ -44,6 +44,8 @@ def _agg(out):
 
 
 def main():
+    from induction_vs_yaw_study.run._proc_utils import cleanup_stale_fastfarm
+    cleanup_stale_fastfarm(min_age_s=300.0)
     ap = argparse.ArgumentParser()
     ap.add_argument("--wind-time-series", default="coarse/inflow_U08_TI05_seed01.bts")
     ap.add_argument("--wd", type=float, default=10.0)
