@@ -115,9 +115,15 @@ def replay_fastfarm_zmq(
             if yaw_mode == "control" or (yaw_mode == "static" and k == 1):
                 bridge.write(k, cmds)
             # ZMQ 状态帧（全机）——统计唯一口径（.outb 仅 T1，不可用）
-            st = engine.get_state(timeout_s=5.0)
+            # 瞬时断连（Connection reset）不中断回放：失败步补 NaN 行
+            try:
+                st = engine.get_state(timeout_s=5.0)
+            except Exception:
+                st = None
             if st and st.get("turbines"):
                 state_rows.append(st)
+            else:
+                state_rows.append({"turbines": []})
 
         # 控制步已走完；仿真 TMax 含平流余量（engine.setup 扩展），等它自然完成，
         # 以免提前终止导致 .outb 未落盘（研究统计口径依赖完整 outb）。
