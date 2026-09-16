@@ -38,12 +38,16 @@ CONTROLS = ["baseline", "yaw", "induction"]
 
 
 def _lut_settings(lut, case_id: str, control_type: str):
-    """从 LUT 取该工况该控制的三机设定 dict（与 run_replay._settings_for 同构）。"""
+    """从 LUT 取该工况该控制的三机设定 dict（与 run_replay._settings_for 同构）。
+
+    注意：manifest 的 control 列用 "induction"，LUT 的 control_type 用 "derating"（同一控制）。
+    """
+    lut_ctype = "derating" if control_type == "induction" else control_type
     if control_type == "baseline":
         return {i: {"yaw_deg": 0.0, "power_target_mw": float("nan"),
                     "ratio": 1.0, "min_pitch_deg": 0.0,
                     "greedy_power_w": float("nan")} for i in (1, 2, 3)}
-    rows = lut[(lut["case_id"] == case_id) & (lut["control_type"] == control_type)]
+    rows = lut[(lut["case_id"] == case_id) & (lut["control_type"] == lut_ctype)]
     if rows.empty:
         raise ValueError(f"No LUT rows for {case_id}/{control_type}")
     from induction_vs_yaw_study.lut.interpolate import _rows_to_dict
@@ -63,13 +67,30 @@ def _case_from_row(row: dict, ff_cfg: dict) -> Case:
     )
 
 
+_STATUS_LOCK = None  # set in main (threading.Lock)
+
+
+def _write_status_row(status_path: Path, row, res, wall_s: float) -> None:
+    import threading
+    with _STATUS_LOCK:
+        exists = status_path.exists()
+        with open(status_path, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if not exists:
+                w.writerow(["case_id", "control", "status", "error", "wall_s"])
+            w.writerow([row["case_id"], row["control"],
+                        "done" if res["ok"] else "failed",
+                        res.get("error", ""), round(wall_s, 1)])
+
+
 def _run_one(row, lut, ff_cfg, out_dir: Path, ports) -> dict:
     case = _case_from_row(row, ff_cfg)
     if not row.get("bts_file"):
         return {"ok": False, "error": "no bts_file"}
     settings = _lut_settings(lut, row["case_id"], row["control"])
-    case_dir = out_dir / "cases" / f"{row['case_id']}_" + row["control"]
+    case_dir = out_dir / "cases" / (f"{row['case_id']}_" + row["control"])
     case_dir.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
     try:
         out = replay_fastfarm_zmq(
             case, row["control"], settings, output_dir=str(case_dir),
@@ -77,13 +98,13 @@ def _run_one(row, lut, ff_cfg, out_dir: Path, ports) -> dict:
             cmd_port=ports[0], state_port=ports[1],
         )
         if out is None or out.time is None or len(out.time) == 0:
-            return {"ok": False, "error": "no output"}
+            return {"ok": False, "error": "no output", "wall_s": time.time() - t0}
         csv_path = case_dir / "timeseries.csv"
         out.to_csv(str(csv_path))
-        return {"ok": True, "error": "", "csv": str(csv_path)}
+        return {"ok": True, "error": "", "csv": str(csv_path), "wall_s": time.time() - t0}
     except Exception as e:  # noqa
         traceback.print_exc()
-        return {"ok": False, "error": repr(e)[:300]}
+        return {"ok": False, "error": repr(e)[:300], "wall_s": time.time() - t0}
 
 
 def main():
@@ -143,11 +164,18 @@ def main():
         print("nothing to run")
         return
 
+    import threading
+    global _STATUS_LOCK
+    _STATUS_LOCK = threading.Lock()
+
     def worker(port_base, jobs):
         results = []
         for j in jobs:
             ports = (port_base, port_base + 1)
             res = _run_one(j, lut, ff_cfg, out_dir, ports)
+            _write_status_row(status_log, j, res, res.get("wall_s", 0.0))
+            print(f"  [{j['case_id']}/{j['control']}] {'ok' if res['ok'] else 'FAILED'} "
+                  f"({res.get('wall_s', 0):.0f}s)", flush=True)
             results.append((j, res))
         return results
 
@@ -158,16 +186,8 @@ def main():
         for fut in futs:
             results.extend(fut.result())
 
-    # write status log
-    with open(status_log, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["case_id", "control", "status", "error", "wall_s"])
-        for (j, res) in results:
-            w.writerow([j["case_id"], j["control"],
-                        "done" if res["ok"] else "failed",
-                        res.get("error", ""), 0.0])
     n_ok = sum(1 for _, res in results if res["ok"])
-    print(f"done: {n_ok}/{len(results)}; manifest status -> {status_log}")
+    print(f"done: {n_ok}/{len(results)}; incremental status -> {status_log}")
 
 
 if __name__ == "__main__":
