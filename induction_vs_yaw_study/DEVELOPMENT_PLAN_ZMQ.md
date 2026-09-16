@@ -1,515 +1,364 @@
-# FAST.Farm 三机串列 · Yaw vs Induction 测试开发方案（基于 wfcrl 新 ZMQ 架构重规划）
+# FAST.Farm 三机串列 · Yaw vs Induction 测试开发方案（V3，按审查修订）
 
-> 输入：用户提供的 FASTFarm_Yaw_Induction_Test_Development_Plan.md（下称"方案V2"）
-> 用户约束（必须遵守）：
->   1. 风向测试只做 **0° / 10° / 20°**（不做负风向——与正风向对称，效果一致）；
->   2. 测试产出与配置文件**全部**放在 D:\HR_Project\wfcrl-env-HRL\induction_vs_yaw_study\ 下；
->   3. 用户将删除原有 .bts 文件（本计划**不得依赖**旧盒文件名/路径）；
->   4. 风速增加 **12 m/s**（风速集 {6, 8, 10, 12}）；
->   5. 测试工程开发过程中**不得修改现有 wfcrl 工程文件**（wfcrl/*、closed-loop-control/* 只读依赖）。
-> 本计划**不包含** FAST.Farm v5.0.0 源码重编译（独立工作线，见 §13.3）。
+> 输入：方案 V2 + 用户约束（1 风向 0/10/20；2 产出全在 study；3 旧 bts 删除；4 加 12m/s；5 不改 wfcrl）
+> 审查：FASTFarm_Development_Plan_Review_Issues.md（8 P0 / 7 P1 / 5 P2）
+> **核心原则（审查 §24）：先证明控制语义 -> 再证明单 case identity -> 再做多 seed pilot -> 最后才 full DOE。**
 
 ---
 
-## 0. 文档目的
+## 0. 修订记录（相对 V2 的变化）
 
-- 解决旧 induction_vs_yaw_study 对比流程的 5 类问题（见 §1）；
-- 全部复用于新 ZeroMQ 闭环链路（Controller -> Cmd -> ZmqFarmBridge -> FastFarmZmqEngine -> FAST.Farm v5）；
-- 保留可复用件：FLORIS 优化层、LUT 存储、ZMQ 回放驱动；
-- 新增/改造：seed 化风盒管线、case manifest、结果隔离、显式统计窗口、控制 identity 测试、
-  yaw sign / induction 标定、paired-seed 统计、DEL/Pareto 分析；
-- **隔离原则（约束 5）**：所有新增/修改的代码与产物只能落在 induction_vs_yaw_study/ 之下；
-  wfcrl/、closed-loop-control/、docs/farm_control/ 一律只读使用，不提交任何改动。
-
----
-
-## 1. 新旧方案差异总览
-
-| 维度 | 旧 study（现状） | 方案 V2 + 约束要求 | 本计划落点 |
-|---|---|---|---|
-| BTS 生成键 | U × TI × spacing（36 盒，将删除） | U × TI × seed -> **72** 盒（4U×3TI×6seed） | 重写生成器（§4.2） |
-| 风向维度 | ±20 / ±10 / 0 | **0 / 10 / 20**（对称性裁剪，约束 1） | grid.yaml（§5.1） |
-| 风速维度 | 6 / 8 / 10 | **6 / 8 / 10 / 12**（约束 4） | wind_conditions.yaml（§4.1） |
-| 随机种子 | seed 循环递增 | 固定 seed manifest（11001..66006） | seed_manifest.csv（§3/§4） |
-| WD 处理 | 风场旋转法（已实现） | 旋转 layout，不重生成 BTS | 复用 layout_for_case（§5） |
-| 统计窗口 | 后 50%（last frac） | 显式 [t_settle, Tsim]（600-1200 s） | 重写 analysis/metrics.py（§8.1） |
-| 结果目录 | results/timeseries 混放 + glob | results/{run_id}/cases/{case_id} 隔离 | 全部在 study 下（§3/§9） |
-| FAST.Farm 驱动 | 文件桥（已删除）-> ZMQ 静态回放 | 复用 ZMQ 链路 | fastfarm_zmq_replay.py 增强（§6） |
-| 仿真时长 | 510 s | 1200 s（600 结算 + 600 统计） | grid.yaml（§5.1） |
-| 控制标定 | Betz 解析近似 | yaw sign + induction operating map | §7 标定脚本 |
-| 多 seed 统计 | 无 | 6 seed paired 聚合 | case_id 含 seed（§5.3）+ 统计（§8.3） |
-| 载荷 | blade_loads 代理 std | 原始 .outb 高频 rainflow DEL | §8.4 |
-| case 驱动 | 运行时遍历 | case_manifest.csv + resume | build_case_manifest.py（§5.5） |
-| 依赖边界 | 直接依赖 wfcrl 内部行为 | 只读依赖 + env 注入（约束 5） | §5.4 / §6 / §13.2 |
+| 审查项 | 修订 |
+|---|---|
+| P0-1 时间尺度矛盾 | 明确三时间尺度；新增 Timestep Compatibility Test 为 full-DOE gate；纠正 "DT_TurbSim<=DT_High" 错误表述（§4） |
+| P0-2 UsableTime/periodicity | 统一为"非周期 + 足长 AnalysisTime + UsableTime=ALL（全时长可查询，不依赖 wrap）"唯一语义（§4.2） |
+| P0-3 yaw 坐标双计 | 确立坐标原则：旋转法下 inflow 恒 270°，baseline 对齐目标不随 WD 变；新增 layout-rotation 测试与 yaw-sign gate（§7） |
+| P0-4 baseline 语义 | baseline = no supervisory override（唯一）；identity 分"no-override vs yaw0"与"no-override vs greedy/sentinel"两个测试（§8） |
+| P0-5 n_control_steps | 删除独立配置；t_sim_s/t_settle_s/control_dt_s 派生计数（§9） |
+| P0-6 induction 迁移 | 主链路改为 1T 标定 a_cmd -> FLORIS 优化 a_cmd* -> LUT 存 a_cmd -> FAST.Farm 直接下发 a_cmd；ratio/MW 链降级为诊断（§10） |
+| P0-7 负 WD | full DOE 保留 0/10/20；sanity 必须含 −10/0/+10 mirror 验证（多 seed 统计镜像对称）（§11） |
+| P0-8 direct optimization | 分层搜索（7×7 粗 -> ±10°/5° 局部 -> 可选 surrogate）；新增 Phase 5b 代表 case 直优；Regret 仅 5b 后可算（§12/§17） |
+| P1-1 12m/s | pilot 增加 above-rated mini-pilot（U12/TI10/WD{0,10}/S{4D,6D}/seed1..3）（§16） |
+| P1-2 YAML 机器可读 | wind_conditions.yaml 全字段显式（含 coherence 数值、turbulence_model 命名）（§4.1） |
+| P1-3 BTS 复制 | 全部 shared reference（现有 engine 已只引用源路径，不复制）；批跑记录 reference_mode（§13） |
+| P1-4 进程清理 | 一律 PID/process-tree scoped，禁止全局 kill FAST.Farm（§13） |
+| P1-5 manifest 并发 | 增量 append + 锁；主 manifest 由协调者独占（§13） |
+| P1-6 weighted energy | 新增 Phase 5c；无风玫瑰时只报 equal-weight case-average，每个 spacing 单独报告（§18） |
+| P2-1 provenance | run/case metadata 记录 git commit、exe/bts/config hash、版本、约定版本（§19） |
+| P2-2 turbine-level 诊断 | 每 case 保存 P1..3、Ct、a_cmd、actual yaw、effective inflow（ZMQ 已含） |
 
 ---
 
-## 2. 现状架构盘点
+## 1. 现状（截至 V3 修订日，已实现并验证）
 
-### 2.1 ZeroMQ 场控链路（不改动，只读使用）
-
-\`\`\`
-ClosedLoopRunner / replay 脚本
-   |  Cmd{turbine_id, yaw_delta_deg, yaw_deg, induction_a}
-   v
-ZmqFarmBridge (closed-loop-control/closedloop/bridge.py)
-   |  _send_yaw_delta（CW+ 动作语义，rad+seq） / _send_induction（a，>=A_GREEDY-1e-3 跳过）
-   v  ZeroMQ PUB 5556 / SUB 5557
-FastFarmZmqEngine (wfcrl/engine/fastfarm_zmq.py)
-   |  setup(): case 生成 + FCR 集成 DLL + YawDOF=True + TMax=用户时长+一个低步
-   |  start(): 启动 FAST.Farm_x64_OMP.exe（FCR 10ms 闭环）
-   v
-FAST.Farm v5.0.0（FarmStateFrame <- 各机 FcrFarmTurbineState）
-   v
-get_state() -> turbines[]（gen_power_w*/rotor_ct/rotor_cp/nacelle_heading_rad/...）
-\`\`\`
-
-### 2.2 只读复用清单（不改任何 wfcrl / closed-loop-control 文件）
-
-| 模块 | 用途 | 使用方式 |
-|---|---|---|
-| wfcrl/engine/fastfarm_zmq.py FastFarmZmqEngine | ZMQ 引擎（cmd/state 端口可配） | 只读；传参使用 |
-| wfcrl/engine/_ff_case.py | 盒充分性校验、低分辨率重建、f_c 自适应 | 只读；WFCRL_FARMINPUTS_DIR 注入 |
-| wfcrl/transport/farm_zmq_client.py / farm_protocol.py | ZMQ 客户端/帧协议 | 由引擎内部使用 |
-| closedloop.bridge.ZmqFarmBridge / closedloop.types.Cmd | 命令通道（yaw_deg / induction_a） | 只读导入 |
-| closedloop.induction.power_to_induction | 回放下发 a 换算 | 只读导入 |
-| replay/fastfarm_zmq_replay.py | ZMQ 静态回放驱动 | 增强（watchdog/窗口，§6） |
-| replay/schedule.py / fastfarm_replay.py | 控制输入记录 / 兼容入口 | 复用 |
-| replay/floris_replay.py | FLORIS 回放 | 复用 |
-| optimize/floris_yaw_opt.py / floris_derating_opt.py | FLORIS 最优偏航/降额 | 复用（case 键去 seed） |
-| lut/schema.py | LUT 读写（绝对 MW 标准） | 复用 |
-| conversion/power_setpoint_tools.py | P <-> ratio <-> a（诊断层） | 复用 |
-
-### 2.3 需要改造/废弃（只允许在 study 内改动）
-
-| 现状 | 问题 | 处置 |
-|---|---|---|
-| turbsim_inp/generate_turbsim_inputs.py | spacing->BTS、seed 递增、无 12m/s | 重写为 seed 键生成器（§4.2） |
-| cases/three_nrel5mw.py bts_name(spacing) 分支 | 文件名含 spacing | 改 seed 键解析（§4.4） |
-| analysis/metrics.py steady_window_mean | last 50% | 显式窗口（§8.1） |
-| run/run_replay.py / run_compare.py | results/timeseries 混放 + glob | run_id 隔离、manifest 驱动（§9） |
-| 回放驱动无 fast_step 进度看门狗 | 假完成缺陷 | 批跑器 watchdog（§6.1） |
-| steady/ 子包 | 稳态风 v5 ~260s 硬墙 | 标注废弃（全走 .bts） |
-| 旧 FarmInputs 36 盒 | 将删除（约束 3） | 不归档、不依赖；新盒入 study/FarmInputs |
+- **架构**：ZeroMQ 闭环（Controller -> Cmd -> ZmqFarmBridge -> FastFarmZmqEngine -> FAST.Farm v5.0.0）；状态帧（全机）经 ZMQ 回传。
+- **统计口径**：ZMQ 状态帧（每控制步，全 3 机）——因本集成 FAST.Farm 仅写 Case.T1.outb（T2/T3 无 .outb），已弃用 .outb 作为功率统计（313d0e0）；.outb 仅诊断；DEL 阶段需另行解决多机载荷通道（开放项）。
+- **门禁**：300s 回归 PASS（uniform 与真实湍流盒两轮；真实盒 3 机 farm ≈ 3.86 MW）。
+- **风盒**：seed 键生成器（(U,TI,seed) 唯一；按 U 自适应 AnalysisTime：U6=1950/U8=1800/U10=1700/U12=1650s；dt=0.1s；不限时 TurbSim）；72 个 .inp；QA 达标（TI05/TI10 seed1 realized U/TI 通过）。
+- **FLORIS**：快速 LUT（144 工况 × 2 控制，864 行，--quick：粗网格 0.1 + 无细化）。
+- **测试**：43 passed（含显式统计窗口、BTS 复用断言）。
+- **批跑器**：manifest 驱动、增量状态、断点续跑、并发 worker（端口对隔离）、induction<=>derating 映射（run_fastfarm_batch.py）。
+- **冒烟验证**：9 case（U8/TI10/seeds1-3/WD0/S4D × 3 控制）1200s 全时长仿真约 610-620s 墙/个跑通 —— 1800s 盒对 1200s 仿真时间覆盖验证通过；1800s AnalysisTime 无需再加长。
 
 ---
 
-## 3. 目录与命名规范（约束 2：全部在 study 下）
+## 2. 用户约束（不变）
 
-\`\`\`
+1. 风向 full DOE 仅 {0, 10, 20}（负侧保留于 sanity/校验，见 P0-7）。
+2. 测试产出与配置全在 D:\\HR_Project\\wfcrl-env-HRL\\induction_vs_yaw_study\\ 下。
+3. 不依赖任何旧 .bts（用户已删除）；新盒按 (U,TI,seed) 生成。
+4. 风速 {6, 8, 10, 12}。
+5. 不修改 wfcrl/、closed-loop-control/（只读依赖；注入点 WFCRL_FARMINPUTS_DIR + 显式 output_dir）。
+
+---
+
+## 3. 目录与命名（不变，+ provenance）
+
+```
 induction_vs_yaw_study/
-├── config/
-│   ├── wind_conditions.yaml        # 新（§4.1）
-│   ├── experiment.yaml             # 新（DOE 组合/批跑/并行参数）
-│   └── seed_manifest.csv           # 新（seed_id,rand_seed_1）
-├── FarmInputs/                     # 新（约束 3：不依赖旧盒）
-│   ├── coarse/                     # 72 盒（4U×3TI×6seed）
-│   ├── fine/                       # 代表工况精细盒（DEL 阶段）
-│   └── qa/                         # wind_box_metrics.csv / failures / plots
-├── scripts/                        # 新：generate_wind_boxes / qa_wind_boxes /
-│                                   #      build_case_manifest / run_fastfarm_batch /
-│                                   #      calibrate_yaw_sign / calibrate_induction /
-│                                   #      regress_300s / analyze_run
+├── config/            # wind_conditions.yaml / experiment.yaml / seed_manifest.csv
+├── FarmInputs/        # coarse/（NEW: seed 键盒；shared reference，不复制进 case） fine/ qa/
+├── modules/           # 生成器/QA/resolver/manifest/batch/calib/identity/regress/analyze
 ├── results/
-│   └── run_YYYYMMDD_HHMMSS/
-│       ├── run_config.yaml / git_commit.txt / seed_manifest.csv
-│       ├── case_manifest.csv
-│       ├── cases/<case_id>/         # 每 case 独立（fastfarm_zmq.log / trajectory）
-│       ├── metrics/                 # case_metrics / paired_metrics / aggregated_metrics
-│       └── plots/
-├── tests/                           # identity / reuse / stats-window 测试
-└── docs/                            # 研究报告、标定记录
-\`\`\`
-
-### 3.1 路径注入（约束 5 的关键机制）
-
-- wfcrl 引擎通过环境变量 **WFCRL_FARMINPUTS_DIR** 解析风盒目录（
-  wfcrl/engine/_ff_case.py:26 已确认），批跑器/回放启动时设为
-  induction_vs_yaw_study/FarmInputs 即可，**无需改 wfcrl 源码**；
-- 所有 case 的 output_dir 显式传入 induction_vs_yaw_study/results/{run_id}/cases/{case_id}；
-- 若某能力 wfcrl 未提供，在 study 内自建（resolver、批跑、watchdog、指标等）。
-
-### 3.2 Case ID（含 seed）
-
-\`\`\`
-U08_TI10_seed03_wd10_s6D_yaw
-U08_TI10_seed03_wd10_s6D_baseline
-U08_TI10_seed03_wd10_s6D_induction
-\`\`\`
-- WD 仅 {0, 10, 20}（wd0 / wd10 / wd20）；
-- 随 case 保存完整 metadata（含 bts_file 相对路径）。
-
-### 3.3 硬性约束（自动化断言）
-
-1. 相同 U/TI/seed 的 BTS 路径唯一（跨 WD、spacing、control）；
-2. case_id 必须携带 seed；LUT（FLORIS 侧）不携带 seed（§5.2）；
-3. 文件名禁止出现 spacing / WD / control；
-4. 所有输出路径根必须在 induction_vs_yaw_study/ 下（约束 2）。
+│   └── run_<id>/
+│       ├── run_config.yaml + git_commit.txt + provenance.json（exe/bts/config hash、版本）
+│       ├── case_manifest.csv（协调者独占更新）
+│       └── cases/<case_id>/metadata.json（P2-1 字段）
+└── tests/
+```
 
 ---
 
-## 4. 风工质流水线（方案 V2 Task A/B/C/G 映射）
+## 4. 时间尺度与风盒语义（P0-1/P0-2/P1-2）
 
-### 4.1 config/wind_conditions.yaml（新）
+### 4.1 三个时间尺度（必须分清）
 
-\`\`\`yaml
-wind_speeds_ms: [6.0, 8.0, 10.0, 12.0]     # 约束 4
+| 尺度 | 值 | 说明/约束 |
+|---|---|---|
+| FAST.Farm DT_High | **0.01 s** | 集成 DLL 链路约束（E6a 实测 DT_High=0.05 启动崩溃）；不可改 |
+| Turbine FAST 步/ROSCO/FCR 内部 | 0.01 s（10ms） | 集成 DLL 内部；不在本研究触碰 |
+| TurbSim .bts dt | **0.1 s**（已验证） | FAST.Farm InflowWind 对入流插值；粗跑可用 |
+
+**审查纠错**：方案 V2 §9.1 的 "DT_TurbSim <= DT_High" 在数学上错误（0.1 > 0.01）且混用概念。正确表述：
+- .bts dt=0.1s 是**入流采样/插值**分辨率，与 FAST.Farm 唤醒求解步 DT_High=0.01s 无强制大小关系；
+- FAST.Farm 对 bts 逐帧线性插值（WindType=3），10Hz 入流对 power-only 粗跑足够（已实测 1200s 仿真正常）。
+
+### 4.2 TurbSim UsableTime 唯一语义
+
+采用**一种**一致语义（P0-2）：
+```text
+UsableTime = "ALL"  ->  TurbSim 输出整个 AnalysisTime（按 U 自适应计算，
+                        >= 查询上限 = Tsim(1200) + max_downstream_span/U + margin）；
+文件为非周期全时长盒；FAST.Farm 查询时刻全部落在文件内，不依赖 MODULO wrap。
+periodic 仅作为未来多周期方案的备选（RandSeed1=0），本研究不使用。
+```
+（数值 usable=1200 方案可作为可选替代，但需确认 TurbSim 输出长度语义后再采用。）
+
+### 4.3 wind_conditions.yaml（完整机器可读，P1-2）
+
+```yaml
+wind_speeds_ms: [6.0, 8.0, 10.0, 12.0]
 turbulence_intensities: [0.05, 0.10, 0.15]
-seeds: [1, 2, 3, 4, 5, 6]                  # 对应 seed_manifest rand_seed_1 11001..66006
+seeds: [1, 2, 3, 4, 5, 6]
+
+doe:
+  t_sim_s: 1200.0
+  t_settle_s: 600.0
+  control_dt_s: 3.0
+  margin_s: 120.0
+  max_spacing_D: 8.0
 
 turbsim:
+  turbulence_model: IECKAI
+  iec_wind_type: NTM
+  scale_iec: 1
   hub_height_ref_m: 90.0
-  artificial_hub_height_m: 175.0           # 仅 TurbSim 网格定位；绝不改 turbine 轮毂高度
+  artificial_hub_height_m: 175.0
   grid_width_m: 1500.0
   grid_height_m: 340.0
   grid_bottom_m: 5.0
-  target_grid_spacing_m: 9.0               # coarse 验收 8<=dy,dz<=10
-  analysis_time_s: 1600.0                  # >= Tsim + GridWidth/min_U + 余量（6m/s 最严）
-  usable_time: "ALL"
-  dt_s: 0.10
-  turbine_model: IECKAI
-  iec_wind_type: NTM
-  shear_power_law_exponent: 0.0            # 主实验；0.2 作为剪切敏感性（后续）
-  coherence: (沿用方案V2 §6 的 SCMod/InCDec/CohExp)
+  target_grid_spacing_m: 9.0
+  num_grid_z: 40
+  analysis_time_s: 1600.0       # 下限；生成器按 doe + U 自适应（U6=1950/8=1800/10=1700/12=1650）
+  usable_time: "ALL"            # 语义见 §4.2
+  time_step_s: 0.10             # 实测 .bts dt=0.1s（10Hz）
+  vertical_flow_angle_deg: 0.0
+  horizontal_flow_angle_deg: 0.0
+  shear_power_law_exponent: 0.0
+  coherence:
+    scmod_1: IEC
+    scmod_2: IEC
+    scmod_3: IEC
+    incdec_1: "12.0 0.00035273"
+    incdec_2: "12.0 0.00035273"
+    incdec_3: "12.0 0.00035273"
+    coh_exp: 0.0
+```
 
-# 12 m/s 说明：高于额定风速 11.4 m/s（Region III），
-# 机组进入额定功率平台（桨距控制）+ Ct 下降 -> 尾流减弱、可控增益变小。
-# 分析时需按 Region II / III 分层解释，且 12m/s 的 derating LUT 可能退回 ratio=1。
-\`\`\`
+### 4.4 Timestep Compatibility Test（P0-1，full-DOE 前 gate）
 
-### 4.2 生成器重写（turbsim_inp/generate_wind_boxes.py，新，替换旧脚本）
+1T / U=8 / TI=0.10 / 300s，三档：
+- A: bts dt=0.10 + DT_High=0.01（当前，预期通过）
+- B: bts dt=0.05 + DT_High=0.01（确认 0.05 入流兼容性）
+- C: bts dt=0.01 + DT_High=0.01（确认极限）
 
-- 循环：for seed in seeds: for U in speeds: for TI in tis -> 72 个 .inp；
-- 命名：inflow_U{U:02d}_TI{TI:02d}_seed{seed:02d}.inp|.bts（无 spacing/WD/control）；
-- GridWidth 固定 1500.0；NumGrid_Y ~ 168（dy~9.0）、NumGrid_Z = 40（dz~8.72）；
-- RandSeed1 = manifest.rand_seed_1；RandSeed2 = rand_seed_1 + 1000000；
-- 默认非周期 + 足长 AnalysisTime（单次直读，查询时刻全部在文件内，规避 v5 时间墙）；
-  如需多周期复用再启用 TurbSim periodic（RandSeed1=0，seed 映射 RandSeed2）；
-- 生成 seed_manifest.csv 到 config/；
-- 支持 --speeds/--tis/--seeds/--only 便于分片与"引导盒"先行（§11 Phase 1）。
-
-### 4.3 风盒 QA（turbsim_inp/qa_wind_boxes.py，新）
-
-- openfast_toolbox.io.turbsim_file.TurbSimFile 读盒（_ff_case 同款）；
-- (z=90, y=0) 插值 u/v/w 时序 -> realized U、TI_u、sigma_u/v/w；
-- 输出 FarmInputs/qa/wind_box_metrics.csv：
-  file,seed_id,target_U,target_TI,realized_U,realized_TI,sigma_u,sigma_v,sigma_w,pass；
-- 验收：|U_real-U_tar|/U_tar <= 5% 且 |TI_real-TI_tar| <= 0.02；失败阻止入 manifest。
-
-### 4.4 BTS resolver（改造 cases/three_nrel5mw.py —— study 内允许）
-
-\`\`\`python
-def resolve_bts_file(wind_speed_ms, turbulence_intensity, seed_id) -> Path | None:
-    # 仅 (U, TI, seed) 三维；删除 spacing 后缀与通用盒回退分支
-\`\`\`
-- 默认 FarmInputs 根改为 study/FarmInputs（仍可用 WFCRL_FARMINPUTS_DIR 覆盖）；
-- 找不到 -> raise（strict_inflow=True 保持）。
-
-### 4.5 复用断言（方案 V2 §18）
-
-同一 (U,TI,seed) 的全部 WD x spacing x control case：断言 len(unique(bts_file)) == 1。
+验收：记录三档 wall/结果差异；确认 A 为 coarse 默认（power-only 足够）；DEL fine 阶段再评估是否需 0.05 入流。
+> 注：E6a 已证明 DT_High 本身不可改 0.05（集成 DLL 启动崩溃），故本测试聚焦 **bts dt** 维度。
 
 ---
 
-## 5. Case / Manifest 层（方案 V2 Task D 映射）
+## 5. 风盒管线（P0-2 语义 + P1-3 共享引用）
 
-### 5.1 cases/grid.yaml 改造
-
-\`\`\`yaml
-wind_speeds_ms: [6.0, 8.0, 10.0, 12.0]        # 约束 4
-wind_direction_offsets_deg: [0.0, 10.0, 20.0] # 约束 1（对称性裁剪）
-turbulence_intensities: [0.05, 0.10, 0.15]
-spacings_D: [2.0, 4.0, 6.0, 8.0]
-seeds: [1, 2, 3, 4, 5, 6]
-
-floris: { dt: 60.0, max_iter: 3 }
-fastfarm:
-  dt: 3.0
-  t_settle_s: 600.0             # 显式结算窗口起点
-  n_control_steps: 200          # 600..1200 s 统计窗口（dt=3）
-smoke_subset:                   # 快速冒烟
-  wind_speeds_ms: [8.0]
-  wind_direction_offsets_deg: [0.0]
-  turbulence_intensities: [0.10]
-  spacings_D: [4.0]
-  seeds: [1]
-\`\`\`
-Case 增加 seed_id:int=1；case_id 公式加入 seed。
-
-### 5.2 FLORIS LUT 的 seed 无关性（关键效率决策）
-
-- FLORIS 稳态模型无湍流 realization -> 最优 setpoint 与 seed 无关；
-- LUT 计算量 = 4U x 3TI x 3WD x 4S = **144**（不是 216 的 6 倍）；
-- optimize/* 的 case 键去掉 seed；按 (U,TI,WD,S) 布局实跑 greedy 基准得 greedy_power_w；
-- 回放时 settings 仅与 (U,TI,WD,S) 绑定，6 个 seed 复用同一 setpoint。
-
-### 5.3 全 DOE 规模（含约束 1/4）
-
-- FAST.Farm case 总数 = 4U x 3TI x 6seed x 3WD x 4S x 3control = **2592**；
-- 方案 V2 的 3240（5WD）缩减为 2592（3WD）；风速 +1 抵消部分裁剪；
-- 结果隔离与分片执行见 §9/§11/§12。
-
-### 5.4 build_case_manifest.py（新）
-
-枚举 (U x TI x seed x WD x S x control) -> case_manifest.csv：
-case_id,U,TI,seed,WD,spacing_D,control,bts_file,status（pending/running/done/failed）
-- 仅 QA 通过盒入 manifest；支持 --filter 分片（§6.2）。
+- (U,TI,seed) 唯一键；命名 inflow_U{U:02d}_TI{TI:02d}_seed{seed:02d}.bts；不含 spacing/WD/control。
+- 固定 seed manifest（11001..66006）。
+- **只生成 pilot 所需盒先行**（U8 全 TI×seed 18 盒），不一次性生成 72 盒（P1-3/compute 预算）。
+- QA：轮毂位 (z=90,y=0) 实测 U/TI/σ（验收 5%/0.02）。
+- **BTS 共享引用**：engine 只引用 FarmInputs/coarse 源路径（已验证不复制）；批跑记录 bts_source_path + reference_mode=shared（P1-3）。
 
 ---
 
-## 6. FAST.Farm ZMQ 批跑器（方案 V2 Task E / §32 核心）
+## 6. 控制通道与坐标约定（P0-3/P0-4）
 
-### 6.1 单 case 执行单元（增强 fastfarm_zmq_replay.py，保持签名兼容）
+### 6.1 坐标原则（P0-3）
 
-1. case 构造：make_fastfarm_config(case) + wind_time_series=resolve_bts_file(...)；
-2. 命令下发：
-   - baseline：不写命令（或 induction_a=1/3 显式贪婪）；
-   - yaw：Cmd(yaw_deg=abs_yaw)，yaw_mode 默认 static（与旧研究口径一致）；
-   - induction：Cmd(induction_a=a_calib)，a 来自标定 map（§7.2），弃 Betz 反演；
-3. watchdog（修假完成）：每控制步校验 state['fast_step'] 单调推进；连续 N 个轮询不推进
-   -> 判停滞，记录 abort 并保留部分 outb；
-4. 结算窗口：t >= 600 数据单独落 statistics/，窗口参数写 metadata；
-5. 自然完成等待：控制步完成后 _proc.wait(timeout) 确保 .outb 完整落盘（沿用现有）；
-6. 产物与清理：case 目录 = results/{run_id}/cases/{case_id}/；完成后删除 _work 中
-   复制入的 .bts（源盒保留在 study/FarmInputs/coarse/）。
+```text
+风场旋转法：FAST.Farm inflow 方向恒为 270 度；WD offset 通过旋转 layout 体现。
+因此 baseline nacelle 对齐目标 = 270 度（不随 case WD 变化）。
+yaw 控制统一为失准角语义：
+    yaw_delta（直接动作通道，CW+）= yaw_misalignment        （首选）
+    或绝对目标 = 270 + yaw_misalignment（%360）            （等价，需保持基准恒 270）
+禁止出现 (270 - wd) + mis 之类把 WD 再计入的写法（wd 已由 layout 旋转表达）。
+```
 
-### 6.2 批跑 CLI（run_fastfarm_batch.py，新）
+新增测试：
+- test_layout_rotation_does_not_change_baseline_yaw_target：WD∈{0,10,20}，yaw_mis=0 时发送的 aligned yaw target 必须一致（=270 度）。
+- **yaw sign gate**：WD ∈ {−10, 0, +10} × yaw ∈ {−20, 0, +20}；输出 requested/actual yaw、farm P、WT2/WT3 有效入流、（可用时）尾流横向位移；记录 positive yaw → 转子法向/尾流偏向，与 FLORIS convention 对齐；不 PASS 不跑 yaw DOE。
 
-\`\`\`bash
-python -m induction_vs_yaw_study.run.run_fastfarm_batch \\
-  --manifest induction_vs_yaw_study/results/RUN/case_manifest.csv \\
-  --run-id RUN \\
-  --workers 4 \\
-  --max-retries 2 \\
-  --filter 'U==8 & TI==0.10 & seed<=3 & WD==0' \\
-  --resume
-\`\`\`
-- 启动前设置 WFCRL_FARMINPUTS_DIR=study/FarmInputs（约束 5 注入）；
-- 使用现有"清理 FAST.Farm 进程与端口占用"惯例；
-- 日志只写 run 目录 / 工作区，绝不写 D:\ 根或 C:\。
+### 6.2 Baseline 定义（P0-4，唯一）
 
-### 6.3 并行调度
+```text
+baseline = no supervisory override：
+    yaw_override   = None（机组按初始对齐=270 度自由运行）
+    induction_override = None（ROSCO 贪婪）
+```
+- 禁止把 "induction_a=1/3" 或 "ratio=1" 作为 baseline 定义（那是协议 sentinel/贪婪工作点，不是无监督）。
+- identity 两个测试：
+  A. baseline(no-override) vs yaw=[0,0,0]     （bridge 层等价性）
+  B. baseline(no-override) vs induction greedy/sentinel 命令（通道激活等价性）
+  验收：farm 均值功率差 < 0.5%，且 **T1/T2/T3 分别** < 0.5%。
 
-- 每 worker 独立端口对（FastFarmZmqEngine cmd_port=5556+2k / state_port=5557+2k）；
-- 端口/并发可配置（experiment.yaml）；
-- 失败重试 <=2，仍失败 -> status=failed + error 列。
+### 6.3 时长参数派生（P0-5）
 
-### 6.4 已知约束（本计划内不重编译，不改 wfcrl）
+删除独立 n_control_steps 配置；只保留 t_sim_s / t_settle_s / control_dt_s：
+```python
+n_total_control_steps = round(t_sim_s / control_dt_s)                # 1200/3 = 400
+n_statistics_steps    = round((t_sim_s - t_settle_s) / control_dt_s)  # 200
+```
+Case/metadata 记录 t_sim_s、t_settle_s、control_dt_s 及两个派生计数（n_* 不得独立配置）。
 
-- **DT_High 保持 0.01 s**：E6a 实验证明 DT_High=0.05 在集成 DLL 链路启动崩溃，
-  方案 V2 §9.1"粗跑 DT_High=0.10"不采纳（记录为偏差，§13.1）；
-- control_dt=3 s 不变；.bts dt=0.10 满足 DT_TurbSim <= DT_High；
-- 单机 1200s 6T 墙钟 ~20-30 min（300s 回归 ~5 min 线性外推）；1T 标定 ~4-6 min。
+### 6.4 Cmd 通道（不变）
 
----
-
-## 7. 控制通道与标定（方案 V2 §20/21/22 映射）
-
-### 7.1 三控制类型 Cmd 语义
-
-| 控制 | Cmd 构造 | 说明 |
-|---|---|---|
-| baseline | Cmd(yaw_deg=abs(270-wd), induction_a=1/3) | 贪婪，yaw=0 失准 |
-| yaw | Cmd(yaw_deg=abs_yaw)；abs_yaw=(270-wd)+yaw_mis mod 360 | bridge 换算 yaw_delta（CW+），yaw_mode static/control |
-| induction | Cmd(induction_a=a_calib) | _send_induction；a>=A_GREEDY-1e-3 跳过（=baseline） |
-
-### 7.2 Induction 标定（calibrate_induction.py，新）
-
-1T（经 ZMQ 链路），U in {6,8,10,12} x a in {0.10,0.15,0.20,0.25,0.30,0.33}；
-- 输出（.outb 高频）：a_cmd、P、Ct（或 RotThrust）、Pitch、RotorSpeed（通道名按
-  OutListParameters.xlsx 核对，必要时在 study 侧扩展 OutList 注入）；
-- 产出 induction_operating_map.csv：a -> P/P_greedy -> Ct（方案 V2 §21.1）；
-- 标定 run 时长可缩短（300s：60 结算 + 240 统计）降成本。
-
-### 7.3 Yaw sign 标定（calibrate_yaw_sign.py，新）
-
-固定 (U=8, TI=0.05 最低盒, S=4D, WD=10°)，yaw in {-20, 0, +20}；
-- 输出：YawErr、farm P、WT2 入流（nacelle/disk_ambient_wind）、（可用时）尾流中心；
-- 判据：与 FLORIS convention 对齐——明确 positive yaw 在 FAST.Farm 中尾流偏向哪一侧；
-- 产出 yaw_sign_calibration.csv；
-- 注意：方案 V2 的"确定性测试"因 v5 稳态风硬墙不能走 WindType=1，以 TI=0.05 盒近似（§13.1 偏差）。
-
-### 7.4 Identity 测试（tests/，新）
-
-- test_zero_yaw_equals_baseline：yaw=[0,0,0] vs baseline -> farm P 差 < 0.5%；
-- test_derating_ratio_one_equals_baseline：a=1/3 vs baseline -> 差 < 0.5%；
-- test_same_environment_uses_same_bts：execution 断言；
-- 同一 (U=8,TI=0.10,seed=1,WD=0,S=4D) 短配置（300s）执行，全 PASS 解锁 Phase 4+。
+Cmd{turbine_id, yaw_delta_deg, yaw_deg, induction_a}；bridge 换算 yaw_delta（CW+）、_send_induction（a，>=A_GREEDY-1e-3 跳过=贪婪哨兵）。
 
 ---
 
-## 8. 指标与统计（方案 V2 §23-27 映射）
+## 7. 控制标定与跨模型迁移（P0-6）
 
-### 8.1 统计层重写（analysis/metrics.py）
+### 7.1 Induction 主链路（修订后）
 
-删除 steady_window_mean(frac=0.5)；改为：
-\`\`\`python
-def steady(df, t_settle_s, t_sim_s):
-    return df[(df["time_s"] >= t_settle_s) & (df["time_s"] <= t_sim_s)]
-\`\`\`
+```text
+OpenFAST/FAST.Farm 1T 标定：(U, a_cmd) -> (P, Ct, Cp, Pitch, RotorSpeed)
+        |
+        v
+FLORIS 校准 turbine control surface（用该 map，不再用 Betz 反演）
+        |
+        v
+FLORIS 优化 a_cmd*（T1,T2[,T3=1/3]）
+        |
+        v
+LUT 存 a_cmd_T1/T2/T3（+诊断 Ct/P）
+        |
+        v
+FAST.Farm replay 直接下发同一 a_cmd（bridge._send_induction）
+```
+- 控制变量迁移结构对称：yaw γ* -> γ_FF；induction a* -> a_FF。
+- ratio -> P_target -> a 的旧链降级为 diagnostic/legacy（不用于主实验结论）。
+- LUT schema 增加 a_cmd 列；a_cmd=1/3（贪婪 sentinel）必须可恢复 no-override（identity B 验证）。
 
-### 8.2 Power 指标
+### 7.2 Yaw 主链路（不变）
 
-- Pbar_i（窗口均值）、Pbar_farm；
-- DeltaP_farm_% + WT1/2/3 分机增益（看上游牺牲/下游恢复）；
-- eta_wake = DeltaP_downstream / (-DeltaP_controlled)（仅受控机功率下降时计算）。
-
-### 8.3 Paired-seed 聚合（方案 V2 §26）
-
-- 先逐 seed 算 DeltaP_s = P_ctrl,s - P_base,s，再跨 seed 求 mean/std/SE/95%CI；
-- 禁止先跨 seed 平均绝对功率再算增益；
-- paired_metrics.csv 每行 = (U,TI,WD,S,control) + 聚合统计。
-
-### 8.4 迁移性 / Regret（方案 V2 §22/23）
-
-- eta_transfer = DeltaP_FASTFarm / DeltaP_FLORIS（仅当 DeltaP_FLORIS >= 0.5%）；
-- Regret_% = [P_FF(u*_FF) - P_FF(u*_FLO)] / P_FF(u*_FF) x 100%；
-- FF 侧近最优由 §7 / Phase 3 coarse 扫描近似（yaw in [-30..30] 整数步；induction 用标定 map）。
-
-### 8.5 Load / DEL（方案 V2 §27）
-
-- 功率分析用 3s 降采样 CSV；**DEL 一律从原始高频 .outb**（禁 3s CSV）；
-- 通道（按 OutListParameters.xlsx 核实）：blade-root flap/edge、tower FA/SS、
-  yaw-bearing moment、RotThrust、LSS torque；
-- 每机每通道独立 rainflow（analysis/del.py，新）；
-- DeltaDEL_i,k %、DeltaDEL_max = max(...)；
-- Power-Load Pareto（analysis/pareto.py，新）：X=farm power gain %，Y=DeltaDEL_max %，
-  约束 max_allowed_del_increase_pct in {0,5,10}；
-- Open Item：fine 阶段 .fst OutFreq（建议 5-10 Hz）实测验证对墙钟的影响。
+FLORIS 优化失准角 γ* -> LUT 存 γ* -> FAST.Farm replay 同 γ*（yaw_mode static）。
 
 ---
 
-## 9. 结果隔离与分析（方案 V2 §16 / Task E）
+## 8. 指标与统计（P1-6/P2-2 + 既有）
 
-- 每次 batch 创建唯一 run_id；所有产物只写 study/results/{run_id}/（约束 2）；
-- case 目录内附 metadata.json（U/TI/seed/WD/S/control/bts_file/统计窗口/控制指令）；
-- run_compare.py 改为 manifest+run_id 驱动，删除对历史目录的 glob 聚合；
-- 新分析入口 analyze_run.py --run-id RUN_ID，输出
-  case_metrics / paired_metrics / aggregated_metrics / plots / REPORT.md。
-
----
-
-## 10. 自动化测试与验收（方案 V2 §31/§33，含约束 1/4 更新）
-
-| 编号 | 测试 | 验收 |
-|---|---|---|
-| 31.1 | BTS 数量 | n_bts == 72（4U x 3TI x 6seed） |
-| 31.2-31.4 | BTS 身份 | 相同 U/TI/seed，spacing/WD/control 变化 -> bts 路径不变 |
-| 31.5 | 统计窗口 | 所有分析行 time >= t_settle |
-| 31.6 | zero-yaw identity | farm P 差 < 0.5% |
-| 31.7 | induction identity (r=1) | farm P 差 < 0.5% |
-| 33 | 验收清单 | 逐条勾选写入 docs/REPORT |
+- 显式窗口 [t_settle, t_sim]（已落地，metrics.py）；paired-seed 聚合（先逐 seed ΔP 再聚合 mean/std/SE/95%CI）。
+- η_wake、ΔP_farm + WT1/2/3 分机增益（上游牺牲/下游恢复）。
+- **turbine-level 诊断（P2-2）**：每 case 保存 P1..3、Ct1..3（state 有 rotor_ct）、a_cmd、actual yaw、effective inflow（disk_ambient/nacelle）——ZMQ 状态均已含。
+- **迁移指标**：η_transfer（ΔP_FF/ΔP_FLO，仅 ΔP_FLO>=0.5% 时）。
+- **能量（P1-6/Phase 5c）**：有 site 风玫瑰 -> AEP(S)=Σ p(U,WD,TI)·P̄ 分 spacing 报告；无 -> 只称 "equal-weight case-average power gain"，禁止称 AEP。
+- Regret：仅 Phase 5b（FAST.Farm 直优）后可算。
 
 ---
 
-## 11. 开发阶段与执行步骤
+## 9. Sanity 与镜像（P0-7）
 
-> 工程红线（用户惯例）：任何一次仓库代码修改后，先跑一次 300s 仿真回归再进入下一步。
-> 旧回归命令依赖的 inflow_08ms_TI10_s8D.bts 将被删除 -> **回归门禁改用新生成的
-> 引导盒 inflow_U08_TI10_seed01.bts**（Phase 1 第一步先生成它）；
-> 回归入口改为 study 内 run/regress_300s.py（约等命令为 6T greedy、
-> U=8/TI=0.10/seed=1、mode 3 双通道等价、300s），输出入 study/results/（约束 2）。
-
-### Phase 0 — 骨架与配置（无仿真）
-1. 新建 config/{wind_conditions,experiment}.yaml、seed_manifest.csv；
-2. grid.yaml 加 seeds/WD{0,10,20}/U12/显式统计窗口；
-3. 目录骨架：study/FarmInputs/{coarse,fine,qa}、study/results 模板；
-4. 确认不依赖旧 36 盒（用户即将删除）。
-   - 门禁：本次仅配置/目录，无代码 -> 可延后到 Phase 1 引导盒就绪后补跑。
-
-### Phase 1 — 风工质管线
-1. 重写生成器；**先生成引导盒 inflow_U08_TI10_seed01.bts**；
-2. 引导盒 QA 通过 -> 立即跑一次 regress_300s 门禁（恢复红线能力）；
-3. 批量生成其余 71 盒（后台作业，分片）；
-4. 实现 qa_wind_boxes.py 全量 QA；
-5. 改造 resolver（seed 键）+ 复用断言测试；
-6. 实现 build_case_manifest.py。
-   - 门禁：regress_300s 通过 + pytest（reuse/stats-window）。
-
-### Phase 2 — Sanity 验证
-范围：U=8, TI=0.10, S=4D, WD in {0, 10, 20}, seed=1，三控制。
-1. baseline 重复性（同 case 2 次，P 差 < 0.5%）；
-2. yaw 三档（-20/0/+20）符号测试；
-3. zero-yaw identity + induction r=1 identity；
-4. 31.5 统计窗口断言。
-   - 门禁：identity 全 PASS 才进入更大 DOE（方案 V2 明文要求）；
-   - 每步代码改动后先跑 regress_300s。
-
-### Phase 3 — 控制标定
-1. calibrate_induction.py：1T x (4U x 6a) -> operating map；
-2. calibrate_yaw_sign.py：3T 三档 -> sign calibration；
-3. 标定结果接入 schedule/replay（induction 用 map，弃 Betz 反演）。
-   - 门禁：regress_300s + identity 复跑 PASS。
-
-### Phase 4 — 试点多 seed DOE
-U=8, TI in {0.05,0.10,0.15}, WD in {0,10,20}, S in {4D,6D,8D}, seed 1..6, 3 controls
-（= 3x3x3x6x3 = 486；预算紧可先 seed 1..3 = 243）。
-1. 批跑器并行跑通；2. paired 统计；3. 趋势/CI 检查（含 Region II/III 分层）。
-   - 门禁：试点报告评审通过后才进全 DOE。
-
-### Phase 5 — 全功率 DOE（4U x 3TI x 6seed x 3WD x 4S x 3ctrl = 2592）
-分片执行（按 U 或 seed 切片 + resume），多周级后台；产出
-paired gains / CI / eta_transfer / eta_wake / Regret。
-
-### Phase 6 — Fine-grid 载荷研究
-1. 选代表工况（strong/partial wake、低/高 TI、短/长间距、含 12m/s）生成 fine BTS；
-2. run_fastfarm_batch --fine（OutFreq 调高）-> 原始 .outb；
-3. analysis/del.py rainflow -> DeltaDEL；analysis/pareto.py -> Power-Load Pareto；
-4. 回答方案 V2 Q1-Q3，写研究报告。
+- full DOE：WD ∈ {0, 10, 20}。
+- **Sanity 必须含 WD ∈ {−10, 0, +10}**（yaw sign + mirror symmetry validation）。
+- Mirror 指标：P(+10, γ) vs P(−10, −γ) 多 seed 统计平均（不要求单 seed 相等）。
+- 措辞（替代"负风向与正风向对称……"）：当前对称三机布局 + 横向统计均匀入流下，正负 WD 统计上镜像对称；full DOE 仅保留正侧，负侧用于 yaw-sign 与 mirror validation。
 
 ---
 
-## 12. 工作量 / 存储 / 并行预算（含约束 1/4 更新）
+## 10. 开发阶段（审查 §19 修订版）
+
+### Phase 0 — Configuration semantics（先做，不跑大仿真）
+1. 时间尺度/UsableTime 语义确认（含 Timestep Compatibility Test A/B/C，1T）。
+2. yaw 坐标约定固化 + layout-rotation baseline yaw 测试。
+3. baseline no-override 语义 + identity 两测试设计。
+4. 时长参数派生改造（t_sim/t_settle/control_dt）。
+> 里程碑：P0-1..P0-5 gate 对应项落地。
+
+### Phase 1 — Wind pipeline（只生成 pilot 盒）
+seed manifest / 统一盒（先 U8 18 盒）/ resolver / QA / manifest；BTS 共享引用确认。
+
+### Phase 2 — Control sanity（身份/符号/镜像）
+- zero-yaw identity、no-induction-override baseline identity、greedy/sentinel identity（均 T1..3 分机 <0.5%）
+- yaw sign gate（WD −10/0/+10 × yaw −20/0/+20）
+- mirror symmetry sanity
+> 在 identity/yaw-sign 全 PASS 前不得跑完整 yaw/induction DOE（硬 gate）。
+
+### Phase 3 — Operating-point calibration
+- Induction：1T × U{6,8,10,12} × a_cmd sweep -> (P, Ct, Cp, Pitch, RotorSpeed) operating map（校准）。
+- Yaw：确认 sign/机舱实际响应/尾流横向方向。
+
+### Phase 4 — Calibrated FLORIS optimization
+- Yaw：优化 γ*；Induction：**直接优化校准后的 a_cmd***；生成两类 LUT（含 a_cmd 列）。
+
+### Phase 5 — Pilot DOE
+- 主 pilot：U=8 × TI{5,10,15}% × WD{0,10,20} × S{4,6,8}D × seed1..6 × 3 controls（486）。
+- 额外 above-rated mini-pilot（P1-1）：U=12 × TI10% × WD{0,10} × S{4,6}D × seed1..3 × 3 controls（36）：验证 pitch 调级区行为。
+
+### Phase 5b — Representative FAST.Farm Direct Optimization（P0-8）
+- 12–20 代表 case（aligned/partial wake、低/高 TI、4D/8D、低于/高于额定）。
+- 分层搜索：粗 7×7（yaw ∈ {−30..30}/10°） -> 局部 ±10° step5°（约 5²） -> 可选 surrogate。
+- Induction 用校准 a_cmd 网格同样 coarse->local。
+- 得到 u*_FF；此后才计算 Regret。
+
+### Phase 5c — Weighted Energy（P1-6）
+有 wind rose -> AEP 分 spacing；无 -> equal-weight case-average（不称 AEP）。
+
+### Phase 6 — Full DOE
+仅当 §11 gate 全部 PASS。
+
+### Phase 7 — Fine-grid DEL
+代表 case；raw .outb 高频 + rainflow + component-specific S-N；Power-Load Pareto。
+> 开放项：多机 .outb 缺失导致 DEL 通道受限（T1 only）——fine 阶段需解决（可能需在许可范围内改变案例输出设置或改用可用载荷通道），未解前 DEL 结论不可下。
+
+---
+
+## 11. Full DOE 前硬性 Gate（审查 §20）
+
+```text
+[ ] timestep compatibility test（A/B/C）通过且结论记录
+[ ] BTS usable-time 语义一致（ALL=全时长可查、非周期、无 wrap 依赖）
+[ ] same (U,TI,seed) -> same BTS（复用断言）
+[ ] zero-yaw identity（farm + T1..3 < 0.5%）
+[ ] baseline no-override identity（T1..3 < 0.5%）
+[ ] greedy/sentinel induction identity（T1..3 < 0.5%）
+[ ] yaw sign verified（WD -10/0/+10 x yaw ±20）
+[ ] WD mirror sanity checked
+[ ] induction operating map generated（1T 标定）
+[ ] FLORIS induction LUT 存 calibrated a_cmd（不是 ratio 主链）
+[ ] 显式 t_sim/t_settle 窗口生效
+[ ] worker 进程清理为 PID-scope（不禁全局 kill）
+[ ] manifest 更新并发安全（append+锁 / 协调者独占）
+[ ] BTS 共享引用（无 per-case GB 复制）
+[ ] pilot DOE 通过
+```
+任一项未过：STOP，不 launch full DOE。
+
+---
+
+## 12. 工作量/存储/并行预算（更新）
 
 | 项 | 量 | 估算 |
 |---|---|---|
-| coarse BTS | 72 x ~1.2 GB | ~86 GB（1600s 盒） |
-| fine BTS | 6-12（代表工况） | 40-80 GB（dt=0.05 单盒极大；可按 (S,WD) 缩窄） |
-| TurbSim 生成 | 72 盒 | 每盒数分钟-数十分钟（后台分批） |
-| 单 case 墙钟 | 1200s 仿真 | ~20-30 min（6T）；1T 标定 ~4-6 min |
-| Phase 4 试点 | 486 case | 单 worker ~200h；4 worker ~2-3 天 |
-| Phase 5 全 DOE | 2592 case | 4 worker ~11 天（建议分片 + 里程碑评审） |
-| LUT（FLORIS） | 144 | 分钟级（seed 无关复用） |
-| 标定 | 24 x 1T + 3 x 3T | ~3-4 h |
-
-> 结论：全 DOE 是多周级战役 -> 按 Phase 4->5 里程碑门禁；先以 seed 1..3 输出现象与 CI。
+| pilot U8 盒 | 18 × ~0.7GB | ~12.6GB（已按实测 dt=0.1） |
+| 全 DOE 盒 | 72（按需生成，非一次性） | ~50-60GB 峰值 |
+| 1200s 仿真 | ~610-620s 墙/个（3T 实测） | pilot 486 ≈ 4 worker × ~2.5 天 |
+| above-rated mini-pilot | 36 | +1/8 pilot |
+| Timestep test | 3×1T×300s | ~10 min |
+| 标定 | 1T 4U×6a + yaw sign 9 次 | ~1.5-2h |
+| Direct opt（5b） | 12-20 case × (49+25) runs | 代表 case 直优量级 ~10^3 runs（分层） |
 
 ---
 
-## 13. 风险 / 红线 / 开放问题
+## 13. 开放问题 / 风险
 
-### 13.1 与方案 V2 的偏差（记录在案）
-1. DT_High 保持 0.01（E6a 约束），不采纳 V2 §9.1 粗跑 DT_High=0.10；
-2. 确定性 yaw sign 测试以 TI=0.05 盒替代 WindType=1（v5 稳态硬墙）；
-3. 旧盒删除（约束 3）-> 不提供 legacy 归档，回归门禁改用新引导盒。
-
-### 13.2 工程红线
-- ROSCO 10ms 路径不引入 socket/文件 I/O；闭环状态只来自 Provider push；
-- 角度/单位换算只在传输层统一；yaw_delta（CW+ 动作）与 induction_ref 是唯二规范通道；
-- 离线研究用"静态 setpoint 回放"而非 10ms 多循环（与历史可比）；
-- **wfcrl/、closed-loop-control/、docs/farm_control/ 零修改**（约束 5）；
-  注入点 = WFCRL_FARMINPUTS_DIR env + 显式 output_dir；
-- 日志只落 run 目录 / 工作区，绝不写 D:\ 根或 C:\。
-
-### 13.3 交叉影响：v5 重编译工作线
-- 若 P1 补丁（每高步刷新 TimeStart）落地并替换 FAST.Farm_x64_OMP.exe，稳态风解锁，
-  可增加稳态确定性测试并复核 §13.1-2；不影响本 DOE 结构。
-
-### 13.4 开放问题（实现阶段确认）
-1. fine 盒按 (S,WD) 缩窄宽度的规格（省盘 vs 统一 1500 的取舍）；
-2. OutFreq 与 DEL 通道数在 fine 阶段的实测折衷；
-3. 并行 worker 数与机器核数的实际配置（experiment.yaml 暴露；4 个 6T OMP 实例前 CPU 压测）；
-4. 旧 steady/ 子包废弃删除时机；
-5. 12 m/s（Region III）下 yaw/induction 收益很小 -> 是否需要从 pilot 先行验证再决定
-   全 DOE 中 12m/s 的权重（不删除该工况，仅排优先级）。
+1. 多机 .outb 缺失：功率已经 ZMQ 测量解决；DEL 载荷通道受限（T1 only）——fine 阶段须解决，否则 DEL 结论受限（记录在案）。
+2. TurbSim 单盒时长 ~4h+ CPU：并行策略 + 按需生成（先 pilot）已纳入。
+3. 内存 15.8GB：仿真实例与盒生成需错峰调度（已实践：暂停盒生成跑批）。
+4. 12m/s Region III：mini-pilot 先验证再决定权重。
+5. FLORIS 全精度 LUT（step0.05+细化）成本高：以校准 a_cmd 直优 + --quick 策略分阶段。
 
 ---
 
-## 14. 建议执行顺序
+## 14. 执行顺序（审查 §23 修订）
 
-1. seed manifest 固定 -> 2. 删除 spacing->BTS 依赖（不依赖旧盒）-> 3. 统一 1500x340 盒
-（引导盒先行）-> 4. BTS resolver（seed 键）-> 5. wind QA -> 6. case manifest ->
-7. 显式统计窗口 -> 8. run_id 结果隔离 -> 9. zero-yaw identity -> 10. induction r=1 identity ->
-11. yaw sign 标定 -> 12. induction operating map 标定 -> 13. pilot DOE（486）-> 14. full DOE（2592）
--> 15. fine-grid DEL/Pareto。
-sanity 三项（zero-yaw identity / induction identity / yaw sign）全 PASS 前，不跑大 DOE。
+1. 修正 yaw 坐标（WD 双计风险）——含测试
+2. baseline no-override 定义 + identity 两测试
+3. 时长参数派生（去 n_control_steps）
+4. 统一 UsableTime 语义（文档+配置注释）
+5. Timestep Compatibility Test（1T A/B/C）
+6. Induction 改 FLORIS 直接优化 calibrated a_cmd（LUT 加 a_cmd）
+7. Sanity 增加 WD=−10（mirror + yaw sign）
+8. Direct optimization 改分层搜索（Phase 5b）
+9. above-rated 12m/s mini pilot
+10. BTS 共享引用 + 批跑 reference_mode 记录
+11. 进程清理 PID-scope + manifest 并发安全
+12. Phase 5b（直优）-> 5c（weighted energy）
+13. 更新 full-DOE gate 并按序执行
+
+sanity（zero-yaw identity / no-override identity / greedy identity / yaw sign / mirror）全 PASS 前，不跑大 DOE。
