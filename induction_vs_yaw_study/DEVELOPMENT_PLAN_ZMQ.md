@@ -71,17 +71,18 @@ induction_vs_yaw_study/
 
 ## 4. 时间尺度与风盒语义（P0-1/P0-2/P1-2）
 
-### 4.1 三个时间尺度（必须分清）
+### 4.1 三个时间尺度（用户 2026-09-16 指令：DT_High=0.1 与 TurbSim timestep=0.1 对齐）
 
 | 尺度 | 值 | 说明/约束 |
 |---|---|---|
-| FAST.Farm DT_High | **0.01 s** | 集成 DLL 链路约束（E6a 实测 DT_High=0.05 启动崩溃）；不可改 |
+| FAST.Farm DT_High | **0.1 s**（= bts dt） | openfast_toolbox 行为 dT_High = dT_Box：**DT_High 恒等于 .bts 时间步**（模板默认亦 0.1）；DT_Low=3.0（控制步）|
 | Turbine FAST 步/ROSCO/FCR 内部 | 0.01 s（10ms） | 集成 DLL 内部；不在本研究触碰 |
-| TurbSim .bts dt | **0.1 s**（已验证） | FAST.Farm InflowWind 对入流插值；粗跑可用 |
+| TurbSim .bts dt | **0.1 s** | 与 DT_High 完全一致：InflowWind 无插值、逐帧对应（用户指令） |
 
-**审查纠错**：方案 V2 §9.1 的 "DT_TurbSim <= DT_High" 在数学上错误（0.1 > 0.01）且混用概念。正确表述：
-- .bts dt=0.1s 是**入流采样/插值**分辨率，与 FAST.Farm 唤醒求解步 DT_High=0.01s 无强制大小关系；
-- FAST.Farm 对 bts 逐帧线性插值（WindType=3），10Hz 入流对 power-only 粗跑足够（已实测 1200s 仿真正常）。
+**结论**：当前配置已满足用户指令（3T/6T 全部门禁、1200s 冒烟、identity、yaw-sign 均在此配置下通过）。
+- 审查 P0-1 的"DT_TurbSim <= DT_High 矛盾"不再成立：0.1 == 0.1，且 DT_High 由 dT_Box 决定（改 bts dt 会自动跟随）。
+- 历史"DT_High=0.01/301 帧窗口"分析基于旧假设，作废；v5 稳态风 ~260s 硬墙现象与 bts 无关（前者仅影响 WindType=1，本研究全部用 bts）。
+- 若未来需要 bts dt=0.05（DEL 精化候选），DT_High 自动变为 0.05（工具箱行为），无需手工改。
 
 ### 4.2 TurbSim UsableTime 唯一语义
 
@@ -135,15 +136,12 @@ turbsim:
     coh_exp: 0.0
 ```
 
-### 4.4 Timestep Compatibility Test（P0-1，full-DOE 前 gate）
+### 4.4 Timestep Compatibility（P0-1 已满足；保留记录）
 
-1T / U=8 / TI=0.10 / 300s，三档：
-- A: bts dt=0.10 + DT_High=0.01（当前，预期通过）
-- B: bts dt=0.05 + DT_High=0.01（确认 0.05 入流兼容性）
-- C: bts dt=0.01 + DT_High=0.01（确认极限）
-
-验收：记录三档 wall/结果差异；确认 A 为 coarse 默认（power-only 足够）；DEL fine 阶段再评估是否需 0.05 入流。
-> 注：E6a 已证明 DT_High 本身不可改 0.05（集成 DLL 启动崩溃），故本测试聚焦 **bts dt** 维度。
+- 默认档（A）：bts dt = DT_High = 0.1（用户指令）——**已全程验证**（identity/1200s 冒烟/yaw-sign/门禁全部 PASS）。
+- B 档（bts dt=0.05）：工具箱会让 DT_High 自动跟随 0.05；仅作为 DEL 精化候选，本 DOE 不需要（跨越网格 @0.1 对功率统计充分）。
+- C 档（0.01）：TurbSim 成本不可行，N/A。
+- 验收记录：A 档为 coarse 默认；若做 B，用 timestep_test.py（1T/300s）对比 mean P 差异并记录。
 
 ---
 

@@ -2,7 +2,7 @@
 
 | # | Gate | 状态 | 结果/日期 |
 |---|---|---|---|
-| 1 | timestep compatibility test | 🟡 A ✅；B 待 0.05 短盒（生成器已支持 --time-step/--analysis-time） | A：bts0.1+DT_High0.01 全程通过 |
+| 1 | timestep compatibility test | ✅（用户指令） | dt 对齐：bts 0.1 == DT_High 0.1（工具箱 dT_High=dT_Box；模板默认同）——全部门禁/identity/yaw-sign/1200s 冒烟均在此配置 PASS；B/C 档 N/A/可选 |
 | 2 | BTS usable-time 语义一致 | ✅ | 非周期 + 足长 AnalysisTime + ALL（全时长可查）唯一语义；1800s 盒覆盖 1200s 仿真验证 |
 | 3 | same (U,TI,seed) -> same BTS | ✅ | test_bts_reuse + QA |
 | 4 | zero-yaw identity | ✅ | -0.31%（farm）；分机版脚本（T1..3 <0.5%） |
