@@ -152,12 +152,36 @@ class Case:
     turbulence_intensity: float
     spacing_D: float
     seed_id: int = 1
-    # 仿真参数（从 grid.yaml 注入）
+    # 仿真参数（从 grid.yaml 注入；审查 P0-5：时长只存 t_sim/t_settle/control_dt，计数派生）
     floris_dt: float = 60.0
     floris_max_iter: int = 3
-    fastfarm_dt: float = 3.0
-    fastfarm_t_settle_s: float = 600.0
-    fastfarm_n_control_steps: int = 200
+    control_dt_s: float = 3.0
+    t_sim_s: float = 1200.0
+    t_settle_s: float = 600.0
+
+    @property
+    def n_total_control_steps(self) -> int:
+        """总控制步数 = t_sim / control_dt（派生，不独立配置）。"""
+        return int(round(self.t_sim_s / self.control_dt_s)) if self.control_dt_s else 0
+
+    @property
+    def n_statistics_steps(self) -> int:
+        """统计窗口控制步数 = (t_sim - t_settle) / control_dt（派生）。"""
+        return int(round((self.t_sim_s - self.t_settle_s) / self.control_dt_s)) \
+            if self.control_dt_s else 0
+
+    # -- 旧字段兼容别名（Deprecated；steady/ 子包与历史脚本可用）--
+    @property
+    def fastfarm_dt(self) -> float:
+        return self.control_dt_s
+
+    @property
+    def fastfarm_t_settle_s(self) -> float:
+        return self.t_settle_s
+
+    @property
+    def fastfarm_n_control_steps(self) -> int:
+        return self.n_statistics_steps
 
     @property
     def wind_direction_deg(self) -> float:
@@ -374,14 +398,13 @@ def make_fastfarm_config(
             reference_height=C.HUB_HEIGHT_M,
         )
 
-    max_iter = case.fastfarm_n_control_steps + int(
-        round(case.fastfarm_t_settle_s / case.fastfarm_dt)
-    )
+    # 总仿真时长 = t_sim（= t_settle + 统计窗口）；总控制步数派生（审查 P0-5）
+    max_iter = case.n_total_control_steps
     cfg = FastFarmConfig(
         case_name=f"ff_{case.id}",
         num_turbines=3,
         xcoords=xs, ycoords=ys,
-        dt=case.fastfarm_dt,
+        dt=case.control_dt_s,
         max_iter=max_iter,
         wind=wind,
         turbine_type="nrel_5MW",
@@ -429,9 +452,9 @@ def iter_cases(grid: dict, subset: bool = False) -> Iterator[Case]:
             spacing_D=float(s),
             floris_dt=float(flo.get("dt", 60.0)),
             floris_max_iter=int(flo.get("max_iter", 3)),
-            fastfarm_dt=float(ff.get("dt", 3.0)),
-            fastfarm_t_settle_s=float(ff.get("t_settle_s", 600.0)),
-            fastfarm_n_control_steps=int(ff.get("n_control_steps", 200)),
+            control_dt_s=float(ff.get("control_dt_s", ff.get("dt", 3.0))),
+            t_sim_s=float(ff.get("t_sim_s", 1200.0)),
+            t_settle_s=float(ff.get("t_settle_s", 600.0)),
         )
 
 

@@ -57,8 +57,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     steps = int(round(args.duration / args.dt))
     case = Case(8.0, args.wd, 0.05, args.spacing, seed_id=1,
-                fastfarm_dt=args.dt, fastfarm_t_settle_s=0.0,
-                fastfarm_n_control_steps=steps)
+                control_dt_s=args.dt, t_sim_s=args.duration, t_settle_s=0.0)
     print(f"yaw sign calibration @ U8/TI0.05/seed1/WD+{args.wd:g}/S{args.spacing:g}D")
 
     rows = []

@@ -41,8 +41,7 @@ def main():
     case = Case(
         wind_speed_ms=8.0, wind_direction_offset_deg=0.0,
         turbulence_intensity=0.10, spacing_D=6.0, seed_id=1,
-        fastfarm_dt=args.dt, fastfarm_t_settle_s=0.0,
-        fastfarm_n_control_steps=int(round(args.duration / args.dt)),
+        control_dt_s=args.dt, t_sim_s=args.duration, t_settle_s=0.0,
     )
     bts = args.wind_time_series or resolve_bts_file(8.0, 0.10, 1)
     if bts is None:

@@ -10,9 +10,9 @@ floris:
   max_iter: 3
 
 fastfarm:
-  dt: 3.0
-  t_settle_s: 600.0                # 显式结算窗口起点（0-600 行波+机组过渡）
-  n_control_steps: 200             # 600-1200 s 统计窗口（200 步 x 3s）
+  control_dt_s: 3.0    # 控制/统计步长 (s)（审查 P0-5：计数派生）
+  t_sim_s: 1200.0      # 总仿真时长 (s)
+  t_settle_s: 600.0    # 显式结算窗口起点（0-600 行波+机组过渡）
 
 batch:
   workers: 4                       # 并行 FAST.Farm 实例数（实现阶段压测后调优）

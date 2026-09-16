@@ -60,8 +60,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     steps = int(round(args.duration / args.dt))
     base_case = Case(8.0, args.wd, 0.10, 4.0, seed_id=1,
-                     fastfarm_dt=args.dt, fastfarm_t_settle_s=0.0,
-                     fastfarm_n_control_steps=steps)
+                     control_dt_s=args.dt, t_sim_s=args.duration, t_settle_s=0.0)
 
     greedy_mw = _greedy_mw(8.0)
 

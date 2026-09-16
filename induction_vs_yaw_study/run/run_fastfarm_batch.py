@@ -61,9 +61,9 @@ def _case_from_row(row: dict, ff_cfg: dict) -> Case:
         turbulence_intensity=float(row["TI"]),
         spacing_D=float(row["spacing_D"]),
         seed_id=int(row["seed"]),
-        fastfarm_dt=float(ff_cfg.get("dt", 3.0)),
-        fastfarm_t_settle_s=float(ff_cfg.get("t_settle_s", 600.0)),
-        fastfarm_n_control_steps=int(ff_cfg.get("n_control_steps", 200)),
+        control_dt_s=float(ff_cfg.get("control_dt_s", ff_cfg.get("dt", 3.0))),
+        t_sim_s=float(ff_cfg.get("t_sim_s", 1200.0)),
+        t_settle_s=float(ff_cfg.get("t_settle_s", 600.0)),
     )
 
 
@@ -87,13 +87,15 @@ def _run_one(row, lut, ff_cfg, out_dir: Path, ports) -> dict:
     case = _case_from_row(row, ff_cfg)
     if not row.get("bts_file"):
         return {"ok": False, "error": "no bts_file"}
-    settings = _lut_settings(lut, row["case_id"], row["control"])
+    # manifest control 名 -> replay control_type：induction == derating（同一控制）
+    ctype = "derating" if row["control"] == "induction" else row["control"]
+    settings = _lut_settings(lut, row["case_id"], ctype)
     case_dir = out_dir / "cases" / (f"{row['case_id']}_" + row["control"])
     case_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     try:
         out = replay_fastfarm_zmq(
-            case, row["control"], settings, output_dir=str(case_dir),
+            case, ctype, settings, output_dir=str(case_dir),
             wind_time_series=row["bts_file"], yaw_mode="static",
             cmd_port=ports[0], state_port=ports[1],
         )
@@ -116,6 +118,8 @@ def main():
     ap.add_argument("--max-retries", type=int, default=1)
     ap.add_argument("--filter", default=None, help="pandas 式过滤，如 'U==8 & TI==0.10'")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--resume", action="store_true",
+                    help="跳过 status=done 的行（对 failed 行重试）")
     ap.add_argument("--experiment", type=Path, default=EXPERIMENT_YAML)
     ap.add_argument("--lut", type=Path, default=LUT_CSV)
     ap.add_argument("--controls", nargs="+", default=CONTROLS, choices=CONTROLS)
@@ -157,8 +161,10 @@ def main():
             for row in csv.DictReader(f):
                 if row.get("status") == "done":
                     done.add((row["case_id"], row["control"]))
-    todo = [r_ for r_ in rows
-            if (r_["case_id"], r_["control"]) not in done and r_["status"] != "failed"]
+    if args.resume:
+        todo = [r_ for r_ in rows if (r_["case_id"], r_["control"]) not in done]
+    else:
+        todo = [r_ for r_ in rows if r_["status"] != "done"]
     print(f"to run: {len(todo)} (skipping {len(rows)-len(todo)} done/failed)")
     if not todo:
         print("nothing to run")

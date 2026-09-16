@@ -19,9 +19,9 @@ floris:
   max_iter: 3       # 稳态：少数步即可（每步相同设定）
 
 fastfarm:
-  dt: 3.0           # 控制步长 (s)
-  t_settle_s: 600.0 # 显式结算窗口起点（尾流传播 + 机组/控制器过渡）
-  n_control_steps: 200   # 统计窗口控制步数（600..1200 s）
+  control_dt_s: 3.0   # 控制/统计步长 (s)（审查 P0-5：计数派生，不存 n_control_steps）
+  t_sim_s: 1200.0     # 总仿真时长 (s)
+  t_settle_s: 600.0   # 显式结算窗口起点（尾流传播 + 机组/控制器过渡）
 
 # ---- 冒烟子集：先跑通再扩展（含 seed 维度）----
 smoke_subset:
