@@ -97,8 +97,13 @@ CONTAINS
       st%gen_speed_rad_s = LocalVar%GenSpeed
       st%rotor_speed_rad_s = LocalVar%RotSpeed
       st%gen_torque_meas_nm = LocalVar%GenTqMeas
-      st%nacelle_heading_rad = LocalVar%NacHeading
-      st%nacelle_vane_rad = LocalVar%NacVane
+      ! P3 单位修复（2026-09-21）：LocalVar%NacHeading/NacVane 在 ROSCO 内为 [deg]
+      ! （ReadSetParameters: NacHeading=avrSWAP(37)*R2D、NacVane=avrSWAP(24)*R2D），
+      ! 本字段名义为 rad。此前直传度数值（deg-as-rad）导致：状态帧 T2/T3 显示
+      ! 20610° 垃圾值；多命令重锁存时 C 侧 fcr_compute_yaw_target 把度当弧度
+      ! 算出垃圾目标。×D2R 修正；首次锁存（heading≈0）行为不变。
+      st%nacelle_heading_rad = LocalVar%NacHeading * (3.141592653589793_8 / 180.0_8)
+      st%nacelle_vane_rad = LocalVar%NacVane * (3.141592653589793_8 / 180.0_8)
       st%hub_wind_speed_mps = LocalVar%HorWindV
       st%blade_pitch_rad(1) = LocalVar%BlPitch(1)
       st%blade_pitch_rad(2) = LocalVar%BlPitch(2)

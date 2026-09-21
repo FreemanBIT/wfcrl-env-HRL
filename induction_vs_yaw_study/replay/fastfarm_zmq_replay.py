@@ -135,6 +135,13 @@ def replay_fastfarm_zmq(
 
     engine = FastFarmZmqEngine(cfg, cmd_port=cmd_port, state_port=state_port)
     engine.setup()
+    # ---- P2 非确定性修复：固定 OMP 线程数 ----
+    # FAST.Farm 的 OMP 浮点归约顺序差异造成运行间 ~1.9% farm 功率差（STATUS §三.2），
+    # 并疑似参与偶发顺桨事件。默认钉 1 线程；WFCRL_STUDY_OMP_NUM_THREADS 可覆盖，
+    # "0" = 不干预（旧行为）。必须在 engine.start() 前设置（子进程继承父 env）。
+    _omp = _os.environ.get("WFCRL_STUDY_OMP_NUM_THREADS", "1")
+    if _omp not in ("", "0"):
+        _os.environ["OMP_NUM_THREADS"] = _omp
     engine.start()
     bridge = ZmqFarmBridge(engine, n_turbines, wind_direction=wind_dir)
 
@@ -261,6 +268,29 @@ def _state_frame_output(state_rows, dt, n_total, final, aborted):
             pitch[i, tid] = float(np.mean(bp)) * 180.0 / np.pi
             rps[i, tid] = float(t.get("rotor_speed_rad_s", np.nan)) * 60.0 / (2.0 * np.pi)
             wnd[i, tid] = float(t.get("hub_wind_speed_mps", np.nan))
+    # P3 补丁：运行时不填 rotor_ct/rotor_cp（恒 0），此处由已发布字段回填
+    #   Ct = Thrust / (0.5 rho A V^2)，Cp_aero = P_gen/eta / (0.5 rho A V^3)
+    #   NREL 5MW: R=63 m, A=pi R^2, rho=1.225, eta_gen=0.944（ROSCO VS_GenEff）。
+    #   V 取 disk_disturbed_wind_mps（盘面扰动风）；注意：均匀盒（无湍流）下该字段
+    #   恒等于环境风、不反映尾流亏损，受遮挡机组（T2/T3）的 Ct/Cp 会因此被高估
+    #   （实测均匀盒 T2 Cp≈0.52>T2 物理上限 0.48）；标定/对比 FLORIS 时须用真盒
+    #   湍流工况并用 outb 的盘面风校核。V<=0.5/NaN 或 P<=0 时留空（NaN），不伪造。
+    _rho, _eta = 1.225, 0.944
+    _area = np.pi * 63.0 ** 2
+    for i, st in enumerate(state_rows):
+        for t in st.get("turbines", []):
+            v = float(t.get("disk_disturbed_wind_mps",
+                            t.get("hub_wind_speed_mps", np.nan)) or np.nan)
+            pw = float(t.get("gen_power_w", np.nan) or np.nan)
+            th = float(t.get("rotor_thrust_n", np.nan) or np.nan)
+            if not (v == v) or v <= 0.5 or not (th == th):
+                continue
+            q = 0.5 * _rho * _area * v * v
+            t["rotor_ct"] = th / q
+            if (pw == pw) and pw > 0.0:
+                t["rotor_cp"] = (pw / _eta) / (q * v)
+            else:
+                t["rotor_cp"] = np.nan
 
     md = dict((final.metadata or {}) if final is not None else {})
     md["measurement"] = "zmq_state_frames"

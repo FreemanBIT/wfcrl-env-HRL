@@ -15,6 +15,14 @@ set(FCR_SRC
     src/state_store.c
     src/watchdog.c
     src/runtime.c
+    src/rosco_api.c
+    src/signal_statistics.c
+    src/state_aggregator.c
+    src/induction_supervisor.c
+    src/yaw_action_manager.c
+    offline/harness/shm_command_source.c
+    offline/provider/offline_fastfarm_provider.c
+    transport/modbus/modbus_transport.c
 )
 
 add_library(farm_control_runtime STATIC ${FCR_SRC})
@@ -33,7 +41,17 @@ add_executable(fcr_unit_tests
     tests/unit/test_command_store.c
     tests/unit/test_abi.c
     tests/unit/test_watchdog.c
+    tests/unit/test_rosco_api.c
+    tests/unit/test_yaw_action_manager.c
+    tests/unit/test_offline_provider.c
+    tests/unit/test_signal_statistics.c
+    tests/unit/test_state_aggregator.c
+    tests/unit/test_induction_supervisor.c
+    tests/unit/test_modbus.c
 )
-target_include_directories(fcr_unit_tests PRIVATE ${FCR_INCLUDE_DIR} src tests/unit)
+target_include_directories(fcr_unit_tests PRIVATE ${FCR_INCLUDE_DIR} src offline/harness offline/provider transport/modbus tests/unit)
 target_link_libraries(fcr_unit_tests PRIVATE farm_control_runtime m)
+if(WIN32)
+    target_link_libraries(fcr_unit_tests PRIVATE ws2_32)
+endif()
 add_test(NAME unit COMMAND fcr_unit_tests)

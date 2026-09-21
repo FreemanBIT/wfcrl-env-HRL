@@ -77,6 +77,10 @@ def main() -> int:
           f"{args.duration:.0f}s / ports {base}+1")
     engine = FastFarmZmqEngine(cfg, cmd_port=base, state_port=base + 1)
     engine.setup()
+    # P2：与 replay 同口径固定 OMP（0=不干预）
+    _omp = os.environ.get("WFCRL_STUDY_OMP_NUM_THREADS", "1")
+    if _omp not in ("", "0"):
+        os.environ["OMP_NUM_THREADS"] = _omp
     if args.roscolog:
         import re as _re
         _discon = Path(out_dir) / "FarmInputs" / "DISCON_T1.IN"
