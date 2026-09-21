@@ -1,4 +1,4 @@
-# STATUS — 诱导 vs 偏航研究：开发进度与问题（快照 2026-09-21 14:50）
+# STATUS — 诱导 vs 偏航研究：开发进度与问题（快照 2026-09-21 17:10）
 
 > 本文档为阶段性状态快照（进度 / 验证结论 / 开放问题）。gate 逐项跟踪见 `EXECUTION_LOG.md`，
 > 方案见 `../DEVELOPMENT_PLAN_ZMQ.md`。
@@ -61,11 +61,15 @@
 - **300s 门禁**：真盒 4195 kW、uniform 盒 3863 kW，均 PASS
 - **附注（顺桨事件，转 P2 范畴）**：111818 那次 1200s 运行在 t≈524.2s 发生 T1 非命令性顺桨（pitch 0→90° @8°/s=PC_MaxRat、GenTq→0、P→0；T2 于 +96s 尾流消失后恢复 1740 kW）。已排除：SD_Mode=0、运行时无 fault/feather 路径、wfcrl 桥接块 `#ifndef` 排除、命令链（seq/target/机舱保持不变）、状态帧 k=174 全字段正常。已定位的贴边条件：`VS_TSRopt=0` → `VS_RefSpd` 被钳到 `VS_MinOMSpd=76.433 rad/s`，转矩 PI 把转速钉在该值（极限环 ±0.005），30° 偏航扭矩降 31% 加剧贴边；t≈518–521 转速缓慢下穿边界且衰减加速。**同配置 600s 复跑未复发**（ROSCO 内部态全程健康：PC_SpdErr=+46.47 恒定、PC_PitComT=0、PC_KP=−0.4）→ 判定为非确定性数值故障（与 P2 OMP 疑因同类），触发机制（桨距 PI 输出永久饱和于 PC_MaxPit 的路径）待 1200s+roscolog 复现运行（pwsh-9）定位。缓解预案：研究侧后处理 DISCON_IN 设 `VS_TSRopt>0`（转速离开 MinOMSpd 贴边）或统计窗剔除 P=0/pitch>80° 时段；该参数在 wfcrl 模板内，按约束⑤只能研究侧 post-process。
 
-### 🔴 P2 运行间非确定性 ~2%（升级：可致偶发永久顺桨）
-- 同一 yaw=0 工况两次运行 farm 功率 3275 vs 3338 kW（**1.9%**），T2/T3 分机差异可达 ~3%
-- 疑因 FAST.Farm OMP 20 线程的浮点归约顺序差异
-- **新证据**：1200s 偏航运行单次出现 T1 非命令性永久顺桨（§三.1 附注），同配置复跑未复发 → 非确定性不仅是统计噪声，长时长高偏航工况下可能触发**不可逆运行点破坏**，DOE 统计必须防污染
-- **影响**：单 seed 配对比较的噪声底；需固定 OMP 线程数（或确认多 seed 平均足以压噪）；顺桨检测/剔除逻辑进批跑器
+### ✅ P2 运行间非确定性 —— 已修复（2026-09-21，f297121）
+- **根因确认**：FAST.Farm OMP 浮点归约顺序差异。修复：replay/diag 在 `engine.start()` 前设 `OMP_NUM_THREADS=1`（env `WFCRL_STUDY_OMP_NUM_THREADS` 可覆盖，`0`=旧行为）。
+- **验证**：同 real 盒 baseline 两次 300s：farm/分机功率 **逐位一致**（4232.2834 kW，T1 100/100 样本 bitwise 相同）；修复前同 case 差 1.9%。
+- **代价**：wall ~140s→352s（~2.5×），DOE 时间预算需重估；可试 OMP=2/3 找确定性/速度折中（pilot 前定）。
+- **顺桨事件关联**：OMP 竞争是头号嫌疑；钉线程后复发概率预期大降，批跑器 feather_invalid 过滤逻辑已备（replay metadata）。
+
+### ✅ P3 状态帧字段 —— 已修复（2026-09-21，f297121 + 4c0fb4e）
+- **heading/vane 单位**：FCR_PublishState 此前把 ROSCO 内部**度值**直传 `*_rad` 字段（T2/T3 显示 20610° 垃圾、多命令重锁存会算出垃圾目标）。修复：publish 处 ×D2R；重编译 DISCON_WT1.dll。验证：180s yaw=30 诊断 `tgt=-30.00 nac=-30.00`（旧 −30.11/−1724）、锁存目标精确 −0.5236 rad、P=1136 kW；300s 门禁 PASS 4232 kW（基线零回归）。**多命令/control 模式现在语义正确**。
+- **rotor_ct/rotor_cp**：运行时不填（需 OpenFAST 内部量），研究侧由 thrust+power+盘面风回填（replay）；均匀盒下受遮挡机组会高估（已注记），标定用真盒 + outb 校核。
 
 ### 🟠 P3 状态帧部分字段不可靠
 - `rotor_ct / rotor_cp = 0`（runtime 未填充）→ Ct/Cp 诊断不可用（标定 map 该列无效）
@@ -76,10 +80,12 @@
 - 内存 15.8 GB：4 并发 TurbSim 曾打满导致浏览器卡死 → 现固定 2 并发
 - 仿真与盒生成必须错峰（1200 s 仿真读盒峰值 ~2.7 GB）
 
-### 🟡 P5 工程债
-- 最新改动未提交、未跑 300 s 门禁
-- 临时/探针目录未清理（`_probe_c`、`run_smoke*`、`run_quick2` 等）
-- 旧 `steady/` 子包未删；README 与 V3 未核对
+### ✅ P5 工程债 —— 已清理（2026-09-21，e7135d9 + 4c0fb4e）
+- ~~未提交~~：P1/P2/P3/P5 四批已提交（1ee69bb、f297121、e7135d9、4c0fb4e），每批 300s 门禁 PASS
+- ~~探针目录~~：outb_probe*、run_smoke*、run_quick2、_probe_c、_probe_outb 已删
+- ~~steady/ 子包~~：已删（Grid4D 时间墙问题，bts 为标准路径；引用核实为文档性）
+- ~~README~~：目录树/运行要点已同步
+- 附加：farm_control_runtime 的 build_windows.ps1 gcc 回退清单 + CMakeLists.txt 补全，**单测 39/39 恢复可运行**（此前根本编不过）
 
 ### 🟡 P6 尚未开始的阶段
 - **Phase 4**：FLORIS 校准后直优 `a_cmd`（P0-6 主链，LUT 加 a_cmd 列）
@@ -90,12 +96,13 @@
 ---
 
 ## 四、建议的下一步顺序
-1. ~~P1 yaw 生效性~~ ✅ 已闭环（§三.1）；剩余：确认 pwsh-9 复现运行结果，定位顺桨触发机制（或落实缓解预案）
-2. **P2 非确定性**：固定 OMP 线程数并复测；批跑器加顺桨检测（P=0 & pitch>80° 连续 N 步 → case 标记 invalid）
-3. **提交**：`replay` TTL 修复 + `diag_yaw_effect.py` + `_dbg2_window.py` + `_fill_boxes.py`（300s 门禁已跑 PASS）
-4. 盒生成继续滚动（2 并发）；到 18/18 后启动 pilot 分片（1 worker）
-5. Induction 标定按 §一.4 作废结论重做（长 TTL + 稳态窗口径）
+1. ~~P1 yaw 生效性~~ ✅（1ee69bb）
+2. ~~P2 非确定性~~ ✅ OMP=1 逐位可复现（f297121）；剩余：pilot 前试 OMP=2/3 速度折中；批跑器接线 feather_invalid 过滤
+3. ~~P3 状态帧字段~~ ✅ 单位修复 + Ct/Cp 回填（f297121/4c0fb4e）；剩余：Induction 标定按 §一.4 作废结论重做（长 TTL + 稳态窗口径）
+4. ~~P5 工程债~~ ✅（e7135d9/4c0fb4e）
+5. **盒生成继续滚动**（U8 15/18，s5 对生成中、s6 三盒排队，预计明日）；到 18/18 后启动 pilot 分片（1 worker，OMP 固定 + 顺桨过滤）
+6. U6/U10/U12 盒补齐 → 全 DOE
 
 ---
 
-*快照生成：2026-09-21 14:50；分支 dev/farm-control-runtime，最新提交 be47cbe*
+*快照生成：2026-09-21 17:10；分支 dev/farm-control-runtime，最新提交 4c0fb4e（P1/P2/P3/P5 全部闭环，P4/P6 随盒生成推进）*
