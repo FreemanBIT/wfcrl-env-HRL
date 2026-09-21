@@ -23,6 +23,16 @@ FLORIS 与 FAST.Farm、偏航与降载四个组合的功率与载荷。
 注意：旧设计结论中“诱导因子 a 仅作诊断量、不下发”已过时——新架构下 a 是**直接下发通道**
 （induction_ref），LUT 的 P_target(MW) 在回放驱动中换算为 a。
 
+## 运行环境要点（2026-09-21）
+
+- **OMP 固定**：replay 默认设 `OMP_NUM_THREADS=1`（env `WFCRL_STUDY_OMP_NUM_THREADS`
+  可覆盖，`0`=旧行为）——FAST.Farm 浮点归约顺序是运行间 ~1.9% 非确定性的根因，
+  钉死后 300s 真盒逐位可复现（代价：wall ~2.5x）。
+- **命令 TTL**：研究侧 `_send_cmds` 直调 engine 下发 yaw_delta/induction，
+  `ttl_s=1e6`（bridge 默认 60s 会在静态对风场景过期回退，P1 根因）。
+- **Ct/Cp 诊断列**：replay 由 thrust/power/盘面风回填 `rotor_ct/rotor_cp`
+  （运行时不填；均匀盒下受遮挡机组会高估，标定用真盒并 outb 校核）。
+
 ## 目录
 
 ```text
@@ -31,12 +41,15 @@ conversion/  LUT 存储口径（绝对功率 MW）与 power<->ratio<->a 换算
 optimize/    FLORIS 侧最优偏航/降载 LUT 求解
 lut/         LUT 模式与插值
 replay/      fastfarm_zmq_replay.py（★ ZMQ 回放驱动）/ floris_replay.py / schedule.py
-run/         run_replay / run_compare / build_luts / stage0_probe
-steady/      稳态工况回放（WindType=1；注意 >260s 有预编译 Grid4D 时间墙，建议 bts）
+run/         run_replay / run_compare / build_luts / regress_300s / diag_yaw_effect /
+             run_fastfarm_batch（批跑器子进程化）/_fill_boxes（风盒补齐）
 analysis/    指标与图
-tests/       单测（conversion/lut/cases）
-docs/        PROBE_RESULTS 等
+tests/       单测（conversion/lut/cases/stats_window）
+docs/        STATUS（进度快照）/ EXECUTION_LOG（gate 跟踪）等
 ```
+
+> 注：`steady/` 子包（WindType=1 稳态回放）已于 2026-09-21 移除——预编译
+> Grid4D 时间墙问题使其不再实用，统一使用 TurbSim bts 风盒（见 docs/STATUS.md）。
 
 ## 运行
 
