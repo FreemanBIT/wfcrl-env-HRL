@@ -79,7 +79,8 @@ def _write_status_row(status_path: Path, row, res, wall_s: float) -> None:
             if not exists:
                 w.writerow(["case_id", "control", "status", "error", "wall_s"])
             w.writerow([row["case_id"], row["control"],
-                        "done" if res["ok"] else "failed",
+                        ("feathered" if res.get("feathered")
+                         else ("done" if res["ok"] else "failed")),
                         res.get("error", ""), round(wall_s, 1)])
 
 
@@ -105,6 +106,13 @@ def _run_one(row, lut, ff_cfg, out_dir: Path, ports) -> dict:
         done = _sp.run(cmd, capture_output=True, text=True, timeout=None)
         out_txt = (done.stdout or "") + (done.stderr or "")
         wall = time.time() - t0
+        # P2 偶发顺桨：worker 打 FEATHERED 标记 → status=feathered（非 done，
+        # resume 自动重试；汇总区分统计）。ok=True 让父进程继续写状态行。
+        if done.returncode == 0 and "FEATHERED" in out_txt:
+            tail = out_txt.strip().splitlines()
+            err = "feathered: " + " | ".join(
+                ln for ln in tail if ln.startswith("FEATHERED"))[:280]
+            return {"ok": True, "error": err, "wall_s": wall, "feathered": True}
         if done.returncode == 0 and "OK " in out_txt:
             return {"ok": True, "error": "", "wall_s": wall}
         # 失败时打日志片段便于排查
@@ -201,7 +209,10 @@ def main():
             results.append(fut.result())
 
     n_ok = sum(1 for _, res in results if res["ok"])
-    print(f"done: {n_ok}/{len(results)}; incremental status -> {status_log}")
+    n_feathered = sum(1 for _, res in results if res.get("feathered"))
+    print(f"done: {n_ok}/{len(results)} "
+          f"(feathered={n_feathered}, see status col); "
+          f"incremental status -> {status_log}")
 
 
 if __name__ == "__main__":

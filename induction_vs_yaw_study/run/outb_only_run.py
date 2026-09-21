@@ -48,6 +48,12 @@ def run_case(case: Case, out_dir: Path, wind_time_series: str,
     ff = ContinuousFastFarmInterface(cfg)
     ff.setup()
     ff.reset(cfg.wind)   # 与 FastFarmZmqEngine.setup 一致：case 文件在此生成
+    # Phase 7：DEL 载荷通道（幂等，乙模式 .outb 才是载荷统计口径）
+    try:
+        from induction_vs_yaw_study.run.add_load_channels import add_load_channels
+        add_load_channels(str(ff._farm_base), verbose=False)
+    except Exception as _e:
+        print(f"[warn] load channels: {_e}")
     farm_inputs = Path(ff._farm_base)  # 已是 .../FarmInputs
     env = dict(os.environ)
     env["FCR_CFG_DT_LOW"] = str(dt_low)

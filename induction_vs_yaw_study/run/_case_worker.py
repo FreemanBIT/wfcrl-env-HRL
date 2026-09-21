@@ -87,7 +87,23 @@ def main():
         if out is None or out.time is None or len(out.time) == 0:
             print("FAIL no-output")
             return 1
+        # P2 偶发顺桨防护：replay 在 metadata 标记非命令性顺桨（pitch>80° &
+        # rotor<1rpm 连续 >=30s）。此类 case 的功率统计被不可逆运行点破坏污染，
+        # 打 FEATHERED 标记（父进程写 status=feathered，resume 重试；统计侧剔除）。
+        md = getattr(out, "metadata", None) or {}
+        if md.get("feather_invalid"):
+            print(f"FEATHERED {row['case_id']} {row['control']} "
+                  f"events={md.get('feather_events')}")
         out.to_csv(str(case_dir / "timeseries.csv"))
+        # feather 事件入 case metadata（provenance）
+        if md.get("feather_events"):
+            try:
+                import json as _json
+                _mp = case_dir / "feather_events.json"
+                _mp.write_text(_json.dumps(md["feather_events"], indent=1),
+                               encoding="utf-8")
+            except Exception:
+                pass
         # P2-1：case 级 metadata
         try:
             from induction_vs_yaw_study.run.provenance import write_case_metadata

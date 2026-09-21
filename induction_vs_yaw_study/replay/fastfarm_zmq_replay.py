@@ -135,6 +135,15 @@ def replay_fastfarm_zmq(
 
     engine = FastFarmZmqEngine(cfg, cmd_port=cmd_port, state_port=state_port)
     engine.setup()
+    # Phase 7 铺路：DEL 载荷通道（塔根/主轴/偏航轴承）追加到已物化 case 的
+    # ElastoDyn OutList（幂等；.outb 才会含这些通道，乙模式/在线模式通用）
+    try:
+        from induction_vs_yaw_study.run.add_load_channels import add_load_channels
+        _ff_base = getattr(engine._ff, "_farm_base", None)
+        if _ff_base:
+            add_load_channels(_ff_base, verbose=False)
+    except Exception as _e:
+        print(f"[warn] load channels: {_e}")
     # ---- P2 非确定性修复：固定 OMP 线程数 ----
     # FAST.Farm 的 OMP 浮点归约顺序差异造成运行间 ~1.9% farm 功率差（STATUS §三.2），
     # 并疑似参与偶发顺桨事件。默认钉 1 线程；WFCRL_STUDY_OMP_NUM_THREADS 可覆盖，
