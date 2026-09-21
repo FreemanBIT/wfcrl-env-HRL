@@ -1,4 +1,4 @@
-# STATUS — 诱导 vs 偏航研究：开发进度与问题（快照 2026-09-21 10:29）
+# STATUS — 诱导 vs 偏航研究：开发进度与问题（快照 2026-09-21 14:50）
 
 > 本文档为阶段性状态快照（进度 / 验证结论 / 开放问题）。gate 逐项跟踪见 `EXECUTION_LOG.md`，
 > 方案见 `../DEVELOPMENT_PLAN_ZMQ.md`。
@@ -36,30 +36,36 @@
 | 300s 门禁（每次代码改动后） | ✅ 全部 PASS（farm ≈ 3860 kW） |
 | 1200s 全时长（子进程批跑） | ✅ baseline 641 s / yaw 648 s wall |
 | FLORIS 快速 LUT | ✅ 144 工况 864 行（--quick） |
-| Induction 1T 标定 | 🟡 仅 U8 六点（a 0.10→1456 … 0.33→1588 kW，单调） |
+| Induction 1T 标定 | 🟡 仅 U8 六点（a 0.10→1456 … 0.33→1588 kW，单调）——**作废**：当时 yaw 未生效且统计口径含过渡段，需按 §三.1 修复后重做 |
+| **P1 yaw 有效性闭环** | ✅ 根因=TTL 60s 过期（§三.1）；180s/1200s/600s 三次带命令验证：seq=1、机舱恒 −30.1°、T1 P≈1133 kW（−31%） |
 
 ---
 
 ## 二、进行中
-- **U8 风盒 13/18**（TI05 s1–5、TI10 s1–4、TI15 s1–4）；2 个 TurbSim 正在补齐剩余 5 盒，单盒 ~7–9 h，预计 ~20 h
+- **U8 风盒 13/18**（TI05 s1–5、TI10 s1–4、TI15 s1–4）；2 个 TurbSim 正在补齐剩余 5 盒（PID 29640，10:57 启动），单盒 ~7–9 h
 - 内存 5 GB 空闲（固定 2 并发 TurbSim）
-- **未提交改动**：`replay/fastfarm_zmq_replay.py`（yaw_delta 通道）、`run/_fill_boxes.py`
+- **未提交改动**：`replay/fastfarm_zmq_replay.py`（yaw_delta + 长 TTL `_send_cmds`）、`run/_fill_boxes.py`、`run/diag_yaw_effect.py`（新增）、`run/_dbg2_window.py`（新增）
+- **进行中实验**：1200s + `--roscolog`（ROSCO 126 通道 10ms 日志）复现偶发顺桨（见 §三.1 附注）
 
 ---
 
 ## 三、存在的问题（按严重度）
 
-### 🔴 P1 yaw 命令实际未生效 —— 阻塞 yaw 侧全部结论
-- **现象**：yaw=30° 时 WT1 功率仅 −0.06%（几何预期 −35%）；LUT yaw=[24.4, 28.1, 0] 在 FAST.Farm 中增益 −0.13%（FLORIS 预测 +9.93%）
-- **链路已确认正常**：`YawDOF=True`、`YCMode=5`（FCR DLL 偏航速率指令）、ROSCO `Y_ControlMode=1`
-- **根因假设**：运行时偏航控制器依赖状态帧 `nacelle_heading_rad` 反馈；`farm_control_runtime/src/rosco_api.c:170` 在 `valid=0` 时取其 NaN → 速率指令失效
-- **已尝试**：绝对 yaw → `yaw_delta` 直通通道；实测 T1 仍 −0.06%（**未解决**）
-- **待做**：扩展状态导出 `valid / yaw_target_heading_rad / yaw_seq_applied / nacelle_vane_rad`，判定"命令是否到达 runtime"；若到达而机舱不动 → 需动 C 侧 DLL 并重编译
+### ✅ P1 yaw 命令未生效 —— 已解决（2026-09-21）
+- **根因**：`closedloop/bridge.py` 的 `_send_yaw_delta` 硬编码 `ttl_s=60.0`（induction 30.0）。静态对风场景只在 k=1 发一次命令，runtime 通道 t≈63s 过期回退 → ROSCO 内部目标恢复风向对齐 → 机舱以 0.5°/s 转回 0°。1200s 统计窗 [600,1200] 内机舱在 0°，故"yaw 无效"。全链路其余环节（传输/seq/锁存/ROSCO 状态机/ServoDyn）逐环验证正常。
+- **修复**（研究侧，不动 wfcrl/closed-loop-control）：`replay/fastfarm_zmq_replay.py` 新增 `_send_cmds()` 绕过 bridge 直调 `engine.send_yaw_delta(..., ttl_s=1e6)`（`ttl_s=0` 会回落 runtime 默认 60s，必须显式大正值）；同法处理 induction（A_GREEDY 哨兵跳过）；绝对 `yaw_deg` 路径因单位不安全改为直接 raise。
+- **验证**（uniform8_700s 盒，T1 yaw_delta=+30° CW 于 k=1 一次性下发）：
+  - 180s（20260921_110947）：seq=1 保持，机舱 −30.15°，T1 P≈1135 kW（vs 未偏航 1650，−31%≈cos²30°）
+  - 1200s（20260921_111818）：seq=1 + 机舱 −30.147° 保持至 t=1202s；T2 因尾流偏转恢复 1646 kW
+  - 600s 复跑（20260921_142310）：全程健康，T1 P_mean=1133 kW
+- **300s 门禁**：真盒 4195 kW、uniform 盒 3863 kW，均 PASS
+- **附注（顺桨事件，转 P2 范畴）**：111818 那次 1200s 运行在 t≈524.2s 发生 T1 非命令性顺桨（pitch 0→90° @8°/s=PC_MaxRat、GenTq→0、P→0；T2 于 +96s 尾流消失后恢复 1740 kW）。已排除：SD_Mode=0、运行时无 fault/feather 路径、wfcrl 桥接块 `#ifndef` 排除、命令链（seq/target/机舱保持不变）、状态帧 k=174 全字段正常。已定位的贴边条件：`VS_TSRopt=0` → `VS_RefSpd` 被钳到 `VS_MinOMSpd=76.433 rad/s`，转矩 PI 把转速钉在该值（极限环 ±0.005），30° 偏航扭矩降 31% 加剧贴边；t≈518–521 转速缓慢下穿边界且衰减加速。**同配置 600s 复跑未复发**（ROSCO 内部态全程健康：PC_SpdErr=+46.47 恒定、PC_PitComT=0、PC_KP=−0.4）→ 判定为非确定性数值故障（与 P2 OMP 疑因同类），触发机制（桨距 PI 输出永久饱和于 PC_MaxPit 的路径）待 1200s+roscolog 复现运行（pwsh-9）定位。缓解预案：研究侧后处理 DISCON_IN 设 `VS_TSRopt>0`（转速离开 MinOMSpd 贴边）或统计窗剔除 P=0/pitch>80° 时段；该参数在 wfcrl 模板内，按约束⑤只能研究侧 post-process。
 
-### 🔴 P2 运行间非确定性 ~2%
+### 🔴 P2 运行间非确定性 ~2%（升级：可致偶发永久顺桨）
 - 同一 yaw=0 工况两次运行 farm 功率 3275 vs 3338 kW（**1.9%**），T2/T3 分机差异可达 ~3%
 - 疑因 FAST.Farm OMP 20 线程的浮点归约顺序差异
-- **影响**：单 seed 配对比较的噪声底；需固定 OMP 线程数（或确认多 seed 平均足以压噪）
+- **新证据**：1200s 偏航运行单次出现 T1 非命令性永久顺桨（§三.1 附注），同配置复跑未复发 → 非确定性不仅是统计噪声，长时长高偏航工况下可能触发**不可逆运行点破坏**，DOE 统计必须防污染
+- **影响**：单 seed 配对比较的噪声底；需固定 OMP 线程数（或确认多 seed 平均足以压噪）；顺桨检测/剔除逻辑进批跑器
 
 ### 🟠 P3 状态帧部分字段不可靠
 - `rotor_ct / rotor_cp = 0`（runtime 未填充）→ Ct/Cp 诊断不可用（标定 map 该列无效）
@@ -84,11 +90,12 @@
 ---
 
 ## 四、建议的下一步顺序
-1. **P1 yaw 生效性**（最高优先，决定 yaw 实验能否成立）：导出 `valid / yaw_target / yaw_seq_applied` 定位断点
-2. **P2 非确定性**：固定 OMP 线程数并复测（单次对比即可）
-3. 提交 `yaw_delta` 改动 + `_fill_boxes.py`，跑一次 300 s 门禁
+1. ~~P1 yaw 生效性~~ ✅ 已闭环（§三.1）；剩余：确认 pwsh-9 复现运行结果，定位顺桨触发机制（或落实缓解预案）
+2. **P2 非确定性**：固定 OMP 线程数并复测；批跑器加顺桨检测（P=0 & pitch>80° 连续 N 步 → case 标记 invalid）
+3. **提交**：`replay` TTL 修复 + `diag_yaw_effect.py` + `_dbg2_window.py` + `_fill_boxes.py`（300s 门禁已跑 PASS）
 4. 盒生成继续滚动（2 并发）；到 18/18 后启动 pilot 分片（1 worker）
+5. Induction 标定按 §一.4 作废结论重做（长 TTL + 稳态窗口径）
 
 ---
 
-*快照生成：2026-09-21 10:29；分支 dev/farm-control-runtime，最新提交 be47cbe*
+*快照生成：2026-09-21 14:50；分支 dev/farm-control-runtime，最新提交 be47cbe*

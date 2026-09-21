@@ -7,7 +7,12 @@
   * 偏航执行模式：
       yaw_mode="static"（默认）: 首个控制步下发一次，runtime 锁存保持（与旧
         "锁定 DOF 静态失准"的稳态等效，研究口径一致）
-      yaw_mode="control"    : 每个控制步重发目标（ROSCO 偏航动态）
+      yaw_mode="control"    : 每个控制步重发目标（注意：每次重发 seq 递增会
+        重新锁存 target=当前方位−delta，机舱会持续转动；静态失准语义勿用）
+  * P1 根因修复（2026-09-21 诊断）：ZmqFarmBridge 硬编码 ttl（yaw 60s /
+    induction 30s），static 模式单次下发后通道过期，runtime 回退风向对齐，
+    ROSCO 将机舱转回 0° —— 1200s 统计窗内 yaw 恒等于未偏航。此处绕过桥，
+    直接经 engine 发送长 TTL（1e6 s；0 会被 runtime 当默认值）命令。
   * 测量：以 ZMQ 状态帧为准（每控制步采集，含全部 3 台风机的 P/yaw/pitch/
     rotor_speed/轮毂风速）。注意：本集成的 FAST.Farm 仅写 Case.T1.outb
     （T2/T3 无 .outb），若用 .outb 统计会把 farm 功率错算成仅 T1 —— 因此
@@ -15,6 +20,7 @@
 """
 from __future__ import annotations
 
+import math as _math
 import os as _os
 import sys as _sys
 _ccc = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), '..', '..', 'closed-loop-control'))
@@ -26,7 +32,7 @@ from typing import Dict, Optional
 import numpy as np
 
 from induction_vs_yaw_study.cases.three_nrel5mw import (
-    Case, make_fastfarm_config, yaw_target_deg,
+    Case, make_fastfarm_config,
 )
 from induction_vs_yaw_study.replay.schedule import control_inputs_for_recording
 
@@ -36,7 +42,37 @@ from wfcrl.engine.fastfarm_zmq import FastFarmZmqEngine
 
 from closedloop.types import Cmd
 from closedloop.bridge import ZmqFarmBridge
-from closedloop.induction import power_to_induction
+from closedloop.induction import power_to_induction, A_GREEDY
+
+# 命令通道 TTL：静态失准/持续诱导语义要求通道保持到仿真结束。
+# 注意 0 会被 runtime 解释为默认值（yaw 60s / induction 5s），故显式长 TTL。
+_CMD_TTL_S = 1.0e6
+
+
+def _send_cmds(engine, cmds, seq_ctr) -> None:
+    """经 engine 直发长 TTL 命令（绕过 ZmqFarmBridge 的 60s/30s 硬编码）。
+
+    P1 根因（2026-09-21 diag_yaw_effect 实测）：桥的短 TTL 使 static 模式
+    下发一次后通道过期，runtime 回退风向对齐目标，ROSCO 把机舱转回 0°，
+    统计窗内 yaw 效应被完全抹掉。seq 按通道按机自增（runtime 拒绝乱序）。
+    """
+    for tid, cmd in cmds.items():
+        if getattr(cmd, "yaw_delta_deg", None) is not None:
+            n = seq_ctr["yaw"].get(tid, 0) + 1
+            seq_ctr["yaw"][tid] = n
+            engine.send_yaw_delta(tid, _math.radians(float(cmd.yaw_delta_deg)),
+                                  seq=n, ttl_s=_CMD_TTL_S)
+        elif getattr(cmd, "yaw_deg", None) is not None:
+            raise ValueError(
+                "replay 只支持 yaw_delta_deg 动作语义（绝对 yaw_deg 需可靠的 "
+                "nacelle_heading 反馈，当前状态帧单位不可靠）")
+        if getattr(cmd, "induction_a", None) is not None:
+            a = float(cmd.induction_a)
+            if a >= A_GREEDY - 1e-3:
+                continue   # 贪婪哨兵：满发不下令
+            n = seq_ctr["ind"].get(tid, 0) + 1
+            seq_ctr["ind"][tid] = n
+            engine.send_induction(tid, a, seq=n, ttl_s=_CMD_TTL_S)
 
 
 def replay_fastfarm_zmq(
@@ -83,15 +119,14 @@ def replay_fastfarm_zmq(
             if np.isfinite(p_mw) and p_mw > 0:
                 a = power_to_induction(p_mw * 1e6, case.wind_speed_ms, yaw_deg=0.0)
             yaw_mis = st.get("yaw_deg", 0.0) or 0.0
-            # 旋转法：inflow 恒 270°，WD 由 layout 旋转表达；目标只含失准角（审查 P0-3）
-            abs_yaw = yaw_target_deg(yaw_mis)
-            cmds[tid] = Cmd(turbine_id=tid, yaw_deg=abs_yaw, induction_a=a)
+            # 动作通道（CW+ delta）：static 模式仅首步下发一次，机舱由初始对齐转到失准角。
+            # 不使用绝对 yaw 目标：那需要状态帧 nacelle_heading 反馈（runtime 未可靠填充）。
+            cmds[tid] = Cmd(turbine_id=tid, yaw_delta_deg=float(yaw_mis), induction_a=a)
     elif control_type == "yaw":
         for tid in range(1, n_turbines + 1):
             st = settings.get(tid) or {}
             yaw_mis = st.get("yaw_deg", 0.0) or 0.0
-            abs_yaw = yaw_target_deg(yaw_mis)
-            cmds[tid] = Cmd(turbine_id=tid, yaw_deg=abs_yaw, induction_a=None)
+            cmds[tid] = Cmd(turbine_id=tid, yaw_delta_deg=float(yaw_mis), induction_a=None)
     elif control_type != "baseline":
         raise ValueError(f"unknown control_type {control_type!r}")
 
@@ -117,10 +152,11 @@ def replay_fastfarm_zmq(
             raise TimeoutError("FAST.Farm 未在 90s 内发出状态帧")
 
         state_rows = []
+        seq_ctr = {"yaw": {}, "ind": {}}
         for k in range(1, n_total + 1):
             bridge.wait_step(k, timeout=180.0)
             if yaw_mode == "control" or (yaw_mode == "static" and k == 1):
-                bridge.write(k, cmds)
+                _send_cmds(engine, cmds, seq_ctr)
             # ZMQ 状态帧（全机）——统计唯一口径（.outb 仅 T1，不可用）
             # 瞬时断连（Connection reset）不中断回放：失败步补 NaN 行
             try:
@@ -228,6 +264,28 @@ def _state_frame_output(state_rows, dt, n_total, final, aborted):
 
     md = dict((final.metadata or {}) if final is not None else {})
     md["measurement"] = "zmq_state_frames"
+    # 非命令性顺桨检测（P2 偶发数值故障防护）：pitch>80° 且 rotor<1 rpm 连续 ≥30s
+    # 记入 metadata["feather_events"]，批跑器据此剔除污染统计
+    feather_events = []
+    min_len = int(30.0 / dt)
+    for tid in range(nt_cols):
+        bad = (pitch[:, tid] > 80.0) & (rps[:, tid] < 1.0)
+        run_start = None
+        for i in range(n + 1):
+            on = i < n and bool(bad[i])
+            if on and run_start is None:
+                run_start = i
+            elif not on and run_start is not None:
+                if i - run_start >= min_len:
+                    feather_events.append({
+                        "turbine_id": tid + 1,
+                        "t_start_s": float(time[run_start]),
+                        "t_end_s": float(time[i - 1]),
+                    })
+                run_start = None
+    if feather_events:
+        md["feather_events"] = feather_events
+        md["feather_invalid"] = True
     return SimulationOutput(
         time=time,
         power_mw=p_mw,

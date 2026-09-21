@@ -33,3 +33,9 @@
 - 自动随机端口：TIME_WAIT "Address in use" 根治
 - yaw target = NacYaw 系（对齐 0°）；"270°" 版本被 identity 抓获（-3.9% → -0.31%）
 - induction 标定链路成型（1T Case + _calib_worker + zmq_state_rows.json）
+
+## P1 yaw 有效性闭环 + 偶发顺桨发现（2026-09-21）
+- **P1 根因**：bridge `_send_yaw_delta` 硬编码 ttl=60s → 静态命令 63s 后过期回退，机舱转回 0°（历史全部 yaw 无效结论均由此产生）。修复：replay `_send_cmds` 直调 engine，`ttl_s=1e6`（研究侧，未动 wfcrl/closed-loop-control）。
+- **验证**：180s/600s/1200s 三次带命令运行 seq=1 保持、机舱恒 −30.1°、T1 P≈1133 kW（−31%≈cos²30°）、T2 尾流偏转收益 1646 kW。300s 门禁真盒 4195 / uniform 3863 kW PASS。
+- **新发现（转 P2）**：111818 次 1200s 运行 t≈524.2s T1 非命令性永久顺桨（pitch→90°@8°/s、GenTq→0）。排除 SD_Mode/运行时 fault/wfcrl 桥接/命令链。条件：`VS_TSRopt=0` 使转速被转矩 PI 钉在 `VS_MinOMSpd` 贴边（±0.005 rad/s 极限环）。同配置 600s 复跑未复发，ROSCO 内部态（dbg2 126 通道）全程健康 → 判非确定性数值故障。1200s+roscolog 复现运行进行中。
+- **影响**：Induction U8 标定 map 作废重做（旧口径含未生效 yaw + 全窗均值）；DOE 批跑器需加顺桨检测剔除。
