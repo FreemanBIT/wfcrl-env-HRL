@@ -112,6 +112,16 @@
 3. WT*.fst 载荷通道追加工具（Phase 7 DEL 铺路，乙模式验证）
 4. 磁盘方案决策支持（72 盒 ~103GB vs D: 剩余）
 
+### 开发窗口执行结果（2026-09-22 上午）
+1. **批跑器顺桨过滤** ✅（6a9d17c）：worker `FEATHERED` → status=feathered（resume 重试）+ feather_events.json
+2. **OMP 折中实测** ✅：**只有 OMP=1 逐位确定**（4232.2834×2）；OMP=3 噪声 0.018%@300s（4194.63/4195.37，162s）——pilot 默认 OMP=1，OMP=3 记录为降级选项
+3. **DEL 载荷通道** ✅（6a9d17c）：`run/add_load_channels.py` 幂等追加 TwrBs/LSSGag/YawBr 至 ElastoDyn OutList，已接 replay + 乙模式；300s 门禁 .outb 实测 31 通道（TwrBsMyt 28.4 MN·m）
+4. **磁盘账本** ✅（4cee4eb）：72 盒 ≈55–60GB（旧 103GB 高估），D: 剩 98.3GB——单盘可行，保留策略：pilot 先行 + raw timeseries 用后清
+5. **盒 QA（15 已完成 U8 盒）** ✅：14/15 pass；**TI15_seed03 realized TI=0.120 vs 目标 0.15**（超容差 0.02，TurbSim 高 TI seed 方差）——108 个 case 被 `--require-qa` 标 qa_failed；决策点：重造（7-9h，有夜间窗口）or 放行（多 seed 平均稀释），pilot 前定
+6. **manifest 干跑** ✅：2592 行全 DOE；U8 648 = pending 504（14 好盒）+ qa_failed 108（TI15_s3）+ blocked 36（s6 排队）
+7. **Induction 标定重做（gate 9，U8）** ✅ 完成（2026-09-22）：`_calib_worker` 加 `--settle 120` 显式窗口 + 600s 时长；旧 map 归档 `.INVALIDATED_ttl60s`。**8 点 map（TI10_s1，OMP=1）**：a 0.10→7.5kW(停机) / 0.12→202 / 0.15→711 / 0.17→963 / 0.20→1232 / 0.25→1474 / 0.30→1556 / 0.33→1568 kW；Ct/Cp/pitch/rpm 全列有效（Ct/Cp 由 replay 回填）。**关键发现：U8 有效降载域 a∈[0.12,0.33]，a=0.10 崩溃进 Region1 停机**（执行链 min_pitch=0.55rad×(1-pr) 在深降载时把桨距压到 14-15°→转速跌破 VS_MinOMSpd→GenTq=0 锁死）——**Phase 4 优化的 a_cmd 搜索域必须 clip 到 [a_min_eff(U), 0.33]**；U6/10/12 的 a_min_eff 待对应盒生成后标定
+   - 执行链错配细节：Supervisor `power_ratio` 相对额定 5MW（pr=a(1-a)²/pe0），ConstPower P_ref 在 8m/s 常不可达 + min_pitch 主导执行——映射/执行语义的配合下界是风速相关的真实系统特性，标定即为此刻画
+
 ### 磁盘方案评估（2026-09-21 实测）
 - 现状：U8 真盒 13 + uniform8 1 = 9.1 GB（692MB/盒@1800s、329MB@700s）；D: 剩余 98.3 GB；results 全部 1 GB（dbg2 诊断文件占 0.5GB，可清理）
 - **72 盒真实需求 ≈ 55–60 GB**（U6@1950s ~1.0GB/盒、U8@1800s 0.69GB/盒、U10@1700s 0.65GB、U12@1650s 0.63GB；此前 "~103GB" 高估）

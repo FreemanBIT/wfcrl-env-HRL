@@ -34,7 +34,10 @@ def main():
     ap.add_argument("--ti", type=float, default=0.10)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--wind-time-series", default=None)
-    ap.add_argument("--duration", type=float, default=300.0)
+    ap.add_argument("--duration", type=float, default=600.0)
+    ap.add_argument("--settle", type=float, default=120.0,
+                    help="统计窗口起点（s）：剔除降载过渡段，只平均 [settle, duration]"
+                         "（旧口径全窗平均是 map 作废原因之一，2026-09-21）")
     args = ap.parse_args()
 
     if args.wind_time_series is None:
@@ -46,7 +49,7 @@ def main():
 
     p_target_mw = power_from_induction(float(args.a), args.u, electrical=True) / 1e6
     case = Case(args.u, 0.0, args.ti, 500.0, seed_id=int(args.seed), n_turbines=1,
-                control_dt_s=3.0, t_sim_s=args.duration, t_settle_s=0.0)
+                control_dt_s=3.0, t_sim_s=args.duration, t_settle_s=float(args.settle))
     t0 = time.time()
     out = replay_fastfarm_zmq(case, "derating",
                               {1: {"power_target_mw": p_target_mw}},
@@ -57,7 +60,14 @@ def main():
     if out is None or out.power_mw is None:
         print(f"FAIL U{args.u} a{args.a} no-output"); return 1
     pmw = np.asarray(out.power_mw, dtype=float)
-    p_kw = float(np.nanmean(pmw.sum(axis=1))) * 1e3
+    # 显式窗口 [settle, duration]：只统计稳态降载段（重做口径，2026-09-21）
+    t_vec = (np.arange(pmw.shape[0]) + 1) * 3.0   # 控制步 -> 时间（control_dt=3s）
+    win = t_vec >= float(args.settle)
+    if not win.any():
+        win = slice(None)   # 防御：窗口为空则退回全窗
+        p_kw = float(np.nanmean(pmw.sum(axis=1))) * 1e3
+    else:
+        p_kw = float(np.nanmean(pmw[win].sum(axis=1))) * 1e3
     # Ct/Cp 从保存的 ZMQ 状态取均值
     ct = cp = pitch = rps = float("nan")
     sp = _STUDY_ROOT / "results" / "_calib_ind" / \
@@ -65,7 +75,10 @@ def main():
     if sp.exists():
         rows = json.loads(sp.read_text(encoding="utf-8"))
         cts, cps, pits, rpsl = [], [], [], []
-        for st in rows:
+        for i, st in enumerate(rows):
+            t_row_time = (i + 1) * 3.0
+            if t_row_time < float(args.settle):
+                continue   # 过渡段剔除（与功率窗口同口径）
             for t in st:
                 if t.get("turbine_id") == 1:
                     if t.get("rotor_ct") is not None: cts.append(t["rotor_ct"])
