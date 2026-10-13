@@ -147,9 +147,10 @@ CONTAINS
         ! Change VS Ref speed based on R_Speed
         LocalVar%VS_RefSpd = LocalVar%VS_RefSpd_TSR * LocalVar%PRC_R_Speed
 
-
         ! Filter reference signal
-        LocalVar%VS_RefSpd = LPFilter(LocalVar%VS_RefSpd_TSR, LocalVar%DT, CntrPar%F_VSRefSpdCornerFreq, LocalVar%FP, LocalVar%iStatus, LocalVar%restart, objInst%instLPF)
+        ! [FCR M5 fix] v2.10.6 上游 bug：此处误用未缩放的 VS_RefSpd_TSR 覆盖了 PRC 缩放
+        ! 后的 VS_RefSpd，导致 PRC_R_Speed 降额完全失效。改为滤波缩放后的值。
+        LocalVar%VS_RefSpd = LPFilter(LocalVar%VS_RefSpd, LocalVar%DT, CntrPar%F_VSRefSpdCornerFreq, LocalVar%FP, LocalVar%iStatus, LocalVar%restart, objInst%instLPF)
 
 
         ! Exclude reference speeds specified by user
