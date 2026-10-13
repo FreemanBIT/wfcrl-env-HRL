@@ -188,9 +188,13 @@ CONTAINS
          CntrPar%VS_RtPwr = VS_RtPwr_nom * sp%power_ratio
          CntrPar%VS_MaxTq = VS_MaxTq_nom * sp%torque_limit_ratio
          CntrPar%VS_RefSpd = VS_RefSpd_nom * sp%speed_ref_ratio
-         ! v2.10.6 原生 PRC 降额（两版本字段都存在，向后兼容）：
-         !   WSE_TSR 模式 VS_RefSpd = VS_RefSpd_TSR * PRC_R_Speed（额定以下降速→降功率）
-         !   VS_ConstPwr_GenTq / VS_MaxTq 乘 PRC_R_Torque（额定以上降转矩）
+         ! v2.10.6 原生 PRC 降额（向后兼容）：
+         !   PRC_Mode=2 + PRC_Comm=Constant → PowerControlSetpoints 读 CntrPar%PRC_R_*
+         !   WSE_TSR: VS_RefSpd=VS_RefSpd_TSR*PRC_R_Speed（额定以下降速→降功率）
+         !   VS_ConstPwr_GenTq/VS_MaxTq 乘 PRC_R_Torque（额定以上降转矩）
+         !   （PRC_Mode≠2 时 v2.10.6 会把 PRC_R_* 强制置 1.0，降额失效——这是本修复关键）
+         CntrPar%PRC_Mode = 2
+         CntrPar%PRC_Comm = 0                       ! PRC_Comm_Constant
          CntrPar%PRC_R_Speed = sp%speed_ref_ratio
          CntrPar%PRC_R_Torque = sp%torque_limit_ratio
          ! 最小桨距约束
@@ -208,6 +212,9 @@ CONTAINS
          ! disabled：完全回退 ROSCO 额定
          CntrPar%VS_ConstPower = 0
          CntrPar%PS_Mode = 0
+         CntrPar%PRC_Mode = 0
+         CntrPar%PRC_R_Speed = 1.0_8
+         CntrPar%PRC_R_Torque = 1.0_8
       END IF
    END SUBROUTINE FCR_ApplyReferences
 
