@@ -1,4 +1,6 @@
-# modbus_map.yaml — Modbus TCP 寄存器映射（Phase 9 冻结，同步 modbus_register_map.h）
+# modbus_map.yaml — Modbus TCP 寄存器映射（Phase 9 冻结；DR-8 v2 冻结 2026-10-13，
+#   同步 modbus_register_map.h；吞吐已测：30 台 1.63ms/轮、100 台 3.06ms/轮，见
+#   induction_vs_yaw_study/results/_modbus_bench/benchmark.json）
 
 transport:
   type: modbus_tcp
@@ -65,3 +67,29 @@ state_area:
 
 # 并发模型：单客户端；RCP 轮询状态区（建议 100 ms）并异步写命令区。
 # 单位与坐标语义与 fcr_state_types.h / PROTOCOL_DECISIONS.md 一致。
+
+# ---- DR-8 扩展（2026-10-13，v2 冻结草案，待吞吐测量后最终冻结）----
+awae_frame_buffer:
+  base: 0x2000
+  per_point: 32
+  n_points_slot: 0        # u16
+  frame_seq_slot: 1       # u64
+  source_time: 5          # f64
+  point0: 9
+  point_fields:
+    point_id: 0           # u16
+    position_xyz: 1       # 3×f64
+    wind_xyz: 7           # 3×f64
+    wind_speed: 13        # f64
+    wind_direction: 17    # f64 (rad)
+    turbulence: 21        # f64
+    crc16: 31             # u16
+
+integrity:
+  protocol_version: 0x0815  # u16（时钟区）
+  clock_crc16: 0x0816       # u16
+  state_quality_flags: 0x7C # 每机 128 寄存器尾部 u16（bit0 valid/bit1 stale/bit2 fallback）
+  state_timestamp: 0x7D     # u64
+  state_crc16: 0x7E         # u16
+  state_data_version: 0x7B  # u16
+
