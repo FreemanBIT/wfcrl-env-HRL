@@ -49,4 +49,16 @@
 - M0-0.4 300s 基线回归：**PASS**（20261013_163723，U8/TI10/seed01，WD0/S6D，300s，steps=100，
   mean_farm_power=4232 kW，wall=525.9s；注：load-ch 已加 TwrBsMxt/TwrBsFxt 等通道，
   与旧基线 3860~4195kW 口径差异待 M0-0.3 多机隔离验证时统一）。
-- 遗留：M0-0.1 ROSCO fork diff 清单、M0-0.3 多机实例隔离、M0-0.5 实时核心拆分设计（下一步）。
+- **M0 全部子任务完成**（2026-10-13 更新）：
+  - M0-0.1 ROSCO fork diff 盘点 → docs/farm_control/M0_ROSCO_FORK_DIFF.md（commit 49cd61b）：
+    A 组场控集成仅 DISCON.F90(+212/-3 FCR 宏) + Controllers.f90(+17/-1 偏航钩子)；
+    B 组健壮性（AlreadyInitialized/WE_Vw 除零守卫/SysGnuWin）其余文件原版。
+  - M0-0.3 多机实例隔离验证 → verify_multiturbine_isolation.py（commit ffb1d4a）**PASS**：
+    单次 300s T1=诱导0.2(仅)/T2=偏航+10(仅)/T3=无命令；
+    seq 回显：T1 ind=1/yaw=0、T2 yaw=1/ind=0、T3 全0（无串扰）；
+    功率：T1=1418kW(-14.3% vs greedy 1655，诱导生效)、T2=1271kW(偏航生效)、T3=1366kW。
+    → 确认 B 组 AlreadyInitialized 守卫多实例无冲突。
+  - M0-0.5 实时核心拆分设计 → docs/farm_control/M0_RTCORE_SPLIT_DESIGN.md（commit b603f7c）：
+    DR-4 无锁快照协议（双缓冲 + seq），10ms 禁锁/socket/malloc/等待；rt_core + comm_adapter 新建。
+- **门禁 G0 达成条件核对**：0.1/0.2 结论落库 ✅、0.4 300s 基线 PASS ✅（4232kW）、
+  0.3 多机隔离 PASS ✅、0.5 设计落库 ✅ → **G0 满足，可进入 M1**。
