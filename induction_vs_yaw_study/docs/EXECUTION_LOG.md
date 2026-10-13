@@ -77,4 +77,12 @@
     * 离线模式验证脚本 verify_bridge_modes.py（2f74889）**PASS**：ctypes 加载编译后 bridge DLL，
       校验 Mode0 旁路 / Mode1 R_power 单调+控制分配守恒 / Mode2 Ct 表反解 min_pitch 方向 /
       Ct 估计 DR-7 上游参考风优先 / yaw_adapter DR-5 / TTL 安全。
-    * 300s 回归（G1 剩余项）运行中。
+    * 300s 回归 **PASS**（20261013_175605，mean_farm_power=4232 kW，与 M0 基线一致无劣化）
+      → **门禁 G1 达成**（单测 47/47 + 离线 Mode0/1/2 验证 PASS + 300s 无劣化，commit 366cc72）。
+- **M2 AWAE Observation Manager + Wind Mapper**（2026-10-13，commit 475904a）：
+  - awae/awae_point_frame.h（ICD 观察点帧）；observation_manager（配置驱动点位注册 + 环形缓冲 + 时间同步，
+    与风机状态分离 DR-7）；wind_mapper（观察点→盘面等效风/TI，四类风速语义分离，256/1000 点）。
+  - tests/unit/test_awae.c 4 用例；**单测 51/51 PASS**。
+  - **G2 部分达成**：256/1000 点容量 ✅、DR-7 语义 ✅、lambda（Mode2）✅；
+    ⚠️ "映射 vs 供应商 GPU 高分辨率场（Vdist_High）对比偏差" 需 Linux+CUDA 供应商 RT 环境，
+    本机（Windows，无 CUDA RT）**环境受限**，待 RT 环境联调时补验（记为 M6 前置）。
