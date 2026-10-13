@@ -183,6 +183,15 @@ CONTAINS
       sp => FCR_Setpoint(tid)
       IF (.NOT. ASSOCIATED(sp)) RETURN
       IF (sp%induction_enable /= 0) THEN
+         ! greedy 哨兵：power_ratio≈1（无实际降额）时不激活任何 override，
+         ! 保持纯 ROSCO greedy（匹配研究侧 a≥A_GREEDY-ε 不下发的语义；
+         ! 也避免 PRC_Mode=2 在 ratio=1 时改变控制动力学引起尾流重分布）
+         IF (sp%power_ratio >= 1.0_8 - 1.0e-6_8) THEN
+            CntrPar%VS_ConstPower = 0
+            CntrPar%PS_Mode = 0
+            CntrPar%PRC_Mode = 0
+            RETURN
+         END IF
          ! 功率参考（VS_ConstPower 模式）
          CntrPar%VS_ConstPower = 1
          CntrPar%VS_RtPwr = VS_RtPwr_nom * sp%power_ratio
