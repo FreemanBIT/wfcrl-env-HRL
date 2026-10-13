@@ -86,3 +86,9 @@
   - **G2 部分达成**：256/1000 点容量 ✅、DR-7 语义 ✅、lambda（Mode2）✅；
     ⚠️ "映射 vs 供应商 GPU 高分辨率场（Vdist_High）对比偏差" 需 Linux+CUDA 供应商 RT 环境，
     本机（Windows，无 CUDA RT）**环境受限**，待 RT 环境联调时补验（记为 M6 前置）。
+- **M3 调度核三任务无锁快照层**（2026-10-13，commit 6a4a1fe）：
+  - bridge/rt_snapshot.h/.c：命令下行(Slow→Fast)/状态上行(Fast→Slow)/流场下行(Mapping→Fast)
+    无锁双缓冲（单写单读 + seq 发布 + cache-line 对齐）；Fast 10ms 只读无锁/无分配/无等待（DR-4/DR-6）
+  - tests/unit/test_rt_snapshot.c：基本读写 + 多线程竞争注入；**单测 53/53 PASS**
+  - 多机实例隔离（M3 另一项）已在 M0-0.3 PASS ✅
+  - ⚠️ vendor 调度核钩子接线 + 200 步 RT smoke + TSAN 需 Linux+CUDA RT 环境（环境受限，记 M6 前置）。
