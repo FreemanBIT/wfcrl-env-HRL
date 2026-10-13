@@ -27,16 +27,17 @@ $gcc = Get-Command gcc -ErrorAction SilentlyContinue
 if (-not $gcc) { Write-Error "gcc not found"; exit 1 }
 Write-Host "[gcc] building..."
 Push-Location $root
-gcc -std=c11 -Wall -Wextra -O2 -Iinclude -Isrc -Ioffline/harness -Ioffline/provider -Itransport/modbus -Itests/unit -o $runner `
+gcc -std=c11 -Wall -Wextra -O2 -Iinclude -Isrc -Ibridge -Ioffline/harness -Ioffline/provider -Itransport/modbus -Itests/unit -o $runner `
     src/angle_convention.c src/command_store.c src/state_store.c src/watchdog.c src/runtime.c `
     src/rosco_api.c src/signal_statistics.c src/state_aggregator.c src/induction_supervisor.c src/yaw_action_manager.c `
+    bridge/fcr_bridge_core.c bridge/yaw_adapter.c `
     offline/harness/shm_command_source.c offline/provider/offline_fastfarm_provider.c `
     transport/modbus/modbus_transport.c `
     tests/unit/test_framework.c tests/unit/test_main.c tests/unit/test_angle_convention.c `
     tests/unit/test_command_store.c tests/unit/test_abi.c tests/unit/test_watchdog.c `
     tests/unit/test_rosco_api.c tests/unit/test_yaw_action_manager.c tests/unit/test_offline_provider.c `
     tests/unit/test_signal_statistics.c tests/unit/test_state_aggregator.c tests/unit/test_induction_supervisor.c `
-    tests/unit/test_modbus.c -lws2_32
+    tests/unit/test_modbus.c tests/unit/test_bridge_core.c -lws2_32
 if ($LASTEXITCODE -ne 0) { Pop-Location; exit 1 }
 Write-Host "[gcc] running unit tests..."
 & $runner

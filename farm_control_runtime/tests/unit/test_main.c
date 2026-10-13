@@ -16,6 +16,7 @@ void test_offline_provider_register(void);
 void test_signal_statistics_register(void);
 void test_state_aggregator_register(void);
 void test_induction_supervisor_register(void);
+void test_bridge_core_register(void);
 #ifndef MB_STUB
 void test_modbus_register(void);
 #endif
@@ -33,6 +34,7 @@ int main(void)
     test_signal_statistics_register();
     test_state_aggregator_register();
     test_induction_supervisor_register();
+    test_bridge_core_register();
 #ifndef MB_STUB
     test_modbus_register();
 #endif
