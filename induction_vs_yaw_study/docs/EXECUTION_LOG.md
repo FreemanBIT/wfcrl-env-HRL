@@ -156,3 +156,8 @@
           **修复（6d0c956）**：FCR_ApplyReferences 加 greedy 哨兵——power_ratio≥1-1e-6 时
           不激活任何 override（保持纯 greedy，匹配 a≥A_GREEDY-ε 不下发语义）。
         * 修复后重跑 identity 套件验证中；zero_yaw T2=-0.62%（v2.10.6 yaw 滤波差异）待评估。
+        * **根因⑤（测试 bug，非运行时）**：verify_identity._greedy_mw 用 electrical=True
+          （含发电机损耗的电气功率 2.187MW）→ power_to_induction 返回 a≈0.246（实际降额 5.6%）
+          而非 1/3。v2.9.4 机制弱故仅 -0.44%；v2.10.6 PRC_R_Pitch 更有效 → identity FAIL。
+          **修复（6340082）**：_greedy_mw 用气动功率（electrical=False）→ a=1/3 → power_ratio=1
+          → greedy 哨兵跳过（与 no-override 等价）。重跑验证中。
