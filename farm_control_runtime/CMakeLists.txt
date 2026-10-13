@@ -22,6 +22,7 @@ set(FCR_SRC
     src/yaw_action_manager.c
     bridge/fcr_bridge_core.c
     bridge/yaw_adapter.c
+    bridge/rt_snapshot.c
     awae/observation_manager.c
     awae/wind_mapper.c
     offline/harness/shm_command_source.c
@@ -54,6 +55,7 @@ add_executable(fcr_unit_tests
     tests/unit/test_modbus.c
     tests/unit/test_bridge_core.c
     tests/unit/test_awae.c
+    tests/unit/test_rt_snapshot.c
 )
 target_include_directories(fcr_unit_tests PRIVATE ${FCR_INCLUDE_DIR} src bridge awae offline/harness offline/provider transport/modbus tests/unit)
 target_link_libraries(fcr_unit_tests PRIVATE farm_control_runtime m)
