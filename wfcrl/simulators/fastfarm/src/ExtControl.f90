@@ -97,7 +97,9 @@ CONTAINS
 
             ! Load dynamic library, but first make sure that it's free
             ! CALL FreeDynamicLib(DLL_Ext, ErrVar%ErrStat, ErrVar%ErrMsg)
+#ifndef FCR_FARM_CONTROL
             CALL LoadDynamicLib(DLL_Ext, ErrVar%ErrStat, ErrVar%ErrMsg)
+#endif
             ALLOCATE(ExtDLL%avrSWAP(max_avr_entries)) !(1:max_avr_entries)
 
             PRINT *, "Library loaded successfully"

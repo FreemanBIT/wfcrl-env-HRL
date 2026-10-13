@@ -54,8 +54,8 @@ if mode == "farmcontrol":
 FLAGS = "-ffree-line-length-0 -static-libgcc -static-libgfortran -static -fdefault-real-8 -fdefault-double-8 -cpp -DIMPLICIT_DLLEXPORT -O2"
 
 f90_sources = [
-    "Constants.f90", "ROSCO_Types.f90", "SysGnuWin.f90",
-    "Filters.f90", "Functions.f90", "ControllerBlocks.f90",
+    "Constants.f90", "ROSCO_Types.f90", "SysGnuWin.f90", "SysSubs.f90",
+    "Functions.f90", "Filters.f90", "ControllerBlocks.f90",
     "ROSCO_Helpers.f90", "ReadSetParameters.f90", "ROSCO_IO.f90",
     "ExtControl.f90", "ZeroMQInterface.f90",
 ]

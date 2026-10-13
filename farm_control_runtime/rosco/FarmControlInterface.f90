@@ -111,8 +111,8 @@ CONTAINS
       st%blade_root_moop_nm(1) = LocalVar%rootMOOP(1)
       st%blade_root_moop_nm(2) = LocalVar%rootMOOP(2)
       st%blade_root_moop_nm(3) = LocalVar%rootMOOP(3)
-      st%tower_top_fa_acc_mps2 = LocalVar%FA_Acc
-      st%nacelle_imu_fa_acc_mps2 = LocalVar%NacIMU_FA_Acc
+      st%tower_top_fa_acc_mps2 = LocalVar%FA_AccF
+      st%nacelle_imu_fa_acc_mps2 = LocalVar%NacIMU_FA_RAcc
       st%rotor_azimuth_rad = LocalVar%Azimuth
       ! 最终命令（avrSWAP 输出槽，控制计算完成后）：
       st%gen_torque_cmd_nm = avrSWAP(47)
