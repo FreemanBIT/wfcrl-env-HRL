@@ -70,5 +70,11 @@
     * 偏航 DR-5 绝对目标锁存 + TTL/fallback 安全；10ms step 纯内存（无锁/socket/malloc/等待）
   - bridge/yaw_adapter.c：旧 delta 协议 → 绝对目标适配器
   - tests/unit/test_bridge_core.c 8 用例；**单测 47/47 PASS**
-  - **下一步**：把 Bridge 接入离线单机链路（v2.9.4）做 Mode0/1/2 真机验证 +
-    300s 回归（门禁 G1 剩余项），随后提交 Bridge 接口设计（fcr_bridge_core.h + ICD v2）供审查。
+  - **Bridge 接口设计已提交供审查**（fcr_bridge_core.h，commit acb9057/fc7e997）。
+  - **G1 进行中**（2026-10-13）：
+    * Bridge 审查点默认决策落地（fc7e997）：aero 表改共享指针省内存（320KB/机→共享）、
+      DR-7 四类风速语义（ambient_upstream/disk_background/disk_disturbed）；单测仍 47/47。
+    * 离线模式验证脚本 verify_bridge_modes.py（2f74889）**PASS**：ctypes 加载编译后 bridge DLL，
+      校验 Mode0 旁路 / Mode1 R_power 单调+控制分配守恒 / Mode2 Ct 表反解 min_pitch 方向 /
+      Ct 估计 DR-7 上游参考风优先 / yaw_adapter DR-5 / TTL 安全。
+    * 300s 回归（G1 剩余项）运行中。
