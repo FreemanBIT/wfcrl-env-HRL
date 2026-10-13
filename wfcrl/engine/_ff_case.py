@@ -101,6 +101,10 @@ def create_dll(fstf_file):
         shutil.copy(
             f'{SERVO_DIR.format("fastfarm")}/DISCON_WT1.dll', path_to_servo_dll
         )
+        # ROSCO v2.10.6 性能表（Cp/Ct/Cq）：DISCON.IN 的 PerfFileName 相对本目录
+        _cp = Path(SERVO_DIR.format("fastfarm")) / "Cp_Ct_Cq.NREL5MW.txt"
+        if _cp.exists():
+            shutil.copy(str(_cp), path_to_servo_dll.parent)
 
         # 写入 per-turbine ROSCO 参数文件到 ServoDyn .dat 同目录 (FarmInputs/)
         # ROSCO 通过 accINFILE (DLL_InFile) 读取，路径相对 ServoDyn 输入文件
