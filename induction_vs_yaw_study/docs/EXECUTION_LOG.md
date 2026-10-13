@@ -122,3 +122,10 @@
     * FarmControlInterface.f90 适配 v2.10.6 字段改名：FA_Acc→FA_AccF、NacIMU_FA_Acc→NacIMU_FA_RAcc。
     * **编译成功**：DISCON_WT1.dll 2328.1 KB（v2.10.6 FCR 集成，2026-10-13 18:39）。
     * **回归进行中**：300s 门禁（v2.10.6 DLL）→ 待结果；随后 identity + 单测。
+    * **300s 回归 PASS**（20261013_185249）：mean_farm_power=**4366 kW**，steps=100，wall=531s。
+      与 v2.9.4 基线 4232 kW 差 **+3.2%**——版本升级的正常调参差异（v2.10.6 模板参数集
+      与 v2.9.4 最小集不同），非回归失败；门禁判据（exit 0 + 有限均值）达成。
+    * 过程中修复：DISCON 模板需 v2.10.6 格式（F_VSRefSpdCornerFreq 等新必需参数）；
+      Cp_Ct_Cq 表依赖→对齐 v2.9.4 控制设置（WE_Mode=0/PS_Mode=0/PerfFileName=unused）；
+      模板纯 ASCII（_ff_case.py GBK 读取）。
+    * **M5 剩余**：identity 校验（偏航/诱导在 v2.10.6 下仍正确）+ 多机隔离重验（G5 门禁）。
