@@ -30,8 +30,13 @@ TOL_PCT = 0.5  # 验收阈值
 
 
 def _greedy_mw(wind_speed_ms: float) -> float:
-    """Betz 贪婪电功率 (MW)，用于 r=1 的 induction 目标（a≈1/3）。"""
-    p_w = C.power_from_cp(C.cp_max_betz(), wind_speed_ms, electrical=True)
+    """Betz 贪婪**气动**功率 (MW)，用于 r=1 的 induction 目标（a≈1/3）。
+
+    M5 修复（20261013）：此前用 electrical=True 使目标含发电机损耗，
+    power_to_induction 返回 a≈0.246（实际降额 5.6%）而非 1/3，导致 v2.10.6
+    （PRC_R_Pitch 降额更有效）下 induction_r1 identity FAIL。
+    用气动功率 → a=1/3 → power_ratio=1 → greedy 哨兵跳过（与 no-override 等价）。"""
+    p_w = C.power_from_cp(C.cp_max_betz(), wind_speed_ms, electrical=False)
     return p_w / 1e6
 
 
