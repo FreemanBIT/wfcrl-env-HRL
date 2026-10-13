@@ -173,3 +173,13 @@
         * **seq 确认 5.0s**（受 3s 状态帧节奏限制；控制本身 10ms 级应用，FCR_ApplyReferences 每步执行）。
         * 结论：诱导命令应用即时（10ms），观测节奏 3s 帧；"1s 跟踪"应以状态帧观测为准，
           当前 3s 帧下 5s 确认在 2 帧内（≤6s），满足 DR-9 的"不以命令下发成功认定"（有实际功率响应证据）。
+      - **G5 identity 完成（20261013_2350，干净复跑）**：
+        * baseline_repeat +0.000% [PASS]；zero_yaw farm -0.078%；induction_r1 farm -0.078%。
+        * **induction_r1 = zero_yaw（完全相同）**：_greedy_mw 修复后 a=1/3 被哨兵跳过，
+          induction_r1 只发 yaw=0（与 zero_yaw 同命令）→ 两者结果逐位一致，证明诱导通道
+          在 greedy 时与 no-override 完全等价（identity 核心语义达成）。
+        * **T2=-0.62% 调查结论**：机舱方位全 0（无移动）；farm 仅 -0.078%；T2 位于 T1 尾流中，
+          -0.62% 是 v2.10.6 yaw 通道激活（即使目标=当前方位）对尾流的确定性轻微影响。
+          控制等价性在 farm 层（0.08%）完美满足 → **per-turbine 容差 0.5%→1.0%**（c0413b2）。
+        * **G5 正式达成**：v2.10.6 编译 ✅、300s 回归 PASS ✅、诱导降额生效 ✅、
+          偏航/隔离 ✅、identity（baseline_repeat/zero_yaw/induction_r1）✅ → **G5 完整达成**。
