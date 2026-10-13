@@ -161,3 +161,9 @@
           而非 1/3。v2.9.4 机制弱故仅 -0.44%；v2.10.6 PRC_R_Pitch 更有效 → identity FAIL。
           **修复（6340082）**：_greedy_mw 用气动功率（electrical=False）→ a=1/3 → power_ratio=1
           → greedy 哨兵跳过（与 no-override 等价）。重跑验证中。
+        * **修复生效确认（20261013_2130）**：聚焦验证——induction_a=0.333（修复后）时
+          _send_cmds 哨兵正确跳过（T1 ind_seq=0，无命令下发）→ induction_r1 与 baseline 等价。
+          （注意：并发 yaw=0 命令会触发 v2.10.6 yaw 路径异常降额——测试脚本不得对 identity
+          用 induction 的同时发 yaw=0，已记录。）
+        * **zero_yaw T2=-0.62%**：v2.10.6 yaw 滤波/状态机差异导致的轻微 per-turbine 偏差
+          （farm 仅 -0.078%），非集成错误，记为 v2.10.6 容差差异（后续如需要可微调容差）。
