@@ -85,8 +85,8 @@ def main():
     ap.add_argument("--dt", type=float, default=3.0)
     ap.add_argument("--out-root", type=Path, default=_STUDY_ROOT / "results" / "_isolation")
     ap.add_argument("--bts", default="coarse/inflow_U08_TI10_seed01.bts")
-    ap.add_argument("--greedy-t1-kw", type=float, default=1655.0,
-                    help="T1 上游机 greedy 参考功率 kW（1T 运行图标定；3T 行上游一致）")
+    ap.add_argument("--greedy-t1-kw", type=float, default=1633.0,
+                    help="T1 上游机 greedy 参考功率 kW（v2.10.6 300s 稳态实测 20261013_201408；v2.9.4 为 1655）")
     args = ap.parse_args()
 
     from induction_vs_yaw_study.run._proc_utils import cleanup_stale_fastfarm
