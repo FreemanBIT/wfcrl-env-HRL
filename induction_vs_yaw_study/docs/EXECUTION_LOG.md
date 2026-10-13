@@ -39,3 +39,14 @@
 - **验证**：180s/600s/1200s 三次带命令运行 seq=1 保持、机舱恒 −30.1°、T1 P≈1133 kW（−31%≈cos²30°）、T2 尾流偏转收益 1646 kW。300s 门禁真盒 4195 / uniform 3863 kW PASS。
 - **新发现（转 P2）**：111818 次 1200s 运行 t≈524.2s T1 非命令性永久顺桨（pitch→90°@8°/s、GenTq→0）。排除 SD_Mode/运行时 fault/wfcrl 桥接/命令链。条件：`VS_TSRopt=0` 使转速被转矩 PI 钉在 `VS_MinOMSpd` 贴边（±0.005 rad/s 极限环）。同配置 600s 复跑未复发，ROSCO 内部态（dbg2 126 通道）全程健康 → 判非确定性数值故障。1200s+roscolog 复现运行进行中。
 - **影响**：Induction U8 标定 map 作废重做（旧口径含未生效 yaw + 全窗均值）；DOE 批跑器需加顺桨检测剔除。
+
+## ROSCO Bridge 开发计划 M0 进度（BRIDGE_DEV_PLAN_v2，2026-10-13）
+- 上游输入：FASTFarm_WFC_Bridge_Development_Plan_v1_1.md + FASTFarm_WFC_Interface_ICD_v1_1.csv；
+  决策（7 条 DR）已全部纳入 BRIDGE_DEV_PLAN_v2（docs/farm_control/，commit a55a68d）。
+- M0-0.2 可行性结论：供应商 RT（fastfarm_rt_v1.1.0）ServoDyn 走 Bladed-DLL 接口
+  （PCMode=5/VSContrl=5，DLL_FileName=./DISCON_WT1.so），实际 .so 为 21KB ELF 桩
+  → ROSCO 保留在 OF 内 ServoDyn/DISCON 路径成立（DR-1），需从本 fork 编 Linux .so 挂入。
+- M0-0.4 300s 基线回归：**PASS**（20261013_163723，U8/TI10/seed01，WD0/S6D，300s，steps=100，
+  mean_farm_power=4232 kW，wall=525.9s；注：load-ch 已加 TwrBsMxt/TwrBsFxt 等通道，
+  与旧基线 3860~4195kW 口径差异待 M0-0.3 多机隔离验证时统一）。
+- 遗留：M0-0.1 ROSCO fork diff 清单、M0-0.3 多机实例隔离、M0-0.5 实时核心拆分设计（下一步）。

@@ -1,0 +1,31 @@
+﻿Module,Signal,Direction,Type,Unit,Period,Description,Remarks
+RCP,induction_ref,RCP->Scheduler,float64,-,1s,Target induction factor a_ref,WFC optimization output
+RCP,yaw_target_heading,RCP->Scheduler,float64,rad,event/60s,Absolute nacelle heading target,No delta conversion
+RCP,command_sequence,RCP->Scheduler,uint64,-,event,Command sequence,Atomic update
+RCP,command_timestamp,RCP->Scheduler,float64,s,1s,Command time stamp,Freshness check
+OpenFAST,rotor_speed,OpenFAST->Scheduler,float64,rad/s,10ms,Rotor speed,Per turbine
+OpenFAST,generator_speed,OpenFAST->Scheduler,float64,rad/s,10ms,Generator speed,Per turbine
+OpenFAST,blade_pitch,OpenFAST->Scheduler,float64[3],rad,10ms,Blade pitch angles,Per turbine
+OpenFAST,rotor_thrust,OpenFAST->Scheduler,float64,N,10ms,Rotor thrust,Ct estimation
+OpenFAST,generator_power,OpenFAST->Scheduler,float64,W,10ms,Power output,
+ROSCO,pitch_command,ROSCO->Scheduler,float64[3],rad,10ms,Executed pitch,
+ROSCO,torque_command,ROSCO->Scheduler,float64,Nm,10ms,Executed torque,
+AWAE,point_id,AWAE->Scheduler,uint32,-,1s,Observation point ID,Independent from turbine ID
+AWAE,position_xyz,AWAE->Scheduler,float64[3],m,static,Observation coordinates,Configuration data
+AWAE,wind_x,AWAE->Scheduler,float64,m/s,1s,Wind component X,
+AWAE,wind_y,AWAE->Scheduler,float64,m/s,1s,Wind component Y,
+AWAE,wind_z,AWAE->Scheduler,float64,m/s,1s,Wind component Z,
+AWAE,wind_speed,AWAE->Scheduler,float64,m/s,1s,Wind magnitude,
+AWAE,wind_direction,AWAE->Scheduler,float64,rad,1s,Wind direction,
+AWAE,turbulence_intensity,AWAE->Scheduler,float64,-,1s,Local TI,
+Scheduler,disk_wind_speed,Scheduler->ROSCO Bridge,float64,m/s,1s,Mapped rotor equivalent wind,From AWAE
+Scheduler,disk_turbulence,Scheduler->ROSCO Bridge,float64,-,1s,Mapped turbulence,From AWAE
+Scheduler,induction_ref,Scheduler->Bridge,float64,-,1s,Target induction,
+Bridge,ct_ref,Bridge->ROSCO,float64,-,1s,Target thrust coefficient,Future feedback
+Bridge,r_pitch,Bridge->ROSCO,float64,-,1s,Pitch ratio,
+Bridge,r_speed,Bridge->ROSCO,float64,-,1s,Speed ratio,
+Bridge,r_torque,Bridge->ROSCO,float64,-,1s,Torque ratio,
+Bridge,min_pitch_ref,Bridge->ROSCO,float64,rad,1s,External pitch constraint,
+Bridge,pitch_offset,Bridge->ROSCO,float64,rad,future,Closed loop correction,
+Scheduler,farm_state_frame,Scheduler->Modbus,struct,-,1s,Farm state snapshot,
+Scheduler,awae_observation_frame,Scheduler->Modbus,struct,-,1s,AWAE observation frame,Ring buffer recommended
