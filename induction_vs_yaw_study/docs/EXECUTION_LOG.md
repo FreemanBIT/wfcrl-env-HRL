@@ -148,3 +148,11 @@
         （测试参照已更新，commit 待）。
       - **门禁 G5 满足**：v2.10.6 编译 ✅、300s 回归 PASS（4366kW）✅、诱导降额生效 ✅、
         偏航/隔离正确 ✅ → **G5 达成**。
+      - **正式 identity 套件复验（20261013_2050，重要修正）**：
+        * v2.10.6 下跑 verify_identity（4×300s）：
+          baseline_repeat +0.000% [PASS]；zero_yaw farm -0.078% 但 T2=-0.62% [FAIL]；
+          **induction_r1 farm +0.341% 但 T1=-6.53% T2=+5.77% T3=+7.43% [FAIL]**（功率重分布）。
+        * **根因④**：PRC_Mode=2 激活改变控制动力学，即使 ratio=1.0（greedy）也引起尾流重分布。
+          **修复（6d0c956）**：FCR_ApplyReferences 加 greedy 哨兵——power_ratio≥1-1e-6 时
+          不激活任何 override（保持纯 greedy，匹配 a≥A_GREEDY-ε 不下发语义）。
+        * 修复后重跑 identity 套件验证中；zero_yaw T2=-0.62%（v2.10.6 yaw 滤波差异）待评估。
