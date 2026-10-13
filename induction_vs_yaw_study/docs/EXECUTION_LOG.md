@@ -99,3 +99,15 @@
     100 台 3.06ms/轮（327Hz）→ 远超 RT 需求（RCP 100ms 轮询），布局冻结 v2
   - ⚠️ AWAE 寄存器区 127 点 < 256 目标：需扩展 0x2000→0x4000（M6 前置记录）；
     真实 RT 网络吞吐需联调时实测（脚本 bench_modbus_throughput.py 可复算）。
+- **M5 ROSCO v2.9.4 → v2.10.6 迁移（进行中）**：
+  - 迁移前置评估：
+    * v2.9.4→v2.10.6 上游 diff 较大（Controllers +519 / ControllerBlocks +499 / ROSCO_IO +599 / ReadSetParameters +356）。
+    * **B 组 AlreadyInitialized 已被 v2.10.6 上游吸收**（ReadSetParameters.f90:88, ROSCO_IO.f90:40/383）→ 无需重放。
+    * **v2.10.6 DISCON.F90 无 FCR**（干净基线）→ A 组场控集成必须重放。
+    * WE_Vw 除零守卫：需确认 v2.10.6 是否已有（Functions.f90 AeroDynTorque）。
+  - A 组 FCR 足迹（fork DISCON.F90 10 处 + Controllers.f90 偏航钩子）：
+    USE FarmControlInterface / wfcrl_turbine_id / FCR_Init+ProviderInit / FCR_Step+ApplyReferences /
+    FCR_PublishState+PublishExtra+Shutdown / Controllers yaw 外部目标钩子。
+  - 迁移步骤：①备份 v2.9.4 ②copy v2.10.6 12 个 .f90 ③重放 A 组到 v2.10.6 上下文
+    ④核对 WE_Vw ⑤_compile.py 编 DLL ⑥300s + identity + 单测回归。
+  - 策略：git 跟踪可回滚；编译到独立 DLL 名测试通过后再切换（防破坏现 v2.9.4 工作链）。
