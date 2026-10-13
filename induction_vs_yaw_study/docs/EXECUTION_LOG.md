@@ -92,3 +92,10 @@
   - tests/unit/test_rt_snapshot.c：基本读写 + 多线程竞争注入；**单测 53/53 PASS**
   - 多机实例隔离（M3 另一项）已在 M0-0.3 PASS ✅
   - ⚠️ vendor 调度核钩子接线 + 200 步 RT smoke + TSAN 需 Linux+CUDA RT 环境（环境受限，记 M6 前置）。
+- **M4 Modbus 三数据区 + 吞吐测量 → 布局冻结 v2**（2026-10-13，commit 105673e/3683f8c）：
+  - modbus_register_map.h/yaml：新增 AWAE Frame Buffer 区（0x2000，每点 32 寄存器，127 点容量）
+    + 协议版本/时间戳/序号/质量标志（valid/stale/fallback）/CRC16 完整性（DR-8）
+  - 吞吐测量（benchmark.json，解析模型 100Mbps/RTT0.5ms）：30 台 1.63ms/轮（615Hz）、
+    100 台 3.06ms/轮（327Hz）→ 远超 RT 需求（RCP 100ms 轮询），布局冻结 v2
+  - ⚠️ AWAE 寄存器区 127 点 < 256 目标：需扩展 0x2000→0x4000（M6 前置记录）；
+    真实 RT 网络吞吐需联调时实测（脚本 bench_modbus_throughput.py 可复算）。
