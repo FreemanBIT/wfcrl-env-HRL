@@ -62,3 +62,13 @@
     DR-4 无锁快照协议（双缓冲 + seq），10ms 禁锁/socket/malloc/等待；rt_core + comm_adapter 新建。
 - **门禁 G0 达成条件核对**：0.1/0.2 结论落库 ✅、0.4 300s 基线 PASS ✅（4232kW）、
   0.3 多机隔离 PASS ✅、0.5 设计落库 ✅ → **G0 满足，可进入 M1**。
+- **M1 Bridge 实时核心首版**（2026-10-13，commit acb9057）：
+  - bridge/fcr_bridge_core.h/.c：独立于通信的可测核心（DR-3/DR-4/DR-5）
+    * Mode0 旁路 / Mode1 功率比例开环+控制分配（R_Pitch/R_Speed/R_Torque 权重，禁未分配叠加）/
+      Mode2 Ct 前馈（Ct(lambda,beta) 气动表反解 min_pitch_ref）/ Mode3 桩
+    * Ct 估计 DR-7 模型修正（扰动盘面风归一化修正，不直接经典归一化）
+    * 偏航 DR-5 绝对目标锁存 + TTL/fallback 安全；10ms step 纯内存（无锁/socket/malloc/等待）
+  - bridge/yaw_adapter.c：旧 delta 协议 → 绝对目标适配器
+  - tests/unit/test_bridge_core.c 8 用例；**单测 47/47 PASS**
+  - **下一步**：把 Bridge 接入离线单机链路（v2.9.4）做 Mode0/1/2 真机验证 +
+    300s 回归（门禁 G1 剩余项），随后提交 Bridge 接口设计（fcr_bridge_core.h + ICD v2）供审查。
