@@ -1,0 +1,19 @@
+{
+  "method": "analytical-network-model",
+  "rtt_s": 0.0005,
+  "net_mbps": 100,
+  "n30": {
+    "stateB": 7689,
+    "cmdB": 137,
+    "cycle_ms": 1.626,
+    "maxHz": 615,
+    "awae_points_supported": 127
+  },
+  "n100": {
+    "stateB": 25609,
+    "cmdB": 137,
+    "cycle_ms": 3.06,
+    "maxHz": 326.8,
+    "awae_points_supported": 127
+  }
+}

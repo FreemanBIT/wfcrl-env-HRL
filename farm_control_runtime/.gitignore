@@ -1,6 +1,7 @@
 build/
 *.o
 *.exe
+bridge/*.dll
 tests/unit/test_runner
 __pycache__/
 *.pyc
