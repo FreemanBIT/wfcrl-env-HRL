@@ -188,6 +188,11 @@ CONTAINS
          CntrPar%VS_RtPwr = VS_RtPwr_nom * sp%power_ratio
          CntrPar%VS_MaxTq = VS_MaxTq_nom * sp%torque_limit_ratio
          CntrPar%VS_RefSpd = VS_RefSpd_nom * sp%speed_ref_ratio
+         ! v2.10.6 原生 PRC 降额（两版本字段都存在，向后兼容）：
+         !   WSE_TSR 模式 VS_RefSpd = VS_RefSpd_TSR * PRC_R_Speed（额定以下降速→降功率）
+         !   VS_ConstPwr_GenTq / VS_MaxTq 乘 PRC_R_Torque（额定以上降转矩）
+         CntrPar%PRC_R_Speed = sp%speed_ref_ratio
+         CntrPar%PRC_R_Torque = sp%torque_limit_ratio
          ! 最小桨距约束
          IF (sp%min_pitch_rad > 0.001_8) THEN
             CntrPar%PS_Mode = 1
