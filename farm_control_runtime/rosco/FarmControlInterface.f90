@@ -197,6 +197,9 @@ CONTAINS
          CntrPar%PRC_Comm = 0                       ! PRC_Comm_Constant
          CntrPar%PRC_R_Speed = sp%speed_ref_ratio
          CntrPar%PRC_R_Torque = sp%torque_limit_ratio
+         ! 额定以下降载：PRC_R_Pitch → PRC_Min_Pitch（提高最小桨距→降 Cp）。
+         !   经 PRC_Pitch_Table 查表（PRC_R_Table 0..1 → 桨距 0.1971..0 rad）。
+         CntrPar%PRC_R_Pitch = sp%power_ratio
          ! 最小桨距约束
          IF (sp%min_pitch_rad > 0.001_8) THEN
             CntrPar%PS_Mode = 1
@@ -215,6 +218,7 @@ CONTAINS
          CntrPar%PRC_Mode = 0
          CntrPar%PRC_R_Speed = 1.0_8
          CntrPar%PRC_R_Torque = 1.0_8
+         CntrPar%PRC_R_Pitch = 1.0_8
       END IF
    END SUBROUTINE FCR_ApplyReferences
 
