@@ -129,3 +129,13 @@
       Cp_Ct_Cq 表依赖→对齐 v2.9.4 控制设置（WE_Mode=0/PS_Mode=0/PerfFileName=unused）；
       模板纯 ASCII（_ff_case.py GBK 读取）。
     * **M5 剩余**：identity 校验（偏航/诱导在 v2.10.6 下仍正确）+ 多机隔离重验（G5 门禁）。
+    * **v2.10.6 诱导降额失效诊断（2026-10-13，重大发现）**：
+      - 多机隔离测试：偏航生效（T2 heading -10°）、隔离正确（T3 seq 全 0），但 T1 诱导 a=0.2 不降额。
+      - FCR_ApplyReferences 诊断打印确认每 10ms 执行且值正确（pr=0.864/spd=0.952/tq=0.907）。
+      - **根因①（v2.10.6 上游 bug）**：ControllerBlocks 148/152 行——PRC_R_Speed 缩放后的 VS_RefSpd
+        被下一行未缩放 VS_RefSpd_TSR 的 LPFilter 覆盖 → PRC 缩放完全失效。已修复（d5460ac）。
+      - **根因②（关键）**：v2.10.6 PowerControlSetpoints 仅在 PRC_Mode==2 时读 CntrPar%PRC_R_*，
+        PRC_Mode≠2 时强制置 1.0 → FCR 设置的 PRC_R_Speed/Torque 被丢弃。已修复：FCR_ApplyReferences
+        enable 时置 PRC_Mode=2+PRC_Comm=0(Constant)，disable 回退（484a8b2）。
+      - 修复后 T1(a=0.2)：1764→**1753 kW**（降额开始生效）；测试参照 greedy_t1=1655 是 v2.9.4 旧值，
+        v2.10.6 真实 T1 greedy≈2050+（farm 基线 +3.2%），正跑 300s 基线对照获取精确值更新参照。
