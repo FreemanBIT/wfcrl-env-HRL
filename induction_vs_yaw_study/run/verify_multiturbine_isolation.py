@@ -47,16 +47,15 @@ _CMD_TTL = 1.0e6
 
 
 def _per_turbine_power(state_rows, n_t=3):
-    """从 ZMQ 状态帧提取每机 gen_power_w.instant 均值（kW）。"""
+    """从 ZMQ 状态帧提取每机 gen_power_w（浮点 W）均值（kW）。"""
     acc = {i: [] for i in range(1, n_t + 1)}
     for st in state_rows:
         for t in (st or {}).get("turbines", []):
             tid = t.get("turbine_id", 0)
             if tid in acc:
-                v = t.get("gen_power_w") or {}
-                inst = v.get("instant")
-                if inst is not None and _math.isfinite(float(inst)):
-                    acc[tid].append(float(inst))
+                v = t.get("gen_power_w")
+                if v is not None and _math.isfinite(float(v)):
+                    acc[tid].append(float(v))
     return {tid: (float(np.mean(vs)) / 1e3 if vs else float("nan"))
             for tid, vs in acc.items()}
 
@@ -74,8 +73,8 @@ def _per_turbine_state(state_rows, n_t=3):
         t = last.get(tid, {})
         out[tid] = {
             "nacelle_heading_rad": t.get("nacelle_heading_rad"),
-            "yaw_seq_applied": t.get("yaw_seq_applied", 0),
-            "induction_seq_applied": t.get("induction_seq_applied", 0),
+            "yaw_seq_applied": int(t.get("yaw_seq_applied", 0) or 0),
+            "induction_seq_applied": int(t.get("induction_seq_applied", 0) or 0),
         }
     return out
 
@@ -86,6 +85,8 @@ def main():
     ap.add_argument("--dt", type=float, default=3.0)
     ap.add_argument("--out-root", type=Path, default=_STUDY_ROOT / "results" / "_isolation")
     ap.add_argument("--bts", default="coarse/inflow_U08_TI10_seed01.bts")
+    ap.add_argument("--greedy-t1-kw", type=float, default=1655.0,
+                    help="T1 上游机 greedy 参考功率 kW（1T 运行图标定；3T 行上游一致）")
     args = ap.parse_args()
 
     from induction_vs_yaw_study.run._proc_utils import cleanup_stale_fastfarm
@@ -105,15 +106,15 @@ def main():
     n_turbines = int(getattr(case, "n_turbines", 3))
     n_total = max(1, int(getattr(case, "n_total_control_steps", cfg.max_iter)))
 
-    # ---- 混合命令：T1=诱导0.2, T2=偏航+10°, T3=无命令 ----
+    # ---- 混合命令：T1=诱导0.2（只诱导）, T2=偏航+10°（只偏航）, T3=完全无命令 ----
+    # T3 不进 cmds：验证"无命令机组不被其他机组命令串扰"（seq 回显须全 0）。
     cmds = {
-        1: Cmd(turbine_id=1, yaw_delta_deg=0.0, induction_a=0.20),
+        1: Cmd(turbine_id=1, yaw_delta_deg=None, induction_a=0.20),
         2: Cmd(turbine_id=2, yaw_delta_deg=10.0, induction_a=None),
-        3: Cmd(turbine_id=3, yaw_delta_deg=0.0, induction_a=None),
     }
 
     print(f"== multiturbine isolation: {case.id} / 300s / bts={args.bts}")
-    print(f"   T1: induction a=0.20 | T2: yaw +10deg | T3: baseline(no cmd)")
+    print(f"   T1: induction a=0.20 (only) | T2: yaw +10deg (only) | T3: NO command")
 
     _base = 24000 + (_os.getpid() % 1500) * 2
     engine = FastFarmZmqEngine(cfg, cmd_port=_base, state_port=_base + 1)
@@ -190,26 +191,35 @@ def main():
     # ---- 验收判定 ----
     p1, p2, p3 = pw.get(1), pw.get(2), pw.get(3)
     fails = []
+    s1, s2, s3 = stt.get(1, {}), stt.get(2, {}), stt.get(3, {})
+
+    # ---- 核心隔离判据：seq 回显（每机实例只响应自己的命令）----
+    if not (s1.get("induction_seq_applied", 0) >= 1):
+        fails.append("T1 induction_seq_applied 未生效")
+    if not (s1.get("yaw_seq_applied", 0) == 0):
+        fails.append("T1 只发诱导却收到 yaw_seq（通道串扰）")
+    if not (s2.get("yaw_seq_applied", 0) >= 1):
+        fails.append("T2 yaw_seq_applied 未生效")
+    if not (s2.get("induction_seq_applied", 0) == 0):
+        fails.append("T2 只发偏航却收到 ind_seq（通道串扰）")
+    if not (s3.get("yaw_seq_applied", 0) == 0 and s3.get("induction_seq_applied", 0) == 0):
+        fails.append("T3 无命令但 seq 被置位（跨机串扰）")
+
+    # ---- 物理方向核对（功率）----
     if not (np.isfinite(p1) and np.isfinite(p2) and np.isfinite(p3)):
         fails.append("功率缺失/非有限")
     else:
-        # 1) T3 无命令应保持较高功率（不被 T1/T2 泄漏影响——基线参考用 T3 自身）
-        # 2) T1 诱导 0.2 → 相对 T3 下降（理论 ~ -14%）
-        d13 = 100.0 * (p1 - p3) / p3
-        if d13 > -8.0:
-            fails.append(f"T1 诱导降额未生效: T1-T3 相对差 {d13:.1f}% (期望 < -8%)")
-        # 3) T2 偏航 +10° → 功率相对 T3 略降（cos^2 效应 ~ -3%）
-        d23 = 100.0 * (p2 - p3) / p3
-        if d23 > 2.0:
-            fails.append(f"T2 偏航未生效: T2-T3 相对差 {d23:.1f}% (期望 < +2%)")
-    # 4) seq 回显：T1 应 ind_seq>=1，T2 应 yaw_seq>=1，T3 应全 0
-    s1, s2, s3 = stt.get(1, {}), stt.get(2, {}), stt.get(3, {})
-    if not (s1.get("induction_seq_applied", 0) >= 1):
-        fails.append("T1 induction_seq_applied 未生效")
-    if not (s2.get("yaw_seq_applied", 0) >= 1):
-        fails.append("T2 yaw_seq_applied 未生效")
-    if not (s3.get("yaw_seq_applied", 0) == 0 and s3.get("induction_seq_applied", 0) == 0):
-        fails.append("T3 无命令但 seq 被置位（跨机串扰）")
+        # T1 是上游机，greedy 参考 ~1655 kW（1T 运行图标定，3T 行上游一致；
+        #   farm 基线 4232 = T1 1655 + T2/T3 尾流功率 之和，自洽）。
+        # 诱导 a=0.2 理论降额 ~-14% → T1 应显著低于 greedy 参考。
+        greedy_t1 = args.greedy_t1_kw
+        d1g = 100.0 * (p1 - greedy_t1) / greedy_t1
+        if d1g > -6.0:
+            fails.append(f"T1 诱导降额未生效: T1={p1:.0f} vs greedy~{greedy_t1:.0f} 差 {d1g:.1f}% (期望 <= -6%)")
+        # T2 偏航 +10°：机舱方位应偏离对齐（内部 CCW 约定，CW+10° → -10° ≈ -0.1745 rad）
+        h2 = s2.get("nacelle_heading_rad")
+        if h2 is None or not _math.isfinite(float(h2)) or abs(float(h2)) < 0.08:
+            fails.append(f"T2 偏航未生效: heading={h2} (期望 |h| >= ~0.087 rad)")
 
     if fails:
         print("[FAIL] " + " | ".join(fails))
