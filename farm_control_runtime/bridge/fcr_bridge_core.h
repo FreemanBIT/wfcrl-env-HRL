@@ -46,6 +46,13 @@ typedef struct {
     double    rotor_thrust_n;        /* ICD: rotor_thrust */
     double    blade_pitch_rad[3];    /* ICD: blade_pitch */
     double    nacelle_heading_rad;   /* 机舱方位（OpenFAST 内部约定 CCW+）*/
+    /* ---- DR-7 四类风速语义 ----
+     * ambient_upstream_wind_mps : 上游参考风（AWAE 观察点映射，未受本机扰动）
+     * disk_background_wind_mps  : 轮盘背景风速（含他机尾流、不含本机诱导）
+     * disk_wind_speed_mps       : 轮盘扰动风速（盘面实际；含本机诱导效应）
+     * 经典 Ct 归一化必须用修正后的参考风，不得直接用扰动盘面风。 */
+    double    ambient_upstream_wind_mps; /* 上游参考风（DR-7） */
+    double    disk_background_wind_mps;  /* 轮盘背景风速（DR-7） */
     double    disk_wind_speed_mps;   /* 映射后盘面等效风速（WindMapper 输出）*/
     double    disk_turbulence;       /* 映射后盘面湍流 */
     double    gen_power_w;           /* ICD: generator_power */
@@ -74,12 +81,18 @@ typedef struct {
     double    alloc_w_torque;        /* R_Torque 权重 */
     /* ---- 气动表（Mode 2；静态配置，Slow 一次性加载）---- */
     double    aero_blade_radius_m;
-    /* Ct(lambda,beta) 表：lam 行 x beta 列 */
     int32_t   aero_n_lam;
     int32_t   aero_n_beta;
-    double    aero_lam[FCR_BRIDGE_MAX_AERO_TABLE];
-    double    aero_beta_deg[FCR_BRIDGE_MAX_AERO_TABLE];
-    double    aero_ct[FCR_BRIDGE_MAX_AERO_TABLE * FCR_BRIDGE_MAX_AERO_TABLE];
+    /* Ct(lambda,beta) 表：lam 行 x beta 列。
+     * 优先用共享指针 aero_ct/aero_lam/aero_beta_deg（Slow 一次性加载，所有机共用，
+     * 避免 320KB/机 的嵌入拷贝；DR-4：10ms 路径只读指针不做分配）。
+     * 若指针为空，回退到内嵌小数组 aero_ct_small（供测试/小表）。 */
+    const double *aero_lam_ptr;
+    const double *aero_beta_deg_ptr;
+    const double *aero_ct_ptr;
+    double    aero_lam_small[FCR_BRIDGE_MAX_AERO_TABLE];
+    double    aero_beta_deg_small[FCR_BRIDGE_MAX_AERO_TABLE];
+    double    aero_ct_small[FCR_BRIDGE_MAX_AERO_TABLE * FCR_BRIDGE_MAX_AERO_TABLE];
     double    source_time_s;
 } FcrBridgeCmd;
 

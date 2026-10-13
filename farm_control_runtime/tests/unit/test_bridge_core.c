@@ -43,11 +43,11 @@ static void test_mode2_find_beta(void) {
     memset(&cmd, 0, sizeof(cmd));
     cmd.aero_n_lam = 3;
     cmd.aero_n_beta = 5;
-    cmd.aero_lam[0] = 5.0; cmd.aero_lam[1] = 7.0; cmd.aero_lam[2] = 9.0;
+    cmd.aero_lam_small[0] = 5.0; cmd.aero_lam_small[1] = 7.0; cmd.aero_lam_small[2] = 9.0;
     /* beta: 0,2,4,6,8 deg；Ct 随 beta 增大下降 */
     for (i = 0; i < cmd.aero_n_beta; ++i) {
-        double b = cmd.aero_beta_deg[i] = 2.0 * i;      /* 0,2,4,6,8 */
-        cmd.aero_ct[1 * cmd.aero_n_beta + i] = 0.9 - 0.05 * b; /* lam=7 行 */
+        double b = cmd.aero_beta_deg_small[i] = 2.0 * i;      /* 0,2,4,6,8 */
+        cmd.aero_ct_small[1 * cmd.aero_n_beta + i] = 0.9 - 0.05 * b; /* lam=7 行 */
     }
     /* Ct_ref≈0.70 → beta≈4 deg 附近 */
     ASSERT(fcr_bridge_mode2_find_beta(&cmd, 7.0, 0.70, &beta) == 0);
@@ -107,12 +107,12 @@ static void test_step_modes(void) {
     cmd.source_time_s = 0.0;
     cmd.aero_blade_radius_m = 63.0;
     cmd.aero_n_lam = 3; cmd.aero_n_beta = 5;
-    cmd.aero_lam[0] = 5.0; cmd.aero_lam[1] = 7.0; cmd.aero_lam[2] = 9.0;
+    cmd.aero_lam_small[0] = 5.0; cmd.aero_lam_small[1] = 7.0; cmd.aero_lam_small[2] = 9.0;
     {
         int i;
         for (i = 0; i < cmd.aero_n_beta; ++i) {
-            double b = cmd.aero_beta_deg[i] = 2.0 * i;
-            cmd.aero_ct[1 * cmd.aero_n_beta + i] = 0.9 - 0.05 * b;
+            double b = cmd.aero_beta_deg_small[i] = 2.0 * i;
+            cmd.aero_ct_small[1 * cmd.aero_n_beta + i] = 0.9 - 0.05 * b;
         }
     }
     memset(&meas, 0, sizeof(meas));
@@ -186,6 +186,23 @@ static void test_ct_estimator(void) {
     fcr_bridge_core_get(core, 1, &st);
     /* V_ref = 8/1.05 → Ct = 0.7 * (8/(8/1.05))^2 = 0.7*1.05^2 */
     ASSERT_NEAR(st.ct_est, 0.7 * 1.05 * 1.05, 1e-6);
+    fcr_bridge_core_destroy(core);
+
+    /* DR-7 优先级：上游参考风存在时优先用它（不经修正） */
+    memset(&ctcfg, 0, sizeof(ctcfg));
+    ctcfg.air_density = rho; ctcfg.rotor_area = A; ctcfg.gen_eff = 0.944;
+    ctcfg.use_model_corr = 1; ctcfg.v_disk_ref_corr = 1.05;
+    core = fcr_bridge_core_create(1, NULL, &ctcfg, NULL);
+    memset(&meas, 0, sizeof(meas));
+    meas.turbine_id = 1; meas.valid = 1;
+    meas.ambient_upstream_wind_mps = 8.0;   /* 上游参考风 */
+    meas.disk_wind_speed_mps = 8.0 * 0.9;   /* 扰动风 7.2（偏低）*/
+    meas.rotor_thrust_n = 0.5 * rho * A * 64.0 * 0.7;
+    fcr_bridge_core_set_meas(core, &meas);
+    fcr_bridge_core_step(core, 1, 1.0, &(FcrRoscoExternalSetpoint){0});
+    fcr_bridge_core_get(core, 1, &st);
+    /* 用上游参考风 V=8 → Ct=0.7（不是扰动风 7.2 也不经 1.05 修正）*/
+    ASSERT_NEAR(st.ct_est, 0.7, 1e-6);
     fcr_bridge_core_destroy(core);
 }
 

@@ -109,19 +109,24 @@ int fcr_bridge_mode2_find_beta(const FcrBridgeCmd *cmd, double lam,
                                double ct_ref, double *beta_deg_out) {
     int i, j, il = -1;
     double best = 1e30, best_beta = 0.0;
+    const double *lamv, *betav, *ctv;
     if (!cmd || !beta_deg_out) return -1;
     if (cmd->aero_n_lam <= 0 || cmd->aero_n_beta <= 0) return -2;
+    /* 优先共享指针，回退内嵌小数组 */
+    lamv = cmd->aero_lam_ptr ? cmd->aero_lam_ptr : cmd->aero_lam_small;
+    betav = cmd->aero_beta_deg_ptr ? cmd->aero_beta_deg_ptr : cmd->aero_beta_deg_small;
+    ctv = cmd->aero_ct_ptr ? cmd->aero_ct_ptr : cmd->aero_ct_small;
     /* 找到 lam 最近的索引 */
     for (i = 0; i < cmd->aero_n_lam; ++i) {
-        if (il < 0 || fabs(cmd->aero_lam[i] - lam) < fabs(cmd->aero_lam[il] - lam))
+        if (il < 0 || fabs(lamv[i] - lam) < fabs(lamv[il] - lam))
             il = i;
     }
     if (il < 0) return -3;
     /* 沿 beta 扫描，找 Ct 最接近 ct_ref 的 beta */
     for (j = 0; j < cmd->aero_n_beta; ++j) {
-        double ct = cmd->aero_ct[il * cmd->aero_n_beta + j];
+        double ct = ctv[il * cmd->aero_n_beta + j];
         double d = fabs(ct - ct_ref);
-        if (d < best) { best = d; best_beta = cmd->aero_beta_deg[j]; }
+        if (d < best) { best = d; best_beta = betav[j]; }
     }
     if (best > 0.5) return -4; /* 表覆盖不足 */
     *beta_deg_out = best_beta;
@@ -289,15 +294,24 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
             else st->fallback_active = 0;
         }
 
-        /* ---- Ct 估计（DR-7 模型修正）---- */
+        /* ---- Ct 估计（DR-7 模型修正）----
+         * 归一化风速优先级（严格语义分层）：
+         *   1) ambient_upstream_wind_mps（上游参考风）> 0.5 → 用之（最正确）
+         *   2) 否则 disk_wind_speed_mps（盘面扰动风）> 0.5 → 用之 + 模型修正
+         *   3) 否则 Ct 无效。
+         * 禁止直接用扰动盘面风做经典归一化而不做修正。 */
         if (me->valid) {
-            double V = me->disk_wind_speed_mps;
-            if (V > 0.5 && me->rotor_thrust_n > 0.0) {
+            double V = 0.0;
+            if (me->ambient_upstream_wind_mps > 0.5) {
+                V = me->ambient_upstream_wind_mps;
+            } else if (me->disk_wind_speed_mps > 0.5) {
+                V = me->disk_wind_speed_mps;
                 if (core->ct.use_model_corr && core->ct.v_disk_ref_corr > 0.0 &&
                     fabs(core->ct.v_disk_ref_corr - 1.0) > 1e-9) {
-                    /* 扰动盘面风偏高 → 按参考修正系数折算到"参考风速"再归一化 */
                     V = me->disk_wind_speed_mps / core->ct.v_disk_ref_corr;
                 }
+            }
+            if (V > 0.5 && me->rotor_thrust_n > 0.0) {
                 st->ct_est = 2.0 * me->rotor_thrust_n
                            / (core->ct.air_density * core->ct.rotor_area * V * V);
                 st->ct_est_valid = 1;
