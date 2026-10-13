@@ -111,3 +111,14 @@
   - 迁移步骤：①备份 v2.9.4 ②copy v2.10.6 12 个 .f90 ③重放 A 组到 v2.10.6 上下文
     ④核对 WE_Vw ⑤_compile.py 编 DLL ⑥300s + identity + 单测回归。
   - 策略：git 跟踪可回滚；编译到独立 DLL 名测试通过后再切换（防破坏现 v2.9.4 工作链）。
+  - **迁移执行（2026-10-13）**：
+    * copy v2.10.6 12 个 .f90 到 fork src；A 组 FCR 集成重放到 v2.10.6 DISCON.F90
+      （USE FarmControlInterface / wfcrl_turbine_id 读取 / FCR_Init+ProviderInit /
+      FCR_Step+ApplyReferences / FCR_PublishState+Extra+Shutdown）+ Controllers.f90 偏航外部目标钩子。
+    * 修复 v2.10.6 上游问题：①新建最小 SysSubs.f90（NewLine+PathSep；Tab 由 Constants 提供避免歧义）
+      ——v2.10.6 引用 USE SysSubs 但不打包（随 OpenFAST NWTC 提供）；②ControllerBlocks Startup/Shutdown
+      的 USE ROSCO_Types ONLY 缺 ErrorVariables；③FCR 模式下 UpdateZeroMQ/LoadDynamicLib 链接符号保护；
+      ④_compile.py 编译顺序 Functions 在 Filters 前（v2.10.6 新增 Filters→Functions 依赖）。
+    * FarmControlInterface.f90 适配 v2.10.6 字段改名：FA_Acc→FA_AccF、NacIMU_FA_Acc→NacIMU_FA_RAcc。
+    * **编译成功**：DISCON_WT1.dll 2328.1 KB（v2.10.6 FCR 集成，2026-10-13 18:39）。
+    * **回归进行中**：300s 门禁（v2.10.6 DLL）→ 待结果；随后 identity + 单测。
