@@ -209,16 +209,17 @@ CONTAINS
          ! 额定以下降载：PRC_R_Pitch → PRC_Min_Pitch（提高最小桨距→降 Cp）。
          !   经 PRC_Pitch_Table 查表（PRC_R_Table 0..1 → 桨距 0.1971..0 rad）。
          CntrPar%PRC_R_Pitch = sp%power_ratio
-         ! 最小桨距约束
+         ! 最小桨距约束：PS_Mode=1 使 PitchSaturation 应用 PRC_Min_Pitch（额定以下
+         ! 降额核心机制）。注意：必须基于"PRC 降额激活"（power_ratio<1）而非仅
+         ! min_pitch_rad——bridge 路径 Mode1 输出 min_pitch=0（纯 r_pitch 分配），
+         ! 但 PRC_R_Pitch=power_ratio<1 仍需 PitchSaturation 执行桨距降载。
+         CntrPar%PS_Mode = 1
          IF (sp%min_pitch_rad > 0.001_8) THEN
-            CntrPar%PS_Mode = 1
             CntrPar%PS_BldPitchMin_N = 1
             IF (.NOT. ALLOCATED(CntrPar%PS_BldPitchMin)) ALLOCATE(CntrPar%PS_BldPitchMin(1))
             IF (.NOT. ALLOCATED(CntrPar%PS_WindSpeeds))  ALLOCATE(CntrPar%PS_WindSpeeds(1))
             CntrPar%PS_WindSpeeds(1)  = 0.0
             CntrPar%PS_BldPitchMin(1) = sp%min_pitch_rad
-         ELSE
-            CntrPar%PS_Mode = 0
          END IF
       ELSE
          ! disabled：完全回退 ROSCO 额定
