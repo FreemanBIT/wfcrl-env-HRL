@@ -61,6 +61,27 @@ int fcr_rosco_api_init(uint32_t n_turbines_max, double dt_high_s)
     cfg.stale_threshold_s = 5.0;
     cfg.flow_stale_threshold_s = 3.0;
     cfg.transport = NULL;
+    /* DR-3/DR-4：bridge 接入开关（env 可覆盖，供离线/RT 验证） */
+    {
+        const char *be = getenv("FCR_BRIDGE_ENABLE");
+        const char *bm = getenv("FCR_BRIDGE_INDUCTION_MODE");
+        cfg.bridge_enable = (be && atoi(be) > 0) ? 1u : 0u;
+        cfg.bridge_induction_mode = (bm && atoi(bm) >= 0 && atoi(bm) <= 3)
+                                    ? (uint32_t)atoi(bm) : 1u;
+        if (cfg.bridge_enable) {
+            const char *wp = getenv("FCR_BRIDGE_ALLOC_W_PITCH");
+            const char *ws = getenv("FCR_BRIDGE_ALLOC_W_SPEED");
+            const char *wt = getenv("FCR_BRIDGE_ALLOC_W_TORQUE");
+            uint32_t p = wp ? (uint32_t)atoi(wp) : 0u;
+            uint32_t s = ws ? (uint32_t)atoi(ws) : 0u;
+            uint32_t t = wt ? (uint32_t)atoi(wt) : 0u;
+            uint32_t sum = p + s + t;
+            if (sum == 0) { p = 1000; }   /* 默认纯 r_pitch */
+            cfg.bridge_alloc_w_pitch = p;
+            cfg.bridge_alloc_w_speed = s;
+            cfg.bridge_alloc_w_torque = t;
+        }
+    }
     FCR_LOCK_INIT();
     FCR_LOCK();
     if (!g_rt) g_rt = fcr_runtime_create(&cfg);
