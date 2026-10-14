@@ -23,6 +23,7 @@ set(FCR_SRC
     bridge/fcr_bridge_core.c
     bridge/yaw_adapter.c
     bridge/rt_snapshot.c
+    src/bridge_runtime_adapter.c
     awae/observation_manager.c
     awae/wind_mapper.c
     offline/harness/shm_command_source.c
@@ -54,6 +55,7 @@ add_executable(fcr_unit_tests
     tests/unit/test_induction_supervisor.c
     tests/unit/test_modbus.c
     tests/unit/test_bridge_core.c
+    tests/unit/test_bridge_adapter.c
     tests/unit/test_awae.c
     tests/unit/test_rt_snapshot.c
 )

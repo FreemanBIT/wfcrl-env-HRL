@@ -81,8 +81,16 @@ if mode == "farmcontrol":
         "angle_convention.c", "command_store.c", "state_store.c",
         "watchdog.c", "runtime.c", "rosco_api.c",
         "signal_statistics.c", "state_aggregator.c", "induction_supervisor.c",
+        "bridge_runtime_adapter.c",
         "shm_command_source.c",
         "offline_fastfarm_provider.c",
+    ]
+    # bridge/awae 模块（编入 runtime 库；DR-3/DR-4）
+    bridge_sources = [
+        "fcr_bridge_core.c", "yaw_adapter.c", "rt_snapshot.c",
+    ]
+    awae_sources = [
+        "observation_manager.c", "wind_mapper.c",
     ]
     c_objs = []
     # C++ ZMQ transport（Phase 7；Windows 动态加载 libzmq）
@@ -95,6 +103,8 @@ if mode == "farmcontrol":
         rcpp = subprocess.run([gpp, "-std=c++17", "-O2", "-c", zmq_cpp,
                                "-I", os.path.join(FCR_ROOT, "include"),
                                "-I", os.path.join(FCR_ROOT, "src"),
+                               "-I", os.path.join(FCR_ROOT, "bridge"),
+                               "-I", os.path.join(FCR_ROOT, "awae"),
                                "-o", zmq_obj], cwd=SRC_DIR, capture_output=True,
                               encoding="utf-8", errors="replace")
         if rcpp.returncode != 0:
@@ -113,9 +123,38 @@ if mode == "farmcontrol":
                             src_file,
                             "-I", os.path.join(FCR_ROOT, "include"),
                             "-I", os.path.join(FCR_ROOT, "src"),
+                            "-I", os.path.join(FCR_ROOT, "bridge"),
+                            "-I", os.path.join(FCR_ROOT, "awae"),
                             "-o", obj], cwd=SRC_DIR, capture_output=True, encoding="utf-8", errors="replace")
         if r.returncode != 0:
             print(f"C compile FAIL ({src}):"); print(r.stderr); sys.exit(1)
+        c_objs.append(obj)
+    # bridge/awae 模块（DR-3/DR-4）
+    for src in bridge_sources:
+        obj = os.path.join(SRC_DIR, "br_" + os.path.splitext(src)[0] + ".o")
+        src_file = os.path.join(FCR_ROOT, "bridge", src)
+        r = subprocess.run([gcc, "-std=c11", "-O2", "-c", src_file,
+                            "-I", os.path.join(FCR_ROOT, "include"),
+                            "-I", os.path.join(FCR_ROOT, "src"),
+                            "-I", os.path.join(FCR_ROOT, "bridge"),
+                            "-I", os.path.join(FCR_ROOT, "awae"),
+                            "-o", obj], cwd=SRC_DIR, capture_output=True,
+                           encoding="utf-8", errors="replace")
+        if r.returncode != 0:
+            print(f"C compile FAIL (bridge/{src}):"); print(r.stderr); sys.exit(1)
+        c_objs.append(obj)
+    for src in awae_sources:
+        obj = os.path.join(SRC_DIR, "aw_" + os.path.splitext(src)[0] + ".o")
+        src_file = os.path.join(FCR_ROOT, "awae", src)
+        r = subprocess.run([gcc, "-std=c11", "-O2", "-c", src_file,
+                            "-I", os.path.join(FCR_ROOT, "include"),
+                            "-I", os.path.join(FCR_ROOT, "src"),
+                            "-I", os.path.join(FCR_ROOT, "bridge"),
+                            "-I", os.path.join(FCR_ROOT, "awae"),
+                            "-o", obj], cwd=SRC_DIR, capture_output=True,
+                           encoding="utf-8", errors="replace")
+        if r.returncode != 0:
+            print(f"C compile FAIL (awae/{src}):"); print(r.stderr); sys.exit(1)
         c_objs.append(obj)
     cmd += c_objs
     cmd += ["-D", "FCR_FARM_CONTROL"]

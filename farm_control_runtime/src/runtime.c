@@ -12,6 +12,8 @@
  *   3. Transport publish_state。
  */
 #include "fcr_internal.h"
+#include "fcr_bridge_core.h"
+#include "bridge_runtime_adapter.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -45,6 +47,11 @@ FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
         fcr_runtime_destroy(rt);
         return NULL;
     }
+    /* DR-3/DR-4：bridge core（bridge_enable=1 时作为 setpoint 生成源） */
+    if (rt->cfg.bridge_enable) {
+        rt->bridge_core = fcr_bridge_core_create(rt->cfg.n_turbines, NULL, NULL, NULL);
+        if (!rt->bridge_core) { fcr_runtime_destroy(rt); return NULL; }
+    }
     rt->last_low_step_time_s = -1.0;
     return rt;
 }
@@ -55,6 +62,8 @@ int fcr_runtime_destroy(FcrRuntime *rt)
     if (rt->aggregator) fcr_state_aggregator_destroy((FcrStateAggregator *)rt->aggregator);
     if (rt->induction_supervisor)
         fcr_induction_supervisor_destroy((FcrInductionSupervisor *)rt->induction_supervisor);
+    if (rt->bridge_core)
+        fcr_bridge_core_destroy((FcrBridgeCore *)rt->bridge_core);
     fcr_command_store_destroy(rt->cs);
     fcr_state_store_destroy(rt->ss);
     fcr_watchdog_destroy(rt->wd);
@@ -94,8 +103,34 @@ void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id)
     FcrTurbineCommandState *tc = NULL;
     if (!rt || !rt->cs) return;
     fcr_command_store_get_setpoint(rt->cs, turbine_id, &sp);
-    /* InductionSupervisor（Phase 6）：新 seq 计算映射并叠加到 setpoint */
     tc = fcr_command_store_turbine(rt->cs, turbine_id);
+
+    /* DR-3/DR-4：bridge core 作为诱导 setpoint 生成源（bridge_enable=1）。
+     * yaw 通道保留 CommandStore/YawActionManager 的 DR-5 输出。 */
+    if (rt->cfg.bridge_enable && rt->bridge_core && tc) {
+        FcrBridgeCmd cmd;
+        FcrBridgeMeas meas;
+        FcrRoscoFastState fast;
+        memset(&fast, 0, sizeof(fast));
+        fcr_state_store_get_fast(rt->ss, turbine_id, &fast);
+        fcr_bridge_adapter_cmd_from_state(tc, rt->cfg.bridge_induction_mode,
+                                          rt->cfg.bridge_alloc_w_pitch,
+                                          rt->cfg.bridge_alloc_w_speed,
+                                          rt->cfg.bridge_alloc_w_torque,
+                                          &cmd);
+        cmd.turbine_id = turbine_id;   /* 修正按机 ID */
+        fcr_bridge_adapter_meas_from_fast(&fast, &meas);
+        meas.turbine_id = turbine_id;
+        /* bridge step 把诱导结果合并进 sp（yaw 保留 CommandStore） */
+        if (fcr_bridge_adapter_apply((FcrBridgeCore *)rt->bridge_core, turbine_id,
+                                     rt->ss->sim_time_s, &cmd, &meas, &sp) == 0) {
+            rt->setpoint[turbine_id - 1] = sp;
+            return;
+        }
+        /* bridge 失败 → 回退 legacy（不静默丢 setpoint） */
+    }
+
+    /* InductionSupervisor（Phase 6）：新 seq 计算映射并叠加到 setpoint（legacy 路径） */
     if (rt->induction_supervisor && tc) {
         FcrInductionSupervisor *sup = (FcrInductionSupervisor *)rt->induction_supervisor;
         if (tc) {

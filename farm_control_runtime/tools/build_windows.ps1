@@ -30,7 +30,7 @@ Push-Location $root
 gcc -std=c11 -Wall -Wextra -O2 -Iinclude -Isrc -Ibridge -Iawae -Ioffline/harness -Ioffline/provider -Itransport/modbus -Itests/unit -o $runner `
     src/angle_convention.c src/command_store.c src/state_store.c src/watchdog.c src/runtime.c `
     src/rosco_api.c src/signal_statistics.c src/state_aggregator.c src/induction_supervisor.c src/yaw_action_manager.c `
-    bridge/fcr_bridge_core.c bridge/yaw_adapter.c bridge/rt_snapshot.c `
+    bridge/fcr_bridge_core.c bridge/yaw_adapter.c bridge/rt_snapshot.c src/bridge_runtime_adapter.c `
     awae/observation_manager.c awae/wind_mapper.c `
     offline/harness/shm_command_source.c offline/provider/offline_fastfarm_provider.c `
     transport/modbus/modbus_transport.c `
@@ -38,7 +38,7 @@ gcc -std=c11 -Wall -Wextra -O2 -Iinclude -Isrc -Ibridge -Iawae -Ioffline/harness
     tests/unit/test_command_store.c tests/unit/test_abi.c tests/unit/test_watchdog.c `
     tests/unit/test_rosco_api.c tests/unit/test_yaw_action_manager.c tests/unit/test_offline_provider.c `
     tests/unit/test_signal_statistics.c tests/unit/test_state_aggregator.c tests/unit/test_induction_supervisor.c `
-    tests/unit/test_modbus.c tests/unit/test_bridge_core.c tests/unit/test_awae.c tests/unit/test_rt_snapshot.c -lws2_32
+    tests/unit/test_modbus.c tests/unit/test_bridge_core.c tests/unit/test_bridge_adapter.c tests/unit/test_awae.c tests/unit/test_rt_snapshot.c -lws2_32
 if ($LASTEXITCODE -ne 0) { Pop-Location; exit 1 }
 Write-Host "[gcc] running unit tests..."
 & $runner

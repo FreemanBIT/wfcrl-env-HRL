@@ -45,6 +45,13 @@ typedef struct {
     double    flow_stale_threshold_s;  /* 流场超龄阈值（默认 3.0）          */
     double    yaw_rate_limit_rad_s;    /* 偏航速率限值（供监督用，rad/s）   */
     FcrTransport *transport;           /* 挂载的 Transport（可空）          */
+    /* ---- Bridge 接入（DR-3/DR-4）：0 = legacy InductionSupervisor 路径
+     *（默认，兼容现行为）；1 = fcr_bridge_core 作为 setpoint 生成源。 */
+    uint32_t  bridge_enable;           /* 1 = 用 bridge core 生成诱导 setpoint */
+    uint32_t  bridge_induction_mode;   /* DR-3 诱导模式：0/1/2/3（默认 1）    */
+    uint32_t  bridge_alloc_w_pitch;    /* Mode1 控制分配权重（0..1000 千分比，和=1000） */
+    uint32_t  bridge_alloc_w_speed;
+    uint32_t  bridge_alloc_w_torque;
 } FcrRuntimeConfig;
 
 /* ------------------------------------------------------------------ */

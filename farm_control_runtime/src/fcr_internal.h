@@ -266,6 +266,7 @@ struct FcrRuntime {
     void *induction_supervisor; /* Phase 6 */
     void *signal_statistics;  /* Phase 5 */
     void *rosco_api;          /* Phase 2 */
+    void *bridge_core;        /* DR-3 Bridge 核心（可选，bridge_enable=1 时创建）*/
     FcrRoscoExternalSetpoint setpoint[FCR_MAX_TURBINES]; /* 各机当前生效 setpoint */
     double last_low_step_time_s;
 };
