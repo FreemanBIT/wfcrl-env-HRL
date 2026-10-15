@@ -1,8 +1,8 @@
 """Example 1 —（新架构）一键启动 FAST.Farm（FCR ZeroMQ 集成 DLL）+ closedloop 控制器闭环。
 
 Usage:
-    python examples/example_fastfarm_launcher.py --duration 300 --controller B --mode 1
-    python examples/example_fastfarm_launcher.py --duration 90 --controller greedy --step 3
+    python examples/example_fastfarm_launcher.py --duration 300 --controller A --mode 1 --wind_time_series inflow_08ms_TI10_s8D.bts
+    python examples/example_fastfarm_launcher.py --duration 90 --controller greedy --step 3 --wind_time_series inflow_08ms_TI10_s8D.bts
 
 等价于 example_fastfarm_bridge.py，但按 --duration 换算控制步数，并在结束后
 输出功率时序与轨迹图。

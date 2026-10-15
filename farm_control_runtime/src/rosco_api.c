@@ -17,14 +17,38 @@
 #include <math.h>
 #include <stdio.h>
 
+/* WIN-14: lock hold time statistics */
+static double g_lock_hold_max_ms = 0.0;
+static double g_lock_hold_total_ms = 0.0;
+static uint64_t g_lock_count = 0;
+static uint64_t g_queue_depth_max = 0;
+
 #ifdef _WIN32
 #include <windows.h>
 static CRITICAL_SECTION g_lock;
 static int g_lock_init = 0;
 #define FCR_LOCK_INIT() do { InitializeCriticalSection(&g_lock); g_lock_init = 1; } while (0)
 #define FCR_LOCK_FINI() do { if (g_lock_init) DeleteCriticalSection(&g_lock); g_lock_init = 0; } while (0)
-#define FCR_LOCK() EnterCriticalSection(&g_lock)
-#define FCR_UNLOCK() LeaveCriticalSection(&g_lock)
+
+/* WIN-14: instrumented lock with hold-time tracking */
+static LARGE_INTEGER g_lock_freq;
+static double g_lock_t0_ms;
+static void fcr_lock_enter(void) {
+    EnterCriticalSection(&g_lock);
+    if (g_lock_freq.QuadPart == 0) QueryPerformanceFrequency(&g_lock_freq);
+    LARGE_INTEGER now; QueryPerformanceCounter(&now);
+    g_lock_t0_ms = (double)now.QuadPart * 1000.0 / (double)g_lock_freq.QuadPart;
+    g_lock_count++;
+}
+static void fcr_lock_exit(void) {
+    LARGE_INTEGER now; QueryPerformanceCounter(&now);
+    double hold = (double)now.QuadPart * 1000.0 / (double)g_lock_freq.QuadPart - g_lock_t0_ms;
+    g_lock_hold_total_ms += hold;
+    if (hold > g_lock_hold_max_ms) g_lock_hold_max_ms = hold;
+    LeaveCriticalSection(&g_lock);
+}
+#define FCR_LOCK() fcr_lock_enter()
+#define FCR_UNLOCK() fcr_lock_exit()
 #else
 #include <pthread.h>
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -176,6 +200,7 @@ int fcr_rosco_step_high(int32_t turbine_id, double sim_time_s)
 {
     double heading;
     FcrRoscoFastState st;
+    uint64_t qdepth = 0;
     if (!g_rt) return -1;
     FCR_LOCK();
     /* Transport 命令帧拉取（Phase 7：ZeroMQ 命令通道，每 10 ms 轮询） */
@@ -183,7 +208,10 @@ int fcr_rosco_step_high(int32_t turbine_id, double sim_time_s)
         FarmCommandFrame frame;
         while (fcr_transport_poll(g_rt->cfg.transport, &frame) == 1) {
             fcr_command_store_accept_frame(g_rt->cs, &frame);
+            qdepth++;
         }
+        /* WIN-14: track max queue depth per step */
+        if (qdepth > g_queue_depth_max) g_queue_depth_max = qdepth;
     }
     /* 取本机最新机舱方位（来自上一次 publish_state）                  */
     memset(&st, 0, sizeof(st));
@@ -194,6 +222,23 @@ int fcr_rosco_step_high(int32_t turbine_id, double sim_time_s)
     fcr_runtime_update_setpoint_one(g_rt, turbine_id);
     FCR_UNLOCK();
     return 0;
+}
+
+/* WIN-14: diagnostics — lock hold statistics */
+void fcr_rosco_lock_stats(double *max_hold_ms, double *avg_hold_ms,
+                          uint64_t *lock_count, uint64_t *queue_depth_max)
+{
+    if (max_hold_ms) *max_hold_ms = g_lock_hold_max_ms;
+    if (avg_hold_ms) *avg_hold_ms = g_lock_count > 0 ? g_lock_hold_total_ms / (double)g_lock_count : 0.0;
+    if (lock_count) *lock_count = g_lock_count;
+    if (queue_depth_max) *queue_depth_max = g_queue_depth_max;
+}
+void fcr_rosco_lock_stats_reset(void)
+{
+    g_lock_hold_max_ms = 0.0;
+    g_lock_hold_total_ms = 0.0;
+    g_lock_count = 0;
+    g_queue_depth_max = 0;
 }
 
 /* 命令帧注入（离线 harness / Transport 线程；非 10 ms 路径）          */

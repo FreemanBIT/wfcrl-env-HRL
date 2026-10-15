@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
-project(farm_control_runtime VERSION 0.1.0 LANGUAGES C)
+# WIN-04: C++ needed for zmq_transport.cpp
+project(farm_control_runtime VERSION 0.1.0 LANGUAGES C CXX)
 
 # farm_control_runtime — 场控中间层可移植核心（实时交付源）
 # 依赖：仅 C11 编译器（MSVC / GCC / Clang 均可）。
@@ -37,6 +38,17 @@ target_compile_features(farm_control_runtime PUBLIC c_std_11)
 set_target_properties(farm_control_runtime PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     C_VISIBILITY_PRESET hidden)
+
+# WIN-04: offline ZMQ transport as separate shared library
+# (loaded at runtime via LoadLibrary, avoids static link dependency)
+if(WIN32)
+    add_library(fcr_offline_zmq SHARED transport/zmq/zmq_transport.cpp)
+    target_include_directories(fcr_offline_zmq PRIVATE ${FCR_INCLUDE_DIR})
+    target_compile_features(fcr_offline_zmq PRIVATE cxx_std_11)
+    set_target_properties(fcr_offline_zmq PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        PREFIX "")
+endif()
 
 # ---- 单元测试 ----
 enable_testing()

@@ -42,7 +42,9 @@ static FcrBridgeIndConfig default_ind(void) {
     FcrBridgeIndConfig c;
     c.a0 = 0.3333333333333333;
     c.a_min = 0.05;
-    c.a_max = 0.45;
+    /* WIN-12: 物理可达上限 = a0 (Cp 峰值在 a=1/3)；
+     * 更高诱导需要 Ct 继续上升但 pitch 降载方向相反，标 UNACHIEVABLE */
+    c.a_max = 0.3333333333333333;
     c.ct_coef = 1.0;
     c.power_cap = 1.0;
     c.min_pitch_max_rad = 0.30;
@@ -104,31 +106,56 @@ double fcr_bridge_mode2_ct_ref(double a) {
     return 4.0 * a * (1.0 - a);
 }
 
-/* 在气动表上按 lam 行、沿 beta 找最接近 ct_ref 的 beta（双线性取整简化） */
+/* WIN-10: bilinear interpolation of Ct(lam, beta) table */
+static double ct_bilinear_interp(const double *lamv, const double *betav,
+                                 const double *ctv, int n_lam, int n_beta,
+                                 double lam, double beta) {
+    int i, j;
+    double fl, fb, ct00, ct01, ct10, ct11, ct0, ct1;
+    /* clamp to table bounds */
+    if (lam < lamv[0]) lam = lamv[0];
+    if (lam > lamv[n_lam-1]) lam = lamv[n_lam-1];
+    if (beta < betav[0]) beta = betav[0];
+    if (beta > betav[n_beta-1]) beta = betav[n_beta-1];
+    /* find lam bracket */
+    for (i = 0; i < n_lam - 1; ++i)
+        if (lam >= lamv[i] && lam <= lamv[i+1]) break;
+    if (i >= n_lam - 1) i = n_lam - 2;
+    fl = (lam - lamv[i]) / (lamv[i+1] - lamv[i]);
+    /* find beta bracket */
+    for (j = 0; j < n_beta - 1; ++j)
+        if (beta >= betav[j] && beta <= betav[j+1]) break;
+    if (j >= n_beta - 1) j = n_beta - 2;
+    fb = (beta - betav[j]) / (betav[j+1] - betav[j]);
+    /* bilinear interpolation */
+    ct00 = ctv[i * n_beta + j];
+    ct01 = ctv[i * n_beta + j + 1];
+    ct10 = ctv[(i+1) * n_beta + j];
+    ct11 = ctv[(i+1) * n_beta + j + 1];
+    ct0 = ct00 + fb * (ct01 - ct00);
+    ct1 = ct10 + fb * (ct11 - ct10);
+    return ct0 + fl * (ct1 - ct0);
+}
+
+/* WIN-10: find beta by scanning with bilinear interpolation */
 int fcr_bridge_mode2_find_beta(const FcrBridgeCmd *cmd, double lam,
                                double ct_ref, double *beta_deg_out) {
-    int i, j, il = -1;
-    double best = 1e30, best_beta = 0.0;
+    int j;
+    double best = 1e30, best_beta = 0.0, ct;
     const double *lamv, *betav, *ctv;
     if (!cmd || !beta_deg_out) return -1;
     if (cmd->aero_n_lam <= 0 || cmd->aero_n_beta <= 0) return -2;
-    /* 优先共享指针，回退内嵌小数组 */
     lamv = cmd->aero_lam_ptr ? cmd->aero_lam_ptr : cmd->aero_lam_small;
     betav = cmd->aero_beta_deg_ptr ? cmd->aero_beta_deg_ptr : cmd->aero_beta_deg_small;
     ctv = cmd->aero_ct_ptr ? cmd->aero_ct_ptr : cmd->aero_ct_small;
-    /* 找到 lam 最近的索引 */
-    for (i = 0; i < cmd->aero_n_lam; ++i) {
-        if (il < 0 || fabs(lamv[i] - lam) < fabs(lamv[il] - lam))
-            il = i;
-    }
-    if (il < 0) return -3;
-    /* 沿 beta 扫描，找 Ct 最接近 ct_ref 的 beta */
+    /* scan beta axis with bilinear interpolation at current lambda */
     for (j = 0; j < cmd->aero_n_beta; ++j) {
-        double ct = ctv[il * cmd->aero_n_beta + j];
+        ct = ct_bilinear_interp(lamv, betav, ctv, cmd->aero_n_lam, cmd->aero_n_beta,
+                                lam, betav[j]);
         double d = fabs(ct - ct_ref);
         if (d < best) { best = d; best_beta = betav[j]; }
     }
-    if (best > 0.5) return -4; /* 表覆盖不足 */
+    if (best > 0.5) return -4; /* table coverage insufficient */
     *beta_deg_out = best_beta;
     return 0;
 }
@@ -214,12 +241,21 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
                 /* Mode 0：原 ROSCO，所有外部 ratio=1（旁路） */
                 sp.induction_enable = 0;
                 st->induction_seq_applied = cmd->induction_seq;
-            } else if (mode == 1 || mode == 3) {
-                /* Mode 1：功率比例开环（Mode 3 暂走同一映射，pitch_offset 桩=0） */
-                if (!isfinite(a) || a < core->ind.a_min || a > core->ind.a_max) {
+            } else if (mode == 1) {
+                /* WIN-12: 物理可达区域检查 — a > a0 不可达 */
+                if (!isfinite(a) || a < core->ind.a_min) {
                     st->induction_fallback = 1;
                     st->fallback_active = 1;
-                    sp.command_status_flags |= 0x4; /* FALLBACK (本地位) */
+                    sp.command_status_flags |= 0x4; /* FALLBACK */
+                    pr = 1.0;
+                } else if (a > core->ind.a0) {
+                    /* WIN-12: 目标诱导高于基线 — 物理不可达。
+                     * Cp 在 a=1/3 达峰，更高 a 需要 Ct 继续上升，
+                     * 但 pitch 增大会降 Ct，方向矛盾。 */
+                    st->induction_fallback = 1;
+                    st->fallback_active = 1;
+                    sp.command_status_flags |= 0x4;  /* FALLBACK */
+                    sp.command_status_flags |= 0x100; /* UNACHIEVABLE */
                     pr = 1.0;
                 } else {
                     st->induction_fallback = 0;
@@ -252,12 +288,27 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
                     /* r_pitch 实际是 power_ratio 通道（FCR_ApplyReferences 用 power_ratio） */
                     st->min_pitch_rad = 0.0; /* Mode1 不用最小桨距约束 */
                 }
+            } else if (mode == 3) {
+                /* WIN-15: Mode 3 显式不支持 — 反馈闭环接口，RT 阶段实现。
+                 * 不静默走 Mode1，不误导试验。 */
+                st->induction_fallback = 1;
+                st->fallback_active = 1;
+                sp.command_status_flags |= 0x4;   /* FALLBACK */
+                sp.command_status_flags |= 0x100;  /* UNSUPPORTED */
+                st->power_ratio = 1.0;
+                st->speed_ref_ratio = 1.0;
+                st->torque_limit_ratio = 1.0;
+                st->min_pitch_rad = 0.0;
+                sp.induction_enable = 0;  /* 不生效 */
             } else if (mode == 2) {
                 /* Mode 2：Ct 前馈 → 桨距（min_pitch_ref 或 PRC） */
-                if (!isfinite(a) || a < core->ind.a_min || a > core->ind.a_max) {
+                if (!isfinite(a) || a < core->ind.a_min || a > core->ind.a0) {
+                    /* a > a0: Ct 反查找不到（Ct 在 a=1/3 最大），标 UNACHIEVABLE */
                     st->induction_fallback = 1;
                     st->fallback_active = 1;
                     sp.command_status_flags |= 0x4;
+                    if (isfinite(a) && a > core->ind.a0)
+                        sp.command_status_flags |= 0x100; /* UNACHIEVABLE */
                     ct_ref = fcr_bridge_mode2_ct_ref(core->ind.a0) * core->ind.ct_coef;
                 } else {
                     st->induction_fallback = 0;

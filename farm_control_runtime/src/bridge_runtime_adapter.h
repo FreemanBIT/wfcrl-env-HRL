@@ -34,6 +34,13 @@ void fcr_bridge_adapter_cmd_from_state(const FcrTurbineCommandState *tc,
 void fcr_bridge_adapter_meas_from_fast(const FcrRoscoFastState *fast,
                                        FcrBridgeMeas *out);
 
+/* WIN-11: full measurement synthesis from StateStore (fast + extra + flow) */
+void fcr_bridge_adapter_meas_from_state(const FcrRoscoFastState *fast,
+                                        const FcrTurbineExtraState *extra,
+                                        const FcrFlowState *flow,
+                                        int32_t turbine_id,
+                                        FcrBridgeMeas *out);
+
 /* 调 bridge core step 并把诱导结果合并进基础 setpoint（yaw 保留 base）。 */
 int fcr_bridge_adapter_apply(FcrBridgeCore *core, int32_t turbine_id,
                              double sim_time_s,

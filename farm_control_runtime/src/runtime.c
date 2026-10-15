@@ -111,16 +111,21 @@ void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id)
         FcrBridgeCmd cmd;
         FcrBridgeMeas meas;
         FcrRoscoFastState fast;
+        FcrTurbineExtraState extra;
+        const FcrFlowState *flow;
         memset(&fast, 0, sizeof(fast));
+        memset(&extra, 0, sizeof(extra));
         fcr_state_store_get_fast(rt->ss, turbine_id, &fast);
+        fcr_state_store_get_extra(rt->ss, turbine_id, &extra);
+        flow = fcr_state_store_get_flow(rt->ss);
         fcr_bridge_adapter_cmd_from_state(tc, rt->cfg.bridge_induction_mode,
                                           rt->cfg.bridge_alloc_w_pitch,
                                           rt->cfg.bridge_alloc_w_speed,
                                           rt->cfg.bridge_alloc_w_torque,
                                           &cmd);
-        cmd.turbine_id = turbine_id;   /* 修正按机 ID */
-        fcr_bridge_adapter_meas_from_fast(&fast, &meas);
-        meas.turbine_id = turbine_id;
+        cmd.turbine_id = turbine_id;
+        /* WIN-11: full measurement synthesis from StateStore */
+        fcr_bridge_adapter_meas_from_state(&fast, &extra, flow, turbine_id, &meas);
         /* bridge step 把诱导结果合并进 sp（yaw 保留 CommandStore） */
         if (fcr_bridge_adapter_apply((FcrBridgeCore *)rt->bridge_core, turbine_id,
                                      rt->ss->sim_time_s, &cmd, &meas, &sp) == 0) {

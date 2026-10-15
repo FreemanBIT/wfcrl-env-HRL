@@ -19,9 +19,10 @@
 
 static void test_abi_sizes(void)
 {
-    /* 冻结尺寸（64 位，double/uint64 对齐 8；由 abi_dump 实测 2026-xx） */
-    CHECK_ABI(FcrTurbineCommand, 88);
-    CHECK_ABI(FarmCommandFrame, 5672);
+    /* 冻结尺寸（64 位，double/uint64 对齐 8；由 abi_dump 实测 2026-xx）
+     * WIN-16: FcrTurbineCommand +16 bytes (absolute yaw v2 fields) */
+    CHECK_ABI(FcrTurbineCommand, 104);
+    CHECK_ABI(FarmCommandFrame, 6696);
     CHECK_ABI(FcrSignalStats, 48);
     CHECK_ABI(FcrRoscoFastState, 232);
     CHECK_ABI(FcrRoscoExternalSetpoint, 96);
@@ -35,7 +36,8 @@ static void test_abi_offsets(void)
 {
     /* 关键字段偏移（帮助发现误改） */
     ASSERT(offsetof(FcrTurbineCommand, yaw_seq) == 8);
-    ASSERT(offsetof(FcrTurbineCommand, induction_ref) == 40);
+    /* WIN-16: induction_ref offset shifted by +16 (absolute yaw fields added) */
+    ASSERT(offsetof(FcrTurbineCommand, induction_ref) == 56);
     ASSERT(offsetof(FcrRoscoFastState, nacelle_heading_rad) == 64);
     ASSERT(offsetof(FcrRoscoExternalSetpoint, yaw_target_heading_rad) == 24);
 }

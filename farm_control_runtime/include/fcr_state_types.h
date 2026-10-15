@@ -26,6 +26,12 @@ typedef struct {
     uint32_t  yaw_valid;               /* 本条偏航命令有效标志               */
     int64_t   yaw_effective_low_step;  /* 目标生效的 FAST.Farm 低速步号     */
     double    yaw_ttl_s;               /* 偏航命令有效时长（s），0 = 无限    */
+    /* WIN-16: v2 absolute yaw target (protocol v2 extension).
+     * When yaw_absolute_valid=1, yaw_delta_rad is ignored and the absolute
+     * heading target is used directly (no delta conversion, no re-adding
+     * current heading).  Legacy v1 clients set yaw_absolute_valid=0. */
+    double    yaw_absolute_heading_rad; /* absolute target (OpenFAST internal) */
+    uint32_t  yaw_absolute_valid;       /* use absolute target instead of delta */
 
     /* ---- 诱导通道 ---- */
     double    induction_ref;           /* 轴向诱导因子目标（无量纲 [0,1)）  */

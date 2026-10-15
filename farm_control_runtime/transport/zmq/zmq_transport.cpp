@@ -118,6 +118,8 @@ struct ZmqTransportImpl {
     void *cmd_user = nullptr;
     int state_port = 0;
     std::mutex pub_lock;
+    /* WIN-05: rejected frame counter */
+    volatile LONG bad_frame_count = 0;
 };
 
 static unsigned __stdcall cmd_thread_fn(void *arg)
@@ -126,10 +128,15 @@ static unsigned __stdcall cmd_thread_fn(void *arg)
     char buf[sizeof(FarmCommandFrame) + 16];
     while (!t->stop) {
         int rc = g_zmq.recv(t->cmd_sub, buf, (int)sizeof(buf), ZMQ_DONTWAIT);
-        if (rc > 0) {
+        /* WIN-05: strict frame validation — exact size + version + n_turbines + timestamp */
+        if (rc == (int)sizeof(FarmCommandFrame)) {
             FarmCommandFrame frame;
             std::memcpy(&frame, buf, sizeof(FarmCommandFrame));
-            if (frame.protocol_version == FCR_PROTOCOL_VERSION) {
+            if (frame.protocol_version == FCR_PROTOCOL_VERSION &&
+                frame.n_turbines >= 1 &&
+                frame.n_turbines <= FCR_MAX_TURBINES &&
+                frame.turbines[0].source_time_s > 0.0 &&
+                frame.turbines[0].source_time_s < 1.0e12) {
                 if (t->cmd_cb) {
                     t->cmd_cb(&frame);
                 } else {
@@ -137,7 +144,13 @@ static unsigned __stdcall cmd_thread_fn(void *arg)
                     t->cmdq.push(frame);
                     if (t->cmdq.size() > 256) t->cmdq.pop();
                 }
+            } else {
+                t->bad_frame_count++;  /* WIN-05: count rejected frames */
             }
+            continue;
+        } else if (rc > 0) {
+            /* WIN-05: short or malformed frame — discard and count */
+            t->bad_frame_count++;
             continue;
         }
         Sleep(5);
@@ -162,7 +175,9 @@ static int zmq_publish_state(FcrTransport *self, const FarmStateFrame *state)
     ZmqTransportImpl *t = (ZmqTransportImpl *)self->impl;
     if (!t->state_pub) return 0;
     std::lock_guard<std::mutex> lk(t->pub_lock);
-    g_zmq.send(t->state_pub, state, sizeof(FarmStateFrame), ZMQ_DONTWAIT);
+    /* WIN-05: check send return value */
+    int rc = g_zmq.send(t->state_pub, state, sizeof(FarmStateFrame), ZMQ_DONTWAIT);
+    if (rc < 0) return -1;  /* send failed */
     return 1;
 }
 

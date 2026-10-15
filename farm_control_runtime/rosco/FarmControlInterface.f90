@@ -28,6 +28,11 @@ MODULE FarmControlInterface
    INTEGER,            SAVE :: current_turbine_id_ = 0
    LOGICAL,            SAVE :: init_done_ = .FALSE.
    LOGICAL,            SAVE :: api_ok_ = .FALSE.
+   ! WIN-07: per-turbine nominal parameter arrays (multi-instance safe)
+   REAL(8), SAVE :: VS_RtPwr_nom(FCR_MAX_TURBINES_LOCAL) = 0.0_8
+   REAL(8), SAVE :: VS_MaxTq_nom(FCR_MAX_TURBINES_LOCAL) = 0.0_8
+   REAL(8), SAVE :: VS_RefSpd_nom(FCR_MAX_TURBINES_LOCAL) = 0.0_8
+   LOGICAL, SAVE :: nom_ok(FCR_MAX_TURBINES_LOCAL) = .FALSE.
 
    ! ---- 公开接口 ----
    PUBLIC :: FCR_Init, FCR_Step, FCR_PublishState, FCR_Shutdown
@@ -162,73 +167,91 @@ CONTAINS
    SUBROUTINE FCR_ApplyReferences(CntrPar)
       USE ROSCO_Types, ONLY : ControlParameters
       TYPE(ControlParameters), INTENT(INOUT) :: CntrPar
-      REAL(8), SAVE :: VS_RtPwr_nom = 0.0_8, VS_MaxTq_nom = 0.0_8
-      REAL(8), SAVE :: VS_RefSpd_nom = 0.0_8
-      LOGICAL, SAVE :: nom_ok = .FALSE.
       TYPE(FcrSetpointC), POINTER :: sp
       INTEGER :: tid
+      ! WIN-03: independent channel active flags
+      LOGICAL :: pitch_active, speed_active, torque_active, any_active
       IF (.NOT. api_ok_) RETURN
       tid = current_turbine_id_
       IF (tid < 1 .OR. tid > n_turbines_) RETURN
-      IF (.NOT. nom_ok) THEN
-         VS_RtPwr_nom = CntrPar%VS_RtPwr
-         VS_MaxTq_nom = CntrPar%VS_MaxTq
-         VS_RefSpd_nom = CntrPar%VS_RefSpd
-         nom_ok = .TRUE.
+      ! WIN-07: per-turbine nominal parameter capture
+      IF (.NOT. nom_ok(tid)) THEN
+         VS_RtPwr_nom(tid)  = CntrPar%VS_RtPwr
+         VS_MaxTq_nom(tid)  = CntrPar%VS_MaxTq
+         VS_RefSpd_nom(tid) = CntrPar%VS_RefSpd
+         nom_ok(tid) = .TRUE.
       END IF
-      ! 每步恢复标称（防累积）
-      CntrPar%VS_RtPwr = VS_RtPwr_nom
-      CntrPar%VS_MaxTq = VS_MaxTq_nom
-      CntrPar%VS_RefSpd = VS_RefSpd_nom
+      ! reset to nominal every step (prevent accumulation)
+      CntrPar%VS_RtPwr  = VS_RtPwr_nom(tid)
+      CntrPar%VS_MaxTq  = VS_MaxTq_nom(tid)
+      CntrPar%VS_RefSpd = VS_RefSpd_nom(tid)
       sp => FCR_Setpoint(tid)
       IF (.NOT. ASSOCIATED(sp)) RETURN
-      IF (sp%induction_enable /= 0) THEN
-         ! greedy 哨兵：power_ratio≈1（无实际降额）时不激活任何 override，
-         ! 保持纯 ROSCO greedy（匹配研究侧 a≥A_GREEDY-ε 不下发的语义；
-         ! 也避免 PRC_Mode=2 在 ratio=1 时改变控制动力学引起尾流重分布）
-         IF (sp%power_ratio >= 1.0_8 - 1.0e-6_8) THEN
-            CntrPar%VS_ConstPower = 0
-            CntrPar%PS_Mode = 0
-            CntrPar%PRC_Mode = 0
-            RETURN
-         END IF
-         ! 功率参考（VS_ConstPower 模式）
-         CntrPar%VS_ConstPower = 1
-         CntrPar%VS_RtPwr = VS_RtPwr_nom * sp%power_ratio
-         CntrPar%VS_MaxTq = VS_MaxTq_nom * sp%torque_limit_ratio
-         CntrPar%VS_RefSpd = VS_RefSpd_nom * sp%speed_ref_ratio
-         ! v2.10.6 原生 PRC 降额（向后兼容）：
-         !   PRC_Mode=2 + PRC_Comm=Constant → PowerControlSetpoints 读 CntrPar%PRC_R_*
-         !   WSE_TSR: VS_RefSpd=VS_RefSpd_TSR*PRC_R_Speed（额定以下降速→降功率）
-         !   VS_ConstPwr_GenTq/VS_MaxTq 乘 PRC_R_Torque（额定以上降转矩）
-         !   （PRC_Mode≠2 时 v2.10.6 会把 PRC_R_* 强制置 1.0，降额失效——这是本修复关键）
-         CntrPar%PRC_Mode = 2
-         CntrPar%PRC_Comm = 0                       ! PRC_Comm_Constant
-         CntrPar%PRC_R_Speed = sp%speed_ref_ratio
-         CntrPar%PRC_R_Torque = sp%torque_limit_ratio
-         ! 额定以下降载：PRC_R_Pitch → PRC_Min_Pitch（提高最小桨距→降 Cp）。
-         !   经 PRC_Pitch_Table 查表（PRC_R_Table 0..1 → 桨距 0.1971..0 rad）。
-         CntrPar%PRC_R_Pitch = sp%power_ratio
-         ! 最小桨距约束：PS_Mode=1 使 PitchSaturation 应用 PRC_Min_Pitch（额定以下
-         ! 降额核心机制）。注意：必须基于"PRC 降额激活"（power_ratio<1）而非仅
-         ! min_pitch_rad——bridge 路径 Mode1 输出 min_pitch=0（纯 r_pitch 分配），
-         ! 但 PRC_R_Pitch=power_ratio<1 仍需 PitchSaturation 执行桨距降载。
-         CntrPar%PS_Mode = 1
-         IF (sp%min_pitch_rad > 0.001_8) THEN
-            CntrPar%PS_BldPitchMin_N = 1
-            IF (.NOT. ALLOCATED(CntrPar%PS_BldPitchMin)) ALLOCATE(CntrPar%PS_BldPitchMin(1))
-            IF (.NOT. ALLOCATED(CntrPar%PS_WindSpeeds))  ALLOCATE(CntrPar%PS_WindSpeeds(1))
-            CntrPar%PS_WindSpeeds(1)  = 0.0
-            CntrPar%PS_BldPitchMin(1) = sp%min_pitch_rad
-         END IF
-      ELSE
-         ! disabled：完全回退 ROSCO 额定
+
+      ! WIN-02+WIN-03: independent channel evaluation
+      ! pitch channel: power_ratio < 1 means derating via PRC_R_Pitch
+      pitch_active  = sp%induction_enable /= 0 .AND. &
+                      sp%power_ratio < 1.0_8 - 1.0e-6_8
+      ! speed channel: speed_ref_ratio differs from 1
+      speed_active  = sp%induction_enable /= 0 .AND. &
+                      ABS(sp%speed_ref_ratio - 1.0_8) > 1.0e-6_8 .AND. &
+                      sp%speed_ref_ratio > 0.0_8
+      ! torque channel: torque_limit_ratio differs from 1
+      torque_active = sp%induction_enable /= 0 .AND. &
+                      ABS(sp%torque_limit_ratio - 1.0_8) > 1.0e-6_8 .AND. &
+                      sp%torque_limit_ratio > 0.0_8
+      any_active = pitch_active .OR. speed_active .OR. torque_active .OR. &
+                   (sp%induction_enable /= 0 .AND. sp%min_pitch_rad > 0.001_8)
+
+      IF (.NOT. any_active) THEN
+         ! disabled or no-op: full ROSCO fallback
          CntrPar%VS_ConstPower = 0
          CntrPar%PS_Mode = 0
          CntrPar%PRC_Mode = 0
          CntrPar%PRC_R_Speed = 1.0_8
          CntrPar%PRC_R_Torque = 1.0_8
          CntrPar%PRC_R_Pitch = 1.0_8
+         RETURN
+      END IF
+
+      ! --- pitch channel (PRC derating via PRC_R_Pitch -> PRC_Min_Pitch) ---
+      IF (pitch_active) THEN
+         CntrPar%PRC_Mode = 2
+         CntrPar%PRC_Comm = 0
+         CntrPar%PRC_R_Pitch = sp%power_ratio
+         CntrPar%VS_ConstPower = 1
+         CntrPar%VS_RtPwr = VS_RtPwr_nom(tid) * sp%power_ratio
+         ! WIN-03: PS_Mode=1 required for PitchSaturation to apply PRC_Min_Pitch
+         CntrPar%PS_Mode = 1
+      END IF
+
+      ! --- speed channel (PRC_R_Speed -> WSE_TSR scaling) ---
+      IF (speed_active) THEN
+         CntrPar%PRC_Mode = 2
+         CntrPar%PRC_Comm = 0
+         CntrPar%PRC_R_Speed = sp%speed_ref_ratio
+      END IF
+
+      ! --- torque channel (PRC_R_Torque -> VS_MaxTq scaling) ---
+      IF (torque_active) THEN
+         CntrPar%PRC_Mode = 2
+         CntrPar%PRC_Comm = 0
+         CntrPar%PRC_R_Torque = sp%torque_limit_ratio
+         CntrPar%VS_MaxTq = VS_MaxTq_nom(tid) * sp%torque_limit_ratio
+      END IF
+
+      ! --- WIN-02: min_pitch channel independent of power_ratio ---
+      ! Mode2 Ct feedforward sets min_pitch_rad even when power_ratio=1.
+      ! This must NOT be swallowed by the greedy sentinel.
+      IF (sp%induction_enable /= 0 .AND. sp%min_pitch_rad > 0.001_8) THEN
+         CntrPar%PS_Mode = 1
+         CntrPar%PS_BldPitchMin_N = 1
+         IF (.NOT. ALLOCATED(CntrPar%PS_BldPitchMin)) &
+            ALLOCATE(CntrPar%PS_BldPitchMin(1))
+         IF (.NOT. ALLOCATED(CntrPar%PS_WindSpeeds)) &
+            ALLOCATE(CntrPar%PS_WindSpeeds(1))
+         CntrPar%PS_WindSpeeds(1)  = 0.0
+         CntrPar%PS_BldPitchMin(1) = sp%min_pitch_rad
       END IF
    END SUBROUTINE FCR_ApplyReferences
 
@@ -299,6 +322,11 @@ CONTAINS
       rc = fcr_rosco_api_shutdown()
       init_done_ = .FALSE.
       api_ok_ = .FALSE.
+      ! WIN-07: reset per-turbine nominal arrays
+      nom_ok = .FALSE.
+      VS_RtPwr_nom = 0.0_8
+      VS_MaxTq_nom = 0.0_8
+      VS_RefSpd_nom = 0.0_8
    END SUBROUTINE FCR_Shutdown
 
    ! 当前（最近一次 FCR_Step 的）机组号 —— 供 ROSCO 控制子程序查询自身

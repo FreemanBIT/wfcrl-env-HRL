@@ -1,5 +1,6 @@
 {
     "python.defaultInterpreterPath": "d:\\HR_Project\\wfcrl-env-HRL\\.venv\\Scripts\\python.exe",
     "python.terminal.activateEnvironment": true,
-    "jupyter.kernels.filter": []
+    "jupyter.kernels.filter": [],
+    "cmake.sourceDirectory": "D:/HR_Project/wfcrl-env-HRL/farm_control_runtime"
 }

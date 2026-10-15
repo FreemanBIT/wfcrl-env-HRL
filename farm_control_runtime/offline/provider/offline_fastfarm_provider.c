@@ -137,3 +137,45 @@ int fcr_offline_provider_publish_fast(int32_t turbine_id, double sim_time_s,
 
 /* 供测试/工具：获取配置 */
 double fcr_offline_provider_dt_low(void) { return g_dt_low; }
+
+/* WIN-13: generate synthetic AWAE observation points for offline validation.
+ * Produces deterministic flow field data clearly marked as SIMULATED.
+ * Used to validate ObservationManager + WindMapper + StateAggregator chain
+ * without requiring actual GPU/AWAE access. */
+int fcr_offline_provider_generate_synthetic_flow(FcrFlowState *flow,
+                                                  uint32_t n_points,
+                                                  double sim_time_s,
+                                                  uint32_t n_turbines,
+                                                  uint32_t seed)
+{
+    uint32_t i, t;
+    if (!flow || n_points == 0 || n_points > FCR_MAX_OBSERVATION_POINTS) return -1;
+    memset(flow, 0, sizeof(*flow));
+    flow->valid = 1;
+    flow->flow_source_time_s = sim_time_s;
+    flow->flow_seq = (uint64_t)(sim_time_s / g_dt_low);
+    flow->n_points = n_points;
+    flow->n_turbines = n_turbines;
+
+    /* Deterministic pseudo-random wind field (SIMULATED — not real AWAE) */
+    for (i = 0; i < n_points; ++i) {
+        double angle = 2.0 * 3.14159265358979323846 * (double)i / (double)n_points;
+        uint32_t h = i * 2654435761u + seed * 40503u;
+        double jitter = (double)(h % 1000) / 1000.0;  /* 0..1 */
+        flow->ambient_u[i] = 8.0 + 2.0 * sin(angle) + 0.5 * jitter;
+        flow->ambient_v[i] = 0.5 * cos(angle);
+        flow->ambient_w[i] = 0.0;
+        flow->disturbed_u[i] = flow->ambient_u[i] * 0.85;  /* wake deficit */
+        flow->disturbed_v[i] = flow->ambient_v[i];
+        flow->disturbed_w[i] = 0.0;
+        flow->point_ti[i] = 0.08 + 0.02 * sin(2.0 * angle);
+    }
+
+    /* Disk-averaged wind per turbine (simplified uniform) */
+    for (t = 0; t < n_turbines && t < FCR_MAX_TURBINES; ++t) {
+        flow->disk_ambient_wind_mps[t] = 8.0;
+        flow->disk_disturbed_wind_mps[t] = 6.8;
+        flow->disk_ambient_ti[t] = 0.08;
+    }
+    return 0;
+}

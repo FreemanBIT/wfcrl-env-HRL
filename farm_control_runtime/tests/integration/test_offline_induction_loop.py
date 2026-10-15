@@ -31,6 +31,8 @@ def test_induction_1s_update_and_hold(farm):
 
 
 def test_induction_multi_turbine_distinct(farm):
+    """WIN-06: strong per-turbine assertions — all three turbines must independently
+    execute distinct induction commands and show different power responses."""
     eng, st0 = farm
     rows = [
         {"time_rel": 2.0, "turbine_id": 1, "channel": "induction", "seq": 1, "value": 0.20},
@@ -38,30 +40,30 @@ def test_induction_multi_turbine_distinct(farm):
         {"time_rel": 4.0, "turbine_id": 3, "channel": "induction", "seq": 1, "value": 0.40},
     ]
     th, stop = replay_trace(eng, rows, start_sim_time=st0["sim_time_s"])
-    st = wait_seq_applied(eng, 3, "induction", 1, timeout_s=40)
+
+    # WIN-06: strict per-turbine seq applied verification
+    st1 = wait_seq_applied(eng, 1, "induction", 1, timeout_s=40)
+    assert st1 is not None, "T1 induction seq=1 not applied"
+    st2 = wait_seq_applied(eng, 2, "induction", 1, timeout_s=40)
+    assert st2 is not None, "T2 induction seq=1 not applied"
+    st3 = wait_seq_applied(eng, 3, "induction", 1, timeout_s=40)
+    assert st3 is not None, "T3 induction seq=1 not applied"
+
+    # Verify all three state frames are valid
+    s = eng.get_state(timeout_s=2.0)
+    assert s is not None, "no state frame received"
+    for i in range(3):
+        assert s["turbines"][i]["valid"], f"T{i+1} state frame invalid"
+
+    # WIN-06: verify distinct power responses (different a_ref -> different power)
+    pw = [s["turbines"][i]["gen_power_w"]["instant"] for i in range(3)]
+    assert pw[0] != pw[1], f"T1/T2 power identical despite different a_ref: {pw[0]} vs {pw[1]}"
+    assert pw[1] != pw[2], f"T2/T3 power identical despite different a_ref: {pw[1]} vs {pw[2]}"
+
+    # Higher a_ref should produce lower power (derating)
+    assert pw[2] < pw[0], f"T3 (a=0.40) power {pw[2]} should be < T1 (a=0.20) power {pw[0]}"
+
     stop.set(); th.join(timeout=2)
-    assert st is not None
-# 广播验证：命令帧全场广播（各 WT 进程均收到）＋ T1 端到端生效；
-# 注：T2/T3 的诱导在独立进程中的生效回读在部分环境下滞后/丢失（记录于
-#     OFFLINE_VALIDATION.md 已知问题），此处断言广播到达 + T1 生效。
-    ok1 = False
-    t_end = time.time() + 45
-    while (not ok1) and time.time() < t_end:
-        s2 = eng.get_state(timeout_s=2.0)
-        if s2 is not None:
-            t0c = s2["turbines"][0]
-            if t0c["induction_seq_applied"] == 1:
-                ok1 = True
-            # 广播到达：三机状态帧均有效（各进程在运行并发布）
-            nv = sum(1 for k in range(3) if s2["turbines"][k]["valid"])
-            if nv >= 1:
-                broadcast_ok = True
-        time.sleep(1.5)
-    assert ok1, "T1 诱导命令未端到端生效"
-    assert broadcast_ok, "三机状态帧未全部到达（广播链路异常）"
-    st = eng.get_state(timeout_s=2.0)
-    pw = [st["turbines"][i]["gen_power_w"] for i in range(3)]
-    pw = [st["turbines"][i]["gen_power_w"] for i in range(3)]
 
 
 def test_induction_fallback_rollback(farm):

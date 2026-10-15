@@ -36,6 +36,15 @@ int fcr_is_finite(double x);
 /* command_store.c                                                    */
 /* ------------------------------------------------------------------ */
 
+/* WIN-09: 通道状态机 */
+typedef enum {
+    FCR_CH_IDLE = 0,        /* 无有效命令                     */
+    FCR_CH_ACCEPTED,        /* 新 seq 已接收，等待 effective_low_step */
+    FCR_CH_SCHEDULED,       /* 已到生效步，等待 TTL 起算       */
+    FCR_CH_ACTIVE,          /* 生效中                          */
+    FCR_CH_EXPIRED          /* TTL 到期/失效                   */
+} FcrChannelState;
+
 typedef struct FcrTurbineCommandState {
     /* ---- yaw 通道 ---- */
     uint64_t yaw_seq_rx;              /* 最近收到（成功校验）的 seq       */
@@ -47,6 +56,7 @@ typedef struct FcrTurbineCommandState {
     int64_t  yaw_effective_low_step;  /* 生效低速步号                     */
     double   yaw_ttl_s;               /* 生效 TTL（0 = 无限）             */
     double   yaw_issue_time_s;        /* 生效时刻（sim_time）             */
+    FcrChannelState yaw_state;        /* WIN-09: 通道状态机              */
     /* ---- induction 通道 ---- */
     uint64_t ind_seq_rx;
     uint64_t ind_seq_applied;
@@ -55,6 +65,7 @@ typedef struct FcrTurbineCommandState {
     int64_t  ind_effective_low_step;
     double   ind_ttl_s;
     double   ind_issue_time_s;
+    FcrChannelState ind_state;        /* WIN-09: 通道状态机              */
     double   source_time_s;           /* 命令发出时间（控制器侧）         */
     /* ---- 诊断 ---- */
     uint32_t command_status_flags;

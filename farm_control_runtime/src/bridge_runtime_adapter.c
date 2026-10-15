@@ -52,6 +52,35 @@ void fcr_bridge_adapter_meas_from_fast(const FcrRoscoFastState *fast,
     out->gen_power_w = fast->gen_power_w;
 }
 
+/* WIN-11: synthesize bridge measurement from full StateStore state */
+void fcr_bridge_adapter_meas_from_state(const FcrRoscoFastState *fast,
+                                        const FcrTurbineExtraState *extra,
+                                        const FcrFlowState *flow,
+                                        int32_t turbine_id,
+                                        FcrBridgeMeas *out) {
+    memset(out, 0, sizeof(*out));
+    if (!fast || !out) return;
+    out->turbine_id = turbine_id;
+    out->valid = fast->valid;
+    out->source_time_s = fast->source_time_s;
+    out->rotor_speed_rad_s = fast->rotor_speed_rad_s;
+    out->generator_speed_rad_s = fast->gen_speed_rad_s;
+    /* WIN-11: thrust from extra provider (real measurement) */
+    out->rotor_thrust_n = (extra && extra->valid) ? extra->rotor_thrust_n : 0.0;
+    /* WIN-11: disk wind from flow (AWAE), fallback to hub wind */
+    if (flow && flow->valid && turbine_id <= (int32_t)flow->n_turbines) {
+        out->disk_wind_speed_mps = flow->disk_disturbed_wind_mps[turbine_id - 1];
+        out->disk_background_wind_mps = flow->disk_ambient_wind_mps[turbine_id - 1];
+        out->disk_turbulence = flow->disk_ambient_ti[turbine_id - 1];
+    } else {
+        out->disk_wind_speed_mps = fast->hub_wind_speed_mps;
+    }
+    out->ambient_upstream_wind_mps = fast->hub_wind_speed_mps;
+    memcpy(out->blade_pitch_rad, fast->blade_pitch_rad, sizeof(out->blade_pitch_rad));
+    out->nacelle_heading_rad = fast->nacelle_heading_rad;
+    out->gen_power_w = fast->gen_power_w;
+}
+
 /* 调 bridge core step，诱导结果合并进基础 setpoint（yaw 保留 base） */
 int fcr_bridge_adapter_apply(FcrBridgeCore *core, int32_t turbine_id,
                              double sim_time_s,
