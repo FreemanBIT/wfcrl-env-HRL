@@ -13,6 +13,10 @@
 #include <string.h>
 #include <stdio.h>
 
+/* WIN-09 debug: acceptance counters */
+uint32_t g_dbg_yaw_accept = 0, g_dbg_ind_accept = 0;
+uint32_t g_dbg_yaw_latch = 0, g_dbg_ind_latch = 0;
+
 FcrCommandStore *fcr_command_store_create(uint32_t n_turbines,
                                           double default_yaw_ttl_s,
                                           double default_induction_ttl_s,
@@ -64,11 +68,12 @@ static void accept_turbine(FcrCommandStore *cs, const FcrTurbineCommand *cmd,
             /* WIN-16: v2 absolute yaw target — store directly, no delta conversion */
             if (cmd->yaw_absolute_valid) {
                 tc->yaw_target_heading = cmd->yaw_absolute_heading_rad;
-                tc->yaw_target_latched = 1;  /* absolute target: latch immediately */
+                tc->yaw_target_latched = 1;
                 tc->yaw_seq_applied = cmd->yaw_seq;
             }
             tc->yaw_state = FCR_CH_ACCEPTED;
             tc->command_status_flags &= ~FCR_CMD_FLAG_INVALID_SEQ;
+            g_dbg_yaw_accept++;  /* WIN-09 debug */
         } else if (cmd->yaw_seq == tc->yaw_seq_rx) {
             /* WIN-09: 重复 seq — 幂等，不续命。
              * 不更新 TTL、source_time、issue_time。
@@ -97,6 +102,7 @@ static void accept_turbine(FcrCommandStore *cs, const FcrTurbineCommand *cmd,
             tc->source_time_s = cmd->source_time_s;
             tc->ind_state = FCR_CH_ACCEPTED;
             tc->command_status_flags &= ~FCR_CMD_FLAG_INVALID_SEQ;
+            g_dbg_ind_accept++;  /* WIN-09 debug */
         } else if (cmd->induction_seq == tc->ind_seq_rx) {
             /* WIN-09: 重复 seq — 幂等，不续命 */
             if (tc->ind_state == FCR_CH_IDLE || tc->ind_state == FCR_CH_EXPIRED) {
@@ -224,6 +230,9 @@ void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
                 fcr_compute_yaw_target(heading_now_rad, tc->yaw_delta_rad);
             tc->yaw_target_latched = 1;
             tc->yaw_seq_applied = tc->yaw_seq_rx;
+            g_dbg_yaw_latch++;  /* WIN-09 debug */
+        } else {
+            fprintf(stderr, "[FCR-DBG] yaw latch SKIP: tid=%d heading not finite\n", turbine_id);
         }
         /* 方位未知：保持未锁存，等待下一高速步 */
     }
@@ -283,4 +292,13 @@ void fcr_command_store_get_setpoint(const FcrCommandStore *cs, int32_t turbine_i
     }
 
     if (sp->valid) sp->command_status_flags |= FCR_CMD_FLAG_VALID;
+}
+
+/* WIN-09 debug: read acceptance counters */
+void fcr_command_store_debug_counters(uint32_t *yaw_accept, uint32_t *ind_accept,
+                                      uint32_t *yaw_latch, uint32_t *ind_latch) {
+    if (yaw_accept) *yaw_accept = g_dbg_yaw_accept;
+    if (ind_accept) *ind_accept = g_dbg_ind_accept;
+    if (yaw_latch) *yaw_latch = g_dbg_yaw_latch;
+    if (ind_latch) *ind_latch = 0;
 }

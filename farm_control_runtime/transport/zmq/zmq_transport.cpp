@@ -132,11 +132,21 @@ static unsigned __stdcall cmd_thread_fn(void *arg)
         if (rc == (int)sizeof(FarmCommandFrame)) {
             FarmCommandFrame frame;
             std::memcpy(&frame, buf, sizeof(FarmCommandFrame));
+            /* WIN-05: validate frame — check that at least one turbine has a valid command */
+            bool any_valid = false;
+            for (uint32_t ti = 0; ti < frame.n_turbines && ti < FCR_MAX_TURBINES; ++ti) {
+                const FcrTurbineCommand *tc = &frame.turbines[ti];
+                if ((tc->yaw_valid || tc->induction_valid) &&
+                    tc->source_time_s > 0.0 && tc->source_time_s < 1.0e12) {
+                    any_valid = true;
+                    break;
+                }
+            }
             if (frame.protocol_version == FCR_PROTOCOL_VERSION &&
                 frame.n_turbines >= 1 &&
                 frame.n_turbines <= FCR_MAX_TURBINES &&
-                frame.turbines[0].source_time_s > 0.0 &&
-                frame.turbines[0].source_time_s < 1.0e12) {
+                any_valid) {
+
                 if (t->cmd_cb) {
                     t->cmd_cb(&frame);
                 } else {

@@ -108,6 +108,10 @@ void fcr_command_store_get_setpoint(const FcrCommandStore *cs, int32_t turbine_i
 /* 供测试使用：通道状态直接访问                                        */
 FcrTurbineCommandState *fcr_command_store_turbine(FcrCommandStore *cs, int32_t turbine_id);
 
+/* WIN-09 debug: acceptance counters */
+void fcr_command_store_debug_counters(uint32_t *yaw_accept, uint32_t *ind_accept,
+                                      uint32_t *yaw_latch, uint32_t *ind_latch);
+
 /* ------------------------------------------------------------------ */
 /* state_store.c                                                      */
 /* ------------------------------------------------------------------ */

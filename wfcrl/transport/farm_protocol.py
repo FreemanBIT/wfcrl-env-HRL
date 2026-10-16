@@ -31,12 +31,15 @@ FCR_CMD_FLAG_FALLBACK_ACTIVE = 1 << 8
 # ---------------------------------------------------------------------------
 
 class FcrTurbineCommand(ctypes.Structure):
+    # WIN-16: added yaw_absolute_heading_rad + yaw_absolute_valid for v2 absolute yaw
     _fields_ = [
         ("yaw_delta_rad", ctypes.c_double),
         ("yaw_seq", ctypes.c_uint64),
         ("yaw_valid", ctypes.c_uint32),
         ("yaw_effective_low_step", ctypes.c_int64),
         ("yaw_ttl_s", ctypes.c_double),
+        ("yaw_absolute_heading_rad", ctypes.c_double),
+        ("yaw_absolute_valid", ctypes.c_uint32),
         ("induction_ref", ctypes.c_double),
         ("induction_seq", ctypes.c_uint64),
         ("induction_valid", ctypes.c_uint32),
@@ -55,8 +58,8 @@ class FarmCommandFrame(ctypes.Structure):
         ("turbines", FcrTurbineCommand * FCR_MAX_TURBINES),
     ]
 
-assert ctypes.sizeof(FcrTurbineCommand) == 88
-assert ctypes.sizeof(FarmCommandFrame) == 5672
+assert ctypes.sizeof(FcrTurbineCommand) == 104  # WIN-16: +16 bytes (absolute yaw)
+assert ctypes.sizeof(FarmCommandFrame) == 6696  # 40 + 104*64
 
 def frame_to_bytes(frame: FarmCommandFrame) -> bytes:
     return bytes(ctypes.cast(ctypes.byref(frame), ctypes.POINTER(ctypes.c_ubyte))[0:ctypes.sizeof(frame)])
@@ -80,24 +83,32 @@ def set_yaw_cmd(frame: FarmCommandFrame, turbine_id: int, delta_rad: float,
     """填入单机 yaw 通道（不影响其他机/其他通道）"""
     if not (1 <= turbine_id <= FCR_MAX_TURBINES):
         raise ValueError(turbine_id)
+    import time as _time
     t = frame.turbines[turbine_id - 1]
     t.yaw_valid = 1
     t.yaw_seq = seq
     t.yaw_delta_rad = float(delta_rad)
     t.yaw_ttl_s = float(ttl_s)
     t.yaw_effective_low_step = effective_low_step
+    # WIN-05: set source_time_s for ZMQ frame validation
+    if t.source_time_s <= 0.0:
+        t.source_time_s = _time.time()
 
 def set_induction_cmd(frame: FarmCommandFrame, turbine_id: int, induction_ref: float,
                       seq: int, ttl_s: float = 1.0, effective_low_step: int = -1) -> None:
     """填入单机 induction 通道"""
     if not (1 <= turbine_id <= FCR_MAX_TURBINES):
         raise ValueError(turbine_id)
+    import time as _time
     t = frame.turbines[turbine_id - 1]
     t.induction_valid = 1
     t.induction_seq = seq
     t.induction_ref = float(induction_ref)
     t.induction_ttl_s = float(ttl_s)
     t.induction_effective_low_step = effective_low_step
+    # WIN-05: set source_time_s for ZMQ frame validation
+    if t.source_time_s <= 0.0:
+        t.source_time_s = _time.time()
 
 __all__ = [
     "FCR_PROTOCOL_VERSION", "FCR_MAX_TURBINES",
