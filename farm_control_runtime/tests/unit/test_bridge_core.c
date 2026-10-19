@@ -109,10 +109,15 @@ static void test_step_modes(void) {
     cmd.aero_n_lam = 3; cmd.aero_n_beta = 5;
     cmd.aero_lam_small[0] = 5.0; cmd.aero_lam_small[1] = 7.0; cmd.aero_lam_small[2] = 9.0;
     {
-        int i;
-        for (i = 0; i < cmd.aero_n_beta; ++i) {
-            double b = cmd.aero_beta_deg_small[i] = 2.0 * i;
-            cmd.aero_ct_small[1 * cmd.aero_n_beta + i] = 0.9 - 0.05 * b;
+        /* 全行填表（W-04：坏表/空行不得再靠无条件 ACTIVE 掩盖）：
+         * lam 越高峰值略降（0.95/0.90/0.85），Ct 随 beta 单调降 */
+        int i, j;
+        for (i = 0; i < cmd.aero_n_lam; ++i) {
+            double peak = 0.95 - 0.05 * i;
+            for (j = 0; j < cmd.aero_n_beta; ++j) {
+                double b = cmd.aero_beta_deg_small[j] = 2.0 * j;
+                cmd.aero_ct_small[i * cmd.aero_n_beta + j] = peak - 0.05 * b;
+            }
         }
     }
     memset(&meas, 0, sizeof(meas));
@@ -145,6 +150,77 @@ static void test_step_mode0(void) {
     ASSERT(sp.induction_enable == 0);
     ASSERT_NEAR(sp.r_pitch, 1.0, 1e-9);
     ASSERT_NEAR(sp.min_pitch_ref_rad, 0.0, 1e-9);
+    fcr_bridge_core_destroy(core);
+}
+
+/* ---- W-04：Mode2 无气动表必须不采纳（不得标 ACTIVE 而无控制作用）---- */
+static void test_mode2_no_table_fallback(void) {
+    FcrBridgeCore *core = mk_core();
+    FcrBridgeCmd cmd;
+    FcrRoscoExternalSetpoint sp;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.turbine_id = 1; cmd.valid = 1;
+    cmd.induction_mode = 2; cmd.induction_ref = 0.2;
+    cmd.induction_seq = 7; cmd.induction_valid = 1;
+    cmd.induction_ttl_s = 1e6; cmd.yaw_ttl_s = 1e6;
+    cmd.source_time_s = 0.0;
+    cmd.aero_blade_radius_m = 63.0;
+    /* aero_n_lam=0：运行时未加载气动表的场景 */
+    fcr_bridge_core_set_command(core, &cmd);
+    fcr_bridge_core_step(core, 1, 5.0, &sp);
+    {
+        FcrBridgeTurbineState stt;
+        fcr_bridge_core_get(core, 1, &stt);
+        /* 无表 → 不采纳：不标 ACTIVE、seq 不入账、显式 CT_LOOKUP_INVALID + FALLBACK */
+        ASSERT(sp.induction_enable == 0);
+        ASSERT((sp.command_status_flags & 0x200) != 0); /* CT_LOOKUP_INVALID */
+        ASSERT((sp.command_status_flags & 0x4) != 0);   /* FALLBACK */
+        ASSERT(stt.induction_seq_applied != 7);          /* 失败不视为已执行 */
+        ASSERT(stt.fallback_active != 0);
+    }
+    fcr_bridge_core_destroy(core);
+}
+
+/* ---- W-14：a=0.35（>1/3）在真实表可达时须采纳，不得因固定阈值拒绝 ---- */
+static void test_mode2_a_above_third_with_table(void) {
+    FcrBridgeCore *core = mk_core();
+    FcrBridgeCmd cmd;
+    FcrRoscoExternalSetpoint sp;
+    FcrBridgeMeas meas;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.turbine_id = 1; cmd.valid = 1;
+    cmd.induction_mode = 2; cmd.induction_ref = 0.35;   /* > 1/3 */
+    cmd.induction_seq = 3; cmd.induction_valid = 1;
+    cmd.induction_ttl_s = 1e6; cmd.yaw_ttl_s = 1e6;
+    cmd.source_time_s = 0.0;
+    cmd.aero_blade_radius_m = 63.0;
+    cmd.aero_n_lam = 3; cmd.aero_n_beta = 5;
+    cmd.aero_lam_small[0] = 5.0; cmd.aero_lam_small[1] = 7.0; cmd.aero_lam_small[2] = 9.0;
+    {
+        /* 全行填表：lam=9 行峰值 0.85，Ct_ref=0.91 仍可达（best≈0.06） */
+        int i, j;
+        for (i = 0; i < cmd.aero_n_lam; ++i) {
+            double peak = 0.95 - 0.05 * i;
+            for (j = 0; j < cmd.aero_n_beta; ++j) {
+                double b = cmd.aero_beta_deg_small[j] = 2.0 * j;
+                cmd.aero_ct_small[i * cmd.aero_n_beta + j] = peak - 0.05 * b;
+            }
+        }
+    }
+    memset(&meas, 0, sizeof(meas));
+    meas.turbine_id = 1; meas.valid = 1; meas.source_time_s = 1.0;
+    meas.rotor_speed_rad_s = 8.0; meas.disk_wind_speed_mps = 8.0;
+    fcr_bridge_core_set_command(core, &cmd);
+    fcr_bridge_core_set_meas(core, &meas);
+    fcr_bridge_core_step(core, 1, 10.0, &sp);
+    {
+        FcrBridgeTurbineState stt;
+        fcr_bridge_core_get(core, 1, &stt);
+        /* a=0.35 对应 Ct_ref=0.91，表在 beta=0 达 0.95 → 可达 → 采纳 */
+        ASSERT(sp.induction_enable == 1);
+        ASSERT((sp.command_status_flags & 0x4) == 0);  /* 无 fallback */
+        ASSERT(stt.induction_seq_applied == 3);
+    }
     fcr_bridge_core_destroy(core);
 }
 
@@ -282,6 +358,8 @@ void test_bridge_core_register(void)
     RUN_TEST("mode2_find_beta", test_mode2_find_beta);
     RUN_TEST("step_modes", test_step_modes);
     RUN_TEST("step_mode0", test_step_mode0);
+    RUN_TEST("mode2_no_table_fallback", test_mode2_no_table_fallback);
+    RUN_TEST("mode2_a_above_third_with_table", test_mode2_a_above_third_with_table);
     RUN_TEST("mode3_unsupported", test_mode3_unsupported);
     RUN_TEST("ct_estimator", test_ct_estimator);
     RUN_TEST("yaw_adapter", test_yaw_adapter);

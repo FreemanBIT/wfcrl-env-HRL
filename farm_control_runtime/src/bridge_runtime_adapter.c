@@ -129,7 +129,13 @@ void fcr_bridge_adapter_cmd_from_input(const FcrBridgeInput *in,
 
     out->turbine_id = (int32_t)in->turbine_id;                    /* S0703 */
     out->valid = (in->bridge_command_valid_flags & FCR_BRIDGE_CMD_VALID) ? 1u : 0u;
-    out->induction_mode = induction_mode;                          /* DR-3 */
+    /* W-03: S0709 per-turbine control_mode 是唯一权威来源，静态配置仅在数值
+     * 越界（>Mode3）时作缺省兜底。Mode3 原样透传给 fcr_bridge_core，由其显式
+     * 置 UNSUPPORTED/FALLBACK，绝不静默降级为 Mode1。 */
+    {
+        uint32_t m = (uint32_t)in->control_mode;
+        out->induction_mode = (m > 3u) ? induction_mode : m;
+    }
 
     /* 诱导通道（S0705/S0706） */
     out->induction_valid =

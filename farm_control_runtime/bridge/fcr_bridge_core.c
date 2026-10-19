@@ -301,40 +301,60 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
                 st->min_pitch_ref_rad = 0.0;
                 sp.induction_enable = 0;  /* 不生效 */
             } else if (mode == 2) {
-                /* Mode 2：Ct 前馈 → 桨距（min_pitch_ref 或 PRC） */
-                if (!isfinite(a) || a < core->ind.a_min || a > core->ind.a0) {
-                    /* a > a0: Ct 反查找不到（Ct 在 a=1/3 最大），标 UNACHIEVABLE */
+                /* Mode 2：Ct 前馈 → 桨距（min_pitch_ref 或 PRC）。
+                 * W-04/W-14：只有气动表真实反查出 beta 才算采纳（induction_enable=1、
+                 * seq 入账）；无表（-2）或表覆盖不足（-4）一律不采纳——回退 + 显式
+                 * 失败码，绝不标 ACTIVE 而无控制作用。
+                 * a>1/3 不再一概判 UNACHIEVABLE（1/3<a<1/2 区 Ct 仍上升），
+                 * 可达性由真实 Ct(lambda,beta) 表判定。 */
+                ct_ref = fcr_bridge_mode2_ct_ref(a) * core->ind.ct_coef;
+                if (!isfinite(a) || a < core->ind.a_min || a >= 1.0) {
+                    /* 非法/低于最小支持：不可达 */
                     st->induction_fallback = 1;
                     st->fallback_active = 1;
-                    sp.command_status_flags |= 0x4;
-                    if (isfinite(a) && a > core->ind.a0)
-                        sp.command_status_flags |= 0x100; /* UNACHIEVABLE */
+                    sp.command_status_flags |= 0x4;      /* FALLBACK */
+                    sp.command_status_flags |= 0x100;    /* UNACHIEVABLE */
                     ct_ref = fcr_bridge_mode2_ct_ref(core->ind.a0) * core->ind.ct_coef;
-                } else {
-                    st->induction_fallback = 0;
-                    ct_ref = fcr_bridge_mode2_ct_ref(a) * core->ind.ct_coef;
                 }
                 st->ct_ref = ct_ref;
                 st->r_pitch = 1.0; /* Ct 前馈不直接改功率比例 */
                 st->r_speed = 1.0;
                 st->r_torque = 1.0;
-                st->induction_seq_applied = cmd->induction_seq;
-                sp.induction_enable = 1;
-                sp.induction_seq = cmd->induction_seq;
-                /* 由 Ct(lambda,beta) 反解 beta_target → min_pitch_ref */
-                if (me->valid && me->rotor_speed_rad_s > 0.0 && me->disk_wind_speed_mps > 0.5) {
-                    lam = me->rotor_speed_rad_s * (cmd->aero_blade_radius_m > 0.0
-                          ? cmd->aero_blade_radius_m : 63.0) / me->disk_wind_speed_mps;
-                }
-                if (fcr_bridge_mode2_find_beta(cmd, lam, ct_ref, &beta_deg) == 0) {
-                    double bp = beta_deg * DEG2RAD;
-                    if (bp < 0.0) bp = 0.0;
-                    if (bp > core->ind.min_pitch_max_rad) bp = core->ind.min_pitch_max_rad;
-                    st->min_pitch_ref_rad = bp;
-                    sp.min_pitch_ref_rad = bp;
+                if (!st->induction_fallback) {
+                    int rc;
+                    /* 由 Ct(lambda,beta) 反解 beta_target → min_pitch_ref */
+                    lam = 0.0;
+                    if (me->valid && me->rotor_speed_rad_s > 0.0 && me->disk_wind_speed_mps > 0.5) {
+                        lam = me->rotor_speed_rad_s * (cmd->aero_blade_radius_m > 0.0
+                              ? cmd->aero_blade_radius_m : 63.0) / me->disk_wind_speed_mps;
+                    }
+                    rc = fcr_bridge_mode2_find_beta(cmd, lam, ct_ref, &beta_deg);
+                    if (rc == 0) {
+                        double bp = beta_deg * DEG2RAD;
+                        if (bp < 0.0) bp = 0.0;
+                        if (bp > core->ind.min_pitch_max_rad) bp = core->ind.min_pitch_max_rad;
+                        st->min_pitch_ref_rad = bp;
+                        sp.min_pitch_ref_rad = bp;
+                        st->induction_seq_applied = cmd->induction_seq;
+                        sp.induction_enable = 1;
+                        sp.induction_seq = cmd->induction_seq;
+                    } else {
+                        /* 反查失败：无表(-2) 或 覆盖不足(-4) → 不采纳 */
+                        st->induction_fallback = 1;
+                        st->fallback_active = 1;
+                        sp.command_status_flags |= 0x4;   /* FALLBACK */
+                        sp.command_status_flags |= (rc == -2) ? 0x200 : 0x100;
+                        /* -2 → CT_LOOKUP_INVALID(0x200)；-4 → UNACHIEVABLE(0x100) */
+                        st->min_pitch_ref_rad = 0.0;
+                        sp.min_pitch_ref_rad = 0.0;
+                        sp.induction_enable = 0;
+                        /* 失败不视为已执行：不更新 induction_seq_applied */
+                    }
                 } else {
                     st->min_pitch_ref_rad = 0.0;
                     sp.min_pitch_ref_rad = 0.0;
+                    sp.induction_enable = 0;
+                    /* 不更新 induction_seq_applied */
                 }
                 sp.r_pitch = 1.0;
                 sp.r_speed = 1.0;
