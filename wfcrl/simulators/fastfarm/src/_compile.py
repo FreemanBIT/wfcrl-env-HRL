@@ -90,7 +90,7 @@ if mode == "farmcontrol":
         "fcr_bridge_core.c", "yaw_adapter.c", "rt_snapshot.c",
     ]
     awae_sources = [
-        "observation_manager.c", "wind_mapper.c",
+        "observation_manager.c", "wind_mapper.c", "awae_frame_builder.c",
     ]
     c_objs = []
     # C++ ZMQ transport（Phase 7；Windows 动态加载 libzmq）
