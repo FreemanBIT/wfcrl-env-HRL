@@ -6,7 +6,7 @@
  * 读取 OpenFAST/ServoDyn 侧真实量，并调用统一 Provider API 发布：
  *
  *   record 109 -> shaft_torque_nm      (LSSTipMxa/LSShftMxs, Nm)
- *   record 110 -> rotor_thrust_n       (LSShftFxa, N; GL x 分量)
+ *   record 110 -> rotor_aero_thrust_n  (LSShftFxa, N; GL x 分量; ICD v1.5 S0208)
  *   record 111/112 -> load_point 0 Fy/Fz (LSShftFys/Fzs, N)
  *   record 77/78  -> load_point 1 My/Mz (YawBrMyn/Mzn, Nm, GL)
  *

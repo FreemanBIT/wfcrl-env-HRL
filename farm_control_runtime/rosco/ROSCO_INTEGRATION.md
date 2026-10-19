@@ -51,16 +51,19 @@ ReadAvrSWAP → (首次)FCR_Init(tid) → SetParameters
 
 ### 偏航（Phase 3 验证后启用映射）
 
-- Farm Controller 下发 `yaw_delta_rad`（CW+）与 `yaw_seq`；
-- runtime 在新 seq 生效时用最新 `NacHeading` 锁存绝对目标 `yaw_target_heading_rad`（OpenFAST 内部约定 CCW+）；
-- 重复 seq 幂等；乱序拒绝；
-- ROSCO 侧保留 yaw-rate limit、deadband、state machine；目标来源在 Phase 3 切换为 `FarmYawTargetHeading`。
+- Farm Controller 下发**绝对**目标 `yaw_target_heading_rad`（S0108，CCW+，0=+X）与 `yaw_seq`（S0109）；
+  ICD v1.5 已删除 `yaw_delta_rad`；CW+ 增量语义仅保留在兼容适配器 `bridge/yaw_adapter.c`
+  与 Python 侧 `FarmZmqClient.send_yaw_delta()`（在客户端换算为绝对目标后下发）；
+- runtime 在新 seq 生效时锁存绝对目标 `yaw_target_heading_rad`；`external_yaw_enable`(S0801) 为 0 时完全回退 ROSCO；
+- 重复 seq 幂等；乱序拒绝；`control_enable`(S0104)=0 时不下发任何通道；
+- ROSCO 侧保留 yaw-rate limit、deadband、state machine；目标来源为 `FarmYawTargetHeading`。
 
 ### 诱导（Phase 6 完成后启用映射）
 
-- Farm Controller 下发 `induction_ref` 与 `induction_seq`；
-- InductionSupervisor 映射为 `ct_ref/power_ratio/speed_ref_ratio/torque_limit_ratio/min_pitch_rad`；
-- 当前 Phase 2 透传 `power_ratio=1, min_pitch=0`（额定语义），`induction_enable` 仍为 0 时不改变 ROSCO。
+- Farm Controller 下发 `induction_ref`(S0105) 与 `induction_seq`(S0106)；
+- InductionSupervisor 映射为 `r_pitch`(S0803)/`r_speed`(S0804)/`r_torque`(S0805)/`min_pitch_ref_rad`(S0806)，
+  以及 `collective_pitch_offset_rad`(S0807)；`ct_ref`(S0904) 经 ack 回传；
+- `r_*` 均以 1.0 为额定语义；`external_yaw_enable`/`control_enable` 为 0 时完全回退。
 
 ## 6. 编译
 
@@ -110,9 +113,9 @@ python wfcrl/simulators/fastfarm/src/_compile.py --mode rosco
 ## 10. Phase 6 验收记录（诱导映射执行，2026-XX）
 
 - 映射（induction_supervisor.c + config/induction_mapping.yaml，V1 标定）：
-  ct_ref=4a(1-a)；power_ratio=[a(1-a)^2]/[a0(1-a0)^2]；
-  speed_ref_ratio=pr^(1/3)；torque_limit_ratio=pr^(2/3)；
-  min_pitch_rad=clamp(gain*(1-pr), 0, max)，gain=0.55（region2 标定）。
+  ct_ref=4a(1-a)；r_pitch=[a(1-a)^2]/[a0(1-a0)^2]；
+  r_speed=r_pitch^(1/3)；r_torque=r_pitch^(2/3)；
+  min_pitch_ref_rad=clamp(gain*(1-r_pitch), 0, max)，gain=0.55（region2 标定）。
 - 执行（FCR_ApplyReferences，每 10 ms）：恢复标称后按 setpoint 覆盖
   VS_RtPwr/VS_MaxTq/VS_RefSpd/PS_BldPitchMin；disabled 完全回退。
 - 端到端（Row3T 8 m/s 90 s；与无命令空白对照差分）：

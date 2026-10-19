@@ -161,8 +161,8 @@ CONTAINS
 
    ! ------------------------------------------------------------------
    ! FCR_ApplyReferences — 把 induction setpoint 注入 ROSCO 执行参考
-   !（Phase 6）：每 ~10 ms 调用；恢复标称后按 power_ratio/torque_limit_ratio/
-   ! speed_ref_ratio/min_pitch_rad 修改 CntrPar；disabled 时完全回退。
+   !（Phase 6）：每 ~10 ms 调用；恢复标称后按 r_pitch(S0803)/r_torque(S0805)/
+   ! r_speed(S0804)/min_pitch_ref_rad(S0806) 修改 CntrPar；disabled 时完全回退。
    ! 无网络/文件 I/O（红线合规）。
    ! ------------------------------------------------------------------
    SUBROUTINE FCR_ApplyReferences(CntrPar)
@@ -190,14 +190,14 @@ CONTAINS
       IF (.NOT. ASSOCIATED(sp)) RETURN
 
       ! WIN-02+WIN-03: independent channel evaluation
-      ! pitch channel: power_ratio < 1 means derating via PRC_R_Pitch
+      ! pitch channel: r_pitch(S0803) < 1 means derating via PRC_R_Pitch
       pitch_active  = sp%induction_enable /= 0 .AND. &
                       sp%r_pitch < 1.0_8 - 1.0e-6_8
-      ! speed channel: speed_ref_ratio differs from 1
+      ! speed channel: r_speed(S0804) differs from 1
       speed_active  = sp%induction_enable /= 0 .AND. &
                       ABS(sp%r_speed - 1.0_8) > 1.0e-6_8 .AND. &
                       sp%r_speed > 0.0_8
-      ! torque channel: torque_limit_ratio differs from 1
+      ! torque channel: r_torque(S0805) differs from 1
       torque_active = sp%induction_enable /= 0 .AND. &
                       ABS(sp%r_torque - 1.0_8) > 1.0e-6_8 .AND. &
                       sp%r_torque > 0.0_8

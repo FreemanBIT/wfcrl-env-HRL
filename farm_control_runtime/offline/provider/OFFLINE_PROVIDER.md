@@ -25,7 +25,7 @@ FAST.Farm_x64_OMP.exe（预编译）
 
 | Provider 字段 | avrSWAP record | 来源（OpenFAST ServoDyn） | 单位 |
 |---|---|---|---|
-| rotor_thrust_n | 110 | LSShftFxa（低速轴 GL x 分量；对风 ≈ 推力） | N |
+| rotor_aero_thrust_n (S0208) | 110 | LSShftFxa（低速轴 GL x 分量；对风 ≈ 推力） | N |
 | shaft_torque_nm | 109 | LSSTipMxa/LSShftMxs（主轴扭矩） | N·m |
 | load_point_f[0..2][0] | 110/111/112 | 轮毂（低速轴）力 Fx/Fy/Fz，GL 坐标 | N |
 | load_point_f[4..5][1] | 77/78 | 偏航轴承弯矩 My/Mz，GL 坐标 | N·m |

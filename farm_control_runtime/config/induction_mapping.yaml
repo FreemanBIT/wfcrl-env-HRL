@@ -12,12 +12,18 @@ defaults:
   min_pitch_max_rad: 0.30
   power_cap: 1.0
 
-# 输出（冻结，见 fcr_rosco_api.h）：
-#   ct_ref = ct_coef * 4a(1-a)
-#   power_ratio = [a(1-a)^2]/[a0(1-a0)^2]  (clamped [0.05, power_cap])
-#   speed_ref_ratio = power_ratio^(1/3)
-#   torque_limit_ratio = power_ratio^(2/3)
-#   min_pitch_rad = clamp(min_pitch_gain*(1-power_ratio), 0, min_pitch_max)
+# 输出（ICD v1.5 冻结，见 fcr_rosco_api.h / FcrBridgeOutput）：
+#   ct_ref            = ct_coef * 4a(1-a)                              -> S0904
+#   r_pitch           = [a(1-a)^2]/[a0(1-a0)^2]  (clamped [0.05, power_cap]) -> S0803
+#   r_speed           = r_pitch^(1/3)                                  -> S0804
+#   r_torque          = r_pitch^(2/3)                                  -> S0805
+#   min_pitch_ref_rad = clamp(min_pitch_gain*(1-r_pitch), 0, min_pitch_max)  -> S0806
+#
+# ⚠ 已知不一致：本文件 a_max=0.45，而 src/induction_supervisor.c 的 default_cfg
+#   为 a_max=1/3（单元测试 test_induction_supervisor.c::config_wiring 断言 1/3）。
+#   运行时以 C 侧默认值为准。若本 YAML 将来被真正加载，需先统一二者。
+#   同理键名 min_pitch_gain_rad/min_pitch_max_rad 对应结构字段
+#   FcrInductionMapConfig.min_pitch_gain / .min_pitch_max。
 
 # 每机覆盖（可选）： turbines: { 1: {a0: 0.3}, ... }
 # 机型： nrel_5mw （单机型 V1）

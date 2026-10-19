@@ -48,7 +48,7 @@ extern "C" {
 #define FCR_CMD_FLAG_CONTROL_DISABLED   (1u << 9)  /* control_enable=0 */
 
 /* ------------------------------------------------------------------ */
-/* controller_status_flags — ROSCO 上报的状态/饱和/降级标志            */
+/* rosco_controller_status_flags (S0301) — ROSCO 上报的状态/饱和/降级标志 */
 /* ------------------------------------------------------------------ */
 #define FCR_CTRL_FLAG_EXTERNAL_ENABLED      (1u << 0) /* 外部场控总使能 */
 #define FCR_CTRL_FLAG_YAW_EXTERNAL          (1u << 1) /* 偏航外部目标生效 */

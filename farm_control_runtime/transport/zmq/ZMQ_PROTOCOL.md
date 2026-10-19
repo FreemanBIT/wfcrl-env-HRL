@@ -25,9 +25,12 @@ Python Farm Controller              FAST.Farm 进程（FCR 集成 DLL）
 
 ## 4. 语义（对应 PROTOCOL_DECISIONS）
 
-- 状态 ~1 Hz 聚合帧：10 ms 量的 1 s 统计 + 1 s 流场 ZOH + source time/seq；
+- 状态 ~1 Hz 聚合帧：10 ms 量的 1 s 统计 + 1 s 流场 ZOH + `state_sample_sim_time_s`(S1002) / `state_frame_seq`(S1001)；
 - 命令帧异步到达；`yaw`/`induction` 通道独立 seq，重复 seq 幂等，乱序拒绝；
-- 命令帧含 `frame_seq`（transport 级单调）；`commit_seq` 原子提交（Modbus 语义预留）；
+- 命令帧含 `command_frame_seq`(S0101，transport 级单调)；v1.4 的 `commit_seq` 已按 ICD v1.5 删除；
+- 命令帧的 `command_basis_sim_time_s`(S0102) 必须是**仿真时刻**（G-4，禁墙钟），
+  且需 > 0 才能通过 WIN-05 帧校验；`FarmZmqClient` 自动用最近状态帧的
+  `state_sample_sim_time_s` 补齐；
 - ROSCO 10 ms 控制路径不触碰 ZMQ（只读共享 setpoint）。
 
 ## 5. Python API（wfcrl/transport/farm_zmq_client.py）

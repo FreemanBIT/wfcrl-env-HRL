@@ -25,49 +25,27 @@ from wfcrl.config.simulator import FastFarmConfig
 from wfcrl.engine import ContinuousFastFarmInterface
 from wfcrl.engine.angle_utils import misalignment_from_nacyaw
 from wfcrl.transport import FarmZmqClient
-from wfcrl.transport.farm_protocol import bytes_to_frame
+from wfcrl.transport.farm_protocol import bytes_to_frame, state_frame_from_bytes
 
 # 状态帧解析辅助（C FcrFarmTurbineState 布局；见 fcr_state_types.h）
 # 简化：只按固定偏移读取必需字段（f64 对齐）
 
 def _parse_state_frame(data: bytes) -> dict:
-    """解析 FarmStateFrame → dict（Time/fast_step/low_step/每机关键量）。"""
-    import ctypes
-    class Stats(ctypes.Structure):
-        _fields_ = [("instant", ctypes.c_double), ("mean", ctypes.c_double),
-                    ("rms", ctypes.c_double), ("min", ctypes.c_double),
-                    ("max", ctypes.c_double), ("n_samples", ctypes.c_uint32),
-                    ("valid", ctypes.c_uint32)]
-    class Turb(ctypes.Structure):
-        _fields_ = [
-            ("turbine_id", ctypes.c_int32), ("valid", ctypes.c_uint32),
-            ("source_time_s", ctypes.c_double),
-            ("gen_power_w", Stats), ("rotor_thrust_n", Stats),
-            ("tower_base_fa_moment_nm", Stats), ("tower_base_ss_moment_nm", Stats),
-            ("nacelle_heading_rad", ctypes.c_double), ("nacelle_vane_rad", ctypes.c_double),
-            ("hub_wind_speed_mps", ctypes.c_double), ("rotor_speed_rad_s", ctypes.c_double),
-            ("gen_speed_rad_s", ctypes.c_double), ("rotor_ct", ctypes.c_double),
-            ("rotor_cp", ctypes.c_double), ("blade_pitch_rad", ctypes.c_double * 3),
-            ("yaw_target_heading_rad", ctypes.c_double),
-            ("yaw_seq_applied", ctypes.c_uint64), ("induction_seq_applied", ctypes.c_uint64),
-            ("controller_status_flags", ctypes.c_uint32),
-            ("disk_ambient_wind_mps", ctypes.c_double), ("disk_disturbed_wind_mps", ctypes.c_double),
-            ("disk_ambient_ti", ctypes.c_double), ("flow_source_time_s", ctypes.c_double),
-            ("flow_seq", ctypes.c_uint64),
-        ]
-    class Frame(ctypes.Structure):
-        _fields_ = [
-            ("protocol_version", ctypes.c_uint32), ("frame_seq", ctypes.c_uint32),
-            ("sim_time_s", ctypes.c_double), ("fast_step", ctypes.c_uint64),
-            ("low_step", ctypes.c_uint64), ("rt_health_flags", ctypes.c_uint32),
-            ("n_turbines", ctypes.c_uint32), ("flow_source_time_s", ctypes.c_double),
-            ("flow_seq", ctypes.c_uint64), ("turbines", Turb * 64),
-        ]
-    if len(data) < ctypes.sizeof(Frame):
-        raise ValueError(f"short state frame {len(data)}")
-    fr = Frame.from_buffer_copy(data[:ctypes.sizeof(Frame)])
+    """解析 FarmStateFrame → dict（Time/fast_step/low_step/每机关键量）。
+
+    ICD v1.5：帧几何与字段全部取自 wfcrl.transport.farm_protocol 的权威镜像
+    （该镜像已由 tools/check_abi.py 与 C 侧 offsetof 逐字段交叉校验）。
+
+    历史缺陷：本文件曾自带一份 v1.4 ctypes 镜像，把 n_turbines 读在偏移 36
+    （v1.5 实际为 44），于是恒读到 low_step 的高 4 字节 = 0 → turbines 恒为空
+    列表 → 全部集成测试在 st["turbines"][id-1] 处 IndexError。此处不再重复定义。
+    """
+    fr = state_frame_from_bytes(data)
     out = {
-        "sim_time_s": fr.sim_time_s, "fast_step": fr.fast_step, "low_step": fr.low_step,
+        "sim_time_s": fr.state_sample_sim_time_s,
+        "state_sample_sim_time_s": fr.state_sample_sim_time_s,   # ICD v1.5 S1002
+        "state_frame_seq": fr.state_frame_seq,                   # ICD v1.5 S1001
+        "fast_step": fr.fast_step, "low_step": fr.low_step,
         "rt_health_flags": fr.rt_health_flags, "flow_seq": fr.flow_seq,
         "flow_source_time_s": fr.flow_source_time_s,
         "turbines": [],
@@ -82,21 +60,31 @@ def _parse_state_frame(data: bytes) -> dict:
             "gen_power_w_rms": t.gen_power_w.rms,
             "gen_power_w_min": t.gen_power_w.min,
             "gen_power_w_max": t.gen_power_w.max,
-            "rotor_thrust_n": t.rotor_thrust_n.instant,
-            "rotor_thrust_n_mean": t.rotor_thrust_n.mean,
+            # ICD v1.5 改名 S1010；保留旧键 rotor_thrust_n 兼容既有消费方
+            "rotor_thrust_n": t.rotor_aero_thrust_n.instant,
+            "rotor_thrust_n_mean": t.rotor_aero_thrust_n.mean,
+            "rotor_aero_thrust_n": t.rotor_aero_thrust_n.instant,
             "tower_base_fa_moment_nm": t.tower_base_fa_moment_nm.instant,
             "tower_base_ss_moment_nm": t.tower_base_ss_moment_nm.instant,
-            "nacelle_heading_rad": t.nacelle_heading_rad,
+            # ICD v1.5 改名 S1009；保留旧键 nacelle_heading_rad 兼容既有消费方
+            "nacelle_heading_rad": t.nacelle_heading_actual_rad,
+            "nacelle_heading_actual_rad": t.nacelle_heading_actual_rad,
             "nacelle_vane_rad": t.nacelle_vane_rad,
             "hub_wind_speed_mps": t.hub_wind_speed_mps,
             "rotor_speed_rad_s": t.rotor_speed_rad_s,
             "gen_speed_rad_s": t.gen_speed_rad_s,
             "rotor_ct": t.rotor_ct,
             "rotor_cp": t.rotor_cp,
+            "collective_pitch_actual_rad": t.collective_pitch_actual_rad,   # S1008
             "blade_pitch_rad": [float(t.blade_pitch_rad[k]) for k in range(3)],
             "yaw_target_heading_rad": t.yaw_target_heading_rad,
             "yaw_seq_applied": t.yaw_seq_applied, "induction_seq_applied": t.induction_seq_applied,
             "controller_status_flags": t.controller_status_flags,
+            "turbine_status_flags": t.turbine_status_flags,                 # S1015
+            "estimated_wind_mps": t.estimated_wind_mps,                     # S1011
+            "wind_source": t.wind_source,                                   # S1016
+            "wind_quality_flags": t.wind_quality_flags,                     # S1017
+            "ct_hat": t.ct_hat,                                             # S1012
             "disk_disturbed_wind_mps": t.disk_disturbed_wind_mps,
             "disk_ambient_wind_mps": t.disk_ambient_wind_mps,
             "disk_ambient_ti": t.disk_ambient_ti,
