@@ -148,6 +148,43 @@ static void test_step_mode0(void) {
     fcr_bridge_core_destroy(core);
 }
 
+/* T-07（WIN-15 回归）：control_mode=3（闭环预留）必须**显式**报 UNSUPPORTED。
+ * 不得静默退化为 Mode1（那会让试验误以为闭环已生效），也不得让通道生效。 */
+static void test_mode3_unsupported(void) {
+    FcrBridgeCore *core = mk_core();
+    FcrBridgeCmd cmd;
+    FcrBridgeMeas meas;
+    FcrRoscoExternalSetpoint sp;
+    int rc;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.turbine_id = 1; cmd.valid = 1;
+    cmd.induction_mode = 3;      /* 闭环预留：未实现 */
+    cmd.induction_ref = 0.2;     /* 即使给了参考也不得生效 */
+    cmd.induction_seq = 1; cmd.induction_valid = 1;
+    cmd.induction_ttl_s = 1e6; cmd.yaw_ttl_s = 1e6;
+
+    memset(&meas, 0, sizeof(meas));
+    meas.turbine_id = 1; meas.valid = 1; meas.source_time_s = 1.0;
+    meas.rotor_speed_rad_s = 1.2; meas.disk_wind_speed_mps = 8.0;
+    meas.rotor_thrust_n = 400000.0; meas.gen_power_w = 2e6;
+
+    fcr_bridge_core_set_command(core, &cmd);
+    fcr_bridge_core_set_meas(core, &meas);
+    rc = fcr_bridge_core_step(core, 1, 10.0, &sp);
+    ASSERT(rc == 0);
+
+    /* 必须显式标注 UNSUPPORTED(0x100) + FALLBACK(0x4) */
+    ASSERT((sp.command_status_flags & 0x100) != 0);
+    ASSERT((sp.command_status_flags & 0x4) != 0);
+    /* 通道不得生效：三个比值回到 1.0（而非 Mode1 的 r_pitch<1） */
+    ASSERT_NEAR(sp.r_pitch, 1.0, 1e-9);
+    ASSERT_NEAR(sp.r_speed, 1.0, 1e-9);
+    ASSERT_NEAR(sp.r_torque, 1.0, 1e-9);
+    ASSERT(sp.induction_enable == 0);
+    fcr_bridge_core_destroy(core);
+}
+
 /* ---- Ct 估计（DR-7 模型修正）---- */
 static void test_ct_estimator(void) {
     FcrBridgeCore *core = mk_core();
@@ -245,6 +282,7 @@ void test_bridge_core_register(void)
     RUN_TEST("mode2_find_beta", test_mode2_find_beta);
     RUN_TEST("step_modes", test_step_modes);
     RUN_TEST("step_mode0", test_step_mode0);
+    RUN_TEST("mode3_unsupported", test_mode3_unsupported);
     RUN_TEST("ct_estimator", test_ct_estimator);
     RUN_TEST("yaw_adapter", test_yaw_adapter);
     RUN_TEST("safety", test_safety);
