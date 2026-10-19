@@ -13,7 +13,7 @@ Phase C 发布链路（Modbus 侧）已完成。
 
 | 验证项 | 命令 | 结果 |
 |---|---|---|
-| C 单元测试 | `farm_control_runtime/tools/_build_test.bat && test_runner.exe` | **72/72 PASS** |
+| C 单元测试 | `farm_control_runtime/tools/_build_test.bat && test_runner.exe` | **73/73 PASS** |
 | Python 协议测试 | `.venv\Scripts\python.exe farm_control_runtime\tests\integration\test_icd_v15_abi_python.py` | **7/7 PASS** |
 | ABI 交叉校验 | `.venv\Scripts\python.exe farm_control_runtime\tools\check_abi.py` | **PASS**（C 尺寸 + 64/64 Python↔C 字段偏移） |
 | 集成测试（FAST.Farm 闭环） | `pytest farm_control_runtime\tests\integration -q` | **21/21 PASS** |
@@ -64,7 +64,7 @@ Phase C 发布链路（Modbus 侧）已完成。
   既有 300 s 回归基线。只覆盖观察点数组，不动 `disk_*` 盘面量（来自真实 hub 风）。
 - 新增质量位定义 `FCR_AWAE_QUALITY_OK/STALE/SIMULATED/LOW_CONF`（S0506）。
 - 测试：`test_awae.c` +2（目录/观测组装）、`test_modbus.c` +2（AWAE 区布局守卫、
-  `publish_awae` 端到端寄存器校验）。
+  `publish_awae` 端到端寄存器校验）、`test_bridge_core.c` +1（T-07 mode 3）。
 
 **尚未做**：ZMQ 侧尚未承载 AWAE 帧（见 §4）。
 
