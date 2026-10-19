@@ -33,6 +33,18 @@ MODULE FarmControlInterface
    REAL(8), SAVE :: VS_MaxTq_nom(FCR_MAX_TURBINES_LOCAL) = 0.0_8
    REAL(8), SAVE :: VS_RefSpd_nom(FCR_MAX_TURBINES_LOCAL) = 0.0_8
    LOGICAL, SAVE :: nom_ok(FCR_MAX_TURBINES_LOCAL) = .FALSE.
+   ! W-01: full nominal PRC/PS/VS config capture (per-turbine, multi-instance safe)
+   INTEGER, PARAMETER :: FCR_MAX_PS_TABLE = 16
+   INTEGER, SAVE :: PS_Mode_nom(FCR_MAX_TURBINES_LOCAL) = -1
+   INTEGER, SAVE :: PRC_Mode_nom(FCR_MAX_TURBINES_LOCAL) = -1
+   INTEGER, SAVE :: PRC_Comm_nom(FCR_MAX_TURBINES_LOCAL) = -1
+   INTEGER, SAVE :: VS_ConstPower_nom(FCR_MAX_TURBINES_LOCAL) = -1
+   INTEGER, SAVE :: PS_BldPitchMin_N_nom(FCR_MAX_TURBINES_LOCAL) = 0
+   REAL(8), SAVE :: PRC_R_Speed_nom(FCR_MAX_TURBINES_LOCAL) = 1.0_8
+   REAL(8), SAVE :: PRC_R_Torque_nom(FCR_MAX_TURBINES_LOCAL) = 1.0_8
+   REAL(8), SAVE :: PRC_R_Pitch_nom(FCR_MAX_TURBINES_LOCAL) = 1.0_8
+   REAL(8), SAVE :: PS_BldPitchMin_nom(FCR_MAX_TURBINES_LOCAL, FCR_MAX_PS_TABLE) = 0.0_8
+   REAL(8), SAVE :: PS_WindSpeeds_nom(FCR_MAX_TURBINES_LOCAL, FCR_MAX_PS_TABLE) = 0.0_8
 
    ! ---- 公开接口 ----
    PUBLIC :: FCR_Init, FCR_Step, FCR_PublishState, FCR_Shutdown
@@ -169,23 +181,68 @@ CONTAINS
       USE ROSCO_Types, ONLY : ControlParameters
       TYPE(ControlParameters), INTENT(INOUT) :: CntrPar
       TYPE(FcrSetpointC), POINTER :: sp
-      INTEGER :: tid
+      INTEGER :: tid, n0
       ! WIN-03: independent channel active flags
       LOGICAL :: pitch_active, speed_active, torque_active, any_active
       IF (.NOT. api_ok_) RETURN
       tid = current_turbine_id_
       IF (tid < 1 .OR. tid > n_turbines_) RETURN
-      ! WIN-07: per-turbine nominal parameter capture
+      ! W-01: full nominal config capture on first call (PRC/PS/VS + peak-shaving 表)
       IF (.NOT. nom_ok(tid)) THEN
          VS_RtPwr_nom(tid)  = CntrPar%VS_RtPwr
          VS_MaxTq_nom(tid)  = CntrPar%VS_MaxTq
          VS_RefSpd_nom(tid) = CntrPar%VS_RefSpd
+         PS_Mode_nom(tid)   = CntrPar%PS_Mode
+         PRC_Mode_nom(tid)  = CntrPar%PRC_Mode
+         PRC_Comm_nom(tid)  = CntrPar%PRC_Comm
+         VS_ConstPower_nom(tid) = CntrPar%VS_ConstPower
+         PRC_R_Speed_nom(tid)   = CntrPar%PRC_R_Speed
+         PRC_R_Torque_nom(tid)  = CntrPar%PRC_R_Torque
+         PRC_R_Pitch_nom(tid)   = CntrPar%PRC_R_Pitch
+         PS_BldPitchMin_N_nom(tid) = 0
+         IF (ALLOCATED(CntrPar%PS_BldPitchMin)) THEN
+            n0 = MIN(SIZE(CntrPar%PS_BldPitchMin), FCR_MAX_PS_TABLE)
+            IF (n0 > 0) THEN
+               PS_BldPitchMin_nom(tid, 1:n0) = CntrPar%PS_BldPitchMin(1:n0)
+               PS_BldPitchMin_N_nom(tid) = n0
+            END IF
+         END IF
+         IF (ALLOCATED(CntrPar%PS_WindSpeeds)) THEN
+            n0 = MIN(SIZE(CntrPar%PS_WindSpeeds), FCR_MAX_PS_TABLE)
+            IF (n0 > 0) PS_WindSpeeds_nom(tid, 1:n0) = CntrPar%PS_WindSpeeds(1:n0)
+         END IF
          nom_ok(tid) = .TRUE.
       END IF
-      ! reset to nominal every step (prevent accumulation)
-      CntrPar%VS_RtPwr  = VS_RtPwr_nom(tid)
-      CntrPar%VS_MaxTq  = VS_MaxTq_nom(tid)
-      CntrPar%VS_RefSpd = VS_RefSpd_nom(tid)
+      ! every step: restore full nominal first (W-01: disable must not destroy config)
+      CntrPar%VS_RtPwr       = VS_RtPwr_nom(tid)
+      CntrPar%VS_MaxTq       = VS_MaxTq_nom(tid)
+      CntrPar%VS_RefSpd      = VS_RefSpd_nom(tid)
+      CntrPar%PS_Mode        = PS_Mode_nom(tid)
+      CntrPar%PRC_Mode       = PRC_Mode_nom(tid)
+      CntrPar%PRC_Comm       = PRC_Comm_nom(tid)
+      CntrPar%VS_ConstPower  = VS_ConstPower_nom(tid)
+      CntrPar%PRC_R_Speed    = PRC_R_Speed_nom(tid)
+      CntrPar%PRC_R_Torque   = PRC_R_Torque_nom(tid)
+      CntrPar%PRC_R_Pitch    = PRC_R_Pitch_nom(tid)
+      CntrPar%PS_BldPitchMin_N = PS_BldPitchMin_N_nom(tid)
+      IF (PS_BldPitchMin_N_nom(tid) > 0) THEN
+         IF (.NOT. ALLOCATED(CntrPar%PS_BldPitchMin)) &
+            ALLOCATE(CntrPar%PS_BldPitchMin(FCR_MAX_PS_TABLE))
+         IF (SIZE(CntrPar%PS_BldPitchMin) < PS_BldPitchMin_N_nom(tid)) THEN
+            DEALLOCATE(CntrPar%PS_BldPitchMin)
+            ALLOCATE(CntrPar%PS_BldPitchMin(FCR_MAX_PS_TABLE))
+         END IF
+         CntrPar%PS_BldPitchMin(1:PS_BldPitchMin_N_nom(tid)) = &
+            PS_BldPitchMin_nom(tid, 1:PS_BldPitchMin_N_nom(tid))
+         IF (.NOT. ALLOCATED(CntrPar%PS_WindSpeeds)) &
+            ALLOCATE(CntrPar%PS_WindSpeeds(FCR_MAX_PS_TABLE))
+         IF (SIZE(CntrPar%PS_WindSpeeds) < PS_BldPitchMin_N_nom(tid)) THEN
+            DEALLOCATE(CntrPar%PS_WindSpeeds)
+            ALLOCATE(CntrPar%PS_WindSpeeds(FCR_MAX_PS_TABLE))
+         END IF
+         CntrPar%PS_WindSpeeds(1:PS_BldPitchMin_N_nom(tid)) = &
+            PS_WindSpeeds_nom(tid, 1:PS_BldPitchMin_N_nom(tid))
+      END IF
       sp => FCR_Setpoint(tid)
       IF (.NOT. ASSOCIATED(sp)) RETURN
 
@@ -205,24 +262,18 @@ CONTAINS
                    (sp%induction_enable /= 0 .AND. sp%min_pitch_ref_rad > 0.001_8)
 
       IF (.NOT. any_active) THEN
-         ! disabled or no-op: full ROSCO fallback
-         CntrPar%VS_ConstPower = 0
-         CntrPar%PS_Mode = 0
-         CntrPar%PRC_Mode = 0
-         CntrPar%PRC_R_Speed = 1.0_8
-         CntrPar%PRC_R_Torque = 1.0_8
-         CntrPar%PRC_R_Pitch = 1.0_8
+         ! disabled or no-op: nominal config already restored above → 纯 ROSCO 回退
          RETURN
       END IF
 
-      ! --- pitch channel (PRC derating via PRC_R_Pitch -> PRC_Min_Pitch) ---
+      ! --- pitch channel: r_pitch → PRC_R_Pitch（PRC 表生成最小桨距）---
       ! S0803: r_pitch = PRC桨距降载比例
+      ! W-02: 移除隐式 VS_ConstPower=1 + VS_RtPwr=nom*r_pitch 联动——那是独立的
+      ! 功率回路；额定功率限制须作为单独显式策略，不由 r_pitch 隐式双重降载。
       IF (pitch_active) THEN
          CntrPar%PRC_Mode = 2
          CntrPar%PRC_Comm = 0
          CntrPar%PRC_R_Pitch = sp%r_pitch
-         CntrPar%VS_ConstPower = 1
-         CntrPar%VS_RtPwr = VS_RtPwr_nom(tid) * sp%r_pitch
          ! PS_Mode=1 required for PitchSaturation to apply PRC_Min_Pitch
          CntrPar%PS_Mode = 1
       END IF
