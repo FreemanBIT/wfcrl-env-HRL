@@ -70,6 +70,7 @@ static void accept_turbine(FcrCommandStore *cs, const FcrTurbineCommand *cmd,
             tc->yaw_target_latched = 1;  /* ICD v1.5: absolute heading latched immediately */
             tc->yaw_ttl_s = (cmd->yaw_ttl_s > 0.0) ? cmd->yaw_ttl_s : cs->default_yaw_ttl_s;
             tc->yaw_issue_time_s = -1.0;
+            tc->yaw_basis_sim_time_s = cmd->command_basis_sim_time_s; /* W-13 */
             tc->yaw_state = FCR_CH_ACCEPTED;
             tc->command_status_flags &= ~FCR_CMD_FLAG_INVALID_SEQ;
             g_dbg_yaw_accept++;
@@ -94,6 +95,7 @@ static void accept_turbine(FcrCommandStore *cs, const FcrTurbineCommand *cmd,
             tc->ind_ttl_s = (cmd->induction_ttl_s > 0.0) ? cmd->induction_ttl_s
                                                          : cs->default_induction_ttl_s;
             tc->ind_issue_time_s = -1.0;
+            tc->ind_basis_sim_time_s = cmd->command_basis_sim_time_s; /* W-13 */
             tc->ind_state = FCR_CH_ACCEPTED;
             tc->command_status_flags &= ~FCR_CMD_FLAG_INVALID_SEQ;
             g_dbg_ind_accept++;
@@ -142,14 +144,20 @@ void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
     }
     tc->command_status_flags &= ~FCR_CMD_FLAG_CONTROL_DISABLED;
 
-    /* ---- stale（命令来源时间过老）---- */
-    if (tc->command_basis_sim_time_s > 0.0 &&
-        (sim_time_s - tc->command_basis_sim_time_s) > cs->stale_threshold_s) {
-        tc->command_status_flags |= FCR_CMD_FLAG_YAW_STALE |
-                                    FCR_CMD_FLAG_INDUCTION_STALE;
+    /* ---- W-13: per-channel stale（各通道按自身命令依据时刻独立评估，
+     * 不再共享单一 command_basis_sim_time_s——偏航 60s 锁存与诱导 1s 更新
+     * 互不串扰；stale 只置标志不直接禁用，保留各通道 TTL 语义） ---- */
+    if (tc->yaw_basis_sim_time_s > 0.0 &&
+        (sim_time_s - tc->yaw_basis_sim_time_s) > cs->stale_threshold_s) {
+        tc->command_status_flags |= FCR_CMD_FLAG_YAW_STALE;
     } else {
-        tc->command_status_flags &= ~(FCR_CMD_FLAG_YAW_STALE |
-                                      FCR_CMD_FLAG_INDUCTION_STALE);
+        tc->command_status_flags &= ~FCR_CMD_FLAG_YAW_STALE;
+    }
+    if (tc->ind_basis_sim_time_s > 0.0 &&
+        (sim_time_s - tc->ind_basis_sim_time_s) > cs->stale_threshold_s) {
+        tc->command_status_flags |= FCR_CMD_FLAG_INDUCTION_STALE;
+    } else {
+        tc->command_status_flags &= ~FCR_CMD_FLAG_INDUCTION_STALE;
     }
 
     /* ---- yaw 通道状态机 ---- */

@@ -203,6 +203,34 @@ static void test_stale_flag(void)
     fcr_command_store_destroy(cs);
 }
 
+/* W-13: per-channel stale —— 各通道按自身命令依据时刻独立评估，互不串扰 */
+static void test_stale_flag_per_channel(void)
+{
+    FcrCommandStore *cs = make_store();
+    FcrTurbineCommand cmd;
+    FcrRoscoExternalSetpoint sp;
+    double heading[2] = {0.0, 0.0};
+
+    /* 帧1：仅 yaw，basis=1.0（旧帧） */
+    fill_yaw(&cmd, 1, fcr_deg2rad(5.0));
+    cmd.command_basis_sim_time_s = 1.0;
+    FarmCommandFrame fr1 = make_frame(&cmd, NULL);
+    fcr_command_store_accept_frame(cs, &fr1);
+
+    /* 帧2：仅 induction（新 seq），basis=8.0（新帧） */
+    fill_ind(&cmd, 1, 0.20);
+    cmd.command_basis_sim_time_s = 8.0;
+    FarmCommandFrame fr2 = make_frame(&cmd, NULL);
+    fcr_command_store_accept_frame(cs, &fr2);
+
+    /* t=10：yaw 距其 basis 9s > 5s → stale；induction 距其 basis 2s < 5s → 不 stale */
+    fcr_command_store_refresh(cs, 10.0, heading, 1);
+    fcr_command_store_get_setpoint(cs, 1, &sp);
+    ASSERT((sp.command_status_flags & FCR_CMD_FLAG_YAW_STALE) != 0);
+    ASSERT((sp.command_status_flags & FCR_CMD_FLAG_INDUCTION_STALE) == 0);
+    fcr_command_store_destroy(cs);
+}
+
 /* --- 目标锁存只发生在新 seq 生效时 --- */
 static void test_yaw_target_not_reevaluated(void)
 {
@@ -291,6 +319,7 @@ void test_command_store_register(void)
     RUN_TEST("out_of_order_seq_rejected", test_out_of_order_seq_rejected);
     RUN_TEST("ttl_expiry", test_ttl_expiry);
     RUN_TEST("stale_flag", test_stale_flag);
+    RUN_TEST("stale_flag_per_channel", test_stale_flag_per_channel);
     RUN_TEST("yaw_target_not_reevaluated", test_yaw_target_not_reevaluated);
     RUN_TEST("control_disable_fallback", test_control_disable_fallback);
     RUN_TEST("requested_effective_time", test_requested_effective_time);

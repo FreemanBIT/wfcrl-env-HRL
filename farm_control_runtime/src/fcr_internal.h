@@ -48,6 +48,7 @@ typedef struct FcrTurbineCommandState {
     uint32_t yaw_target_latched;
     double   yaw_ttl_s;
     double   yaw_issue_time_s;
+    double   yaw_basis_sim_time_s;      /* W-13: yaw 通道自身的命令依据时刻 */
     FcrChannelState yaw_state;
     
     /* ---- induction 通道 (S0105-S0107) ---- */
@@ -57,6 +58,7 @@ typedef struct FcrTurbineCommandState {
     uint32_t ind_valid;                 /* S0107: 诱导目标有效标记 */
     double   ind_ttl_s;
     double   ind_issue_time_s;
+    double   ind_basis_sim_time_s;      /* W-13: induction 通道自身的命令依据时刻 */
     FcrChannelState ind_state;
     
     /* ---- 通用字段 (S0102, S0104, S0111, S0112) ---- */
