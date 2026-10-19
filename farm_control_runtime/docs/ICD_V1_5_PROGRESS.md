@@ -247,14 +247,16 @@ farm_control_runtime\tools\_build_test.bat && farm_control_runtime\test_runner.e
 | **W-04** | Mode2 无气动表（`aero_n_lam=0`）或反查失败 → **不采纳**：`induction_enable=0`、seq 不入账、置 `0x200`(CT_LOOKUP_INVALID)/`0x100`(UNACHIEVABLE)+`0x4`(FALLBACK)。新增回归测试 `mode2_no_table_fallback` |
 | **W-14** | `a>1/3` 不再一概判 UNACHIEVABLE；`1/3<a<1/2` 区可达性由真实 Ct(λ,β) 表判定。新增回归测试 `mode2_a_above_third_with_table`（a=0.35 可达→采纳） |
 | 附带 | 修正旧 `step_modes` 测试的隐藏错误：其气动表只填了 1 行、其余行全 0，旧代码靠无条件 `induction_enable=1` 掩盖——这正是 W-04 所指的"错误成功回报"。现已全行填表 |
+| **W-01** | ROSCO Fortran 完整保存/恢复 PRC/PS/VS 配置（含 peak-shaving 表）；禁用时不再直接置 0 破坏原配置 |
+| **W-02** | 移除 pitch 通道隐式 `VS_ConstPower=1 + VS_RtPwr=nom*r_pitch` 联动；r_pitch 唯一经 PRC_R_Pitch 生效。**T-22 复测 -15.26% 通过**（判据 -15.8%±2%），证明降载来自桨距通道本身 |
 
 ### 待办（按审查建议顺序）
 
 | 阶段 | 项 | 说明 |
 |---|---|---|
 | W0 | **W-07** | CMakeLists/build_windows.ps1 缺 `awae_frame_builder.c` 与 include 目录；需 clean build gate |
-| W1 | **W-01/W-02** | ROSCO Fortran：完整保存/恢复 PRC/PS/VS 配置（禁用时不得直接置 0 破坏 peak-shaving）；`R_Pitch` 应唯一由 PRC 生成最小桨距，移除隐式 `VS_ConstPower=1 + VS_RtPwr=nom*r_pitch` 联动（需重跑 T-22 验证不破坏诱导回归） |
-| W2 | **W-05/W-06** | Mode2 插值连续性与轴校验；`HorWindV` 不得无条件标 ROSCO_WE、Ct 缺数据标 INVALID |
+| W1 | **W-05** | Mode2 插值连续性与轴校验、余差阈值（W-01/W-02/W-03 已修） |
+| W2 | **W-06** | `HorWindV` 不得无条件标 ROSCO_WE、Ct 缺数据标 INVALID |
 | W3 | **W-08/W-09/W-10** | ZMQ 侧 AWAE 发布（S12/S13 到 Python RCP）；容量/映射统一；legacy 入口与 YAML 加载 |
 | W4 | **W-11** | 1s 诱导跟踪验收 + t≈237s 失稳根因 |
 | — | **W-13** | 两通道时间语义解耦（偏航 60s 锁存 vs 诱导 1s 更新独立） |
