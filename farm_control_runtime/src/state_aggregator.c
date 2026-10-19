@@ -135,12 +135,22 @@ void fcr_state_aggregator_build_frame(FcrStateAggregator *a, const FcrStateStore
         ts->induction_seq_applied = f->induction_seq_applied;
         ts->controller_status_flags = f->rosco_controller_status_flags;
         ts->turbine_status_flags = f->rosco_controller_status_flags;
+        /* W-06: hub_wind_speed_mps 是 OpenFAST 轮毂风速，不是 ROSCO WE 估计器
+         * 输出（WE_Vw 未接通）→ 来源如实标 OPENFAST + 低置信，不得谎称 ROSCO_WE。 */
         ts->estimated_wind_mps = f->hub_wind_speed_mps;
-        ts->wind_source = FCR_WIND_SOURCE_ROSCO_WE;
-        ts->wind_quality_flags = FCR_WIND_QUALITY_OK;
-        ts->ct_hat = e->valid ? e->rotor_ct : 0.0;
-        ts->rotor_ct = e->valid ? e->rotor_ct : 0.0;
-        ts->rotor_cp = e->valid ? e->rotor_cp : 0.0;
+        ts->wind_source = FCR_WIND_SOURCE_OPENFAST;
+        ts->wind_quality_flags = FCR_WIND_QUALITY_LOW_CONFIDENCE;
+        /* W-06: Ct 仅在真实有限物理值时视为有效；占位 0/NaN/越界 → 显式 0，
+         * 不冒充真实 Ct（ABI 冻结，无 Ct 专用质量位，0 即"无估计"）。 */
+        if (e->valid && isfinite(e->rotor_ct) && e->rotor_ct > 0.0 && e->rotor_ct < 2.0) {
+            ts->ct_hat = e->rotor_ct;
+            ts->rotor_ct = e->rotor_ct;
+        } else {
+            ts->ct_hat = 0.0;
+            ts->rotor_ct = 0.0;
+        }
+        ts->rotor_cp = (e->valid && isfinite(e->rotor_cp) && e->rotor_cp > 0.0 && e->rotor_cp < 1.0)
+                       ? e->rotor_cp : 0.0;
 
         /* 1 s 统计结果 */
         fcr_signal_stat_get(a->gen_power[i], &ts->gen_power_w);

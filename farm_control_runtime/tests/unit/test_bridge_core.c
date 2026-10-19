@@ -58,6 +58,29 @@ static void test_mode2_find_beta(void) {
     ASSERT(fcr_bridge_mode2_find_beta(&cmd, 7.0, 1.5, &beta) != 0);
 }
 
+/* ---- W-05：Mode2 插值健壮性（缺风速 / 轴非单调 / 维度下限）---- */
+static void test_mode2_find_beta_robust(void) {
+    FcrBridgeCmd cmd;
+    double beta = 0.0;
+    int i;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.aero_n_lam = 3; cmd.aero_n_beta = 5;
+    cmd.aero_lam_small[0] = 5.0; cmd.aero_lam_small[1] = 7.0; cmd.aero_lam_small[2] = 9.0;
+    for (i = 0; i < cmd.aero_n_beta; ++i) {
+        cmd.aero_beta_deg_small[i] = 2.0 * i;
+        cmd.aero_ct_small[1 * cmd.aero_n_beta + i] = 0.9 - 0.05 * (2.0 * i);
+    }
+    /* 缺风速（lam=0）→ 不得退化为 lambda=0 求解（-5 NO_WIND） */
+    ASSERT(fcr_bridge_mode2_find_beta(&cmd, 0.0, 0.70, &beta) == -5);
+    /* 轴非严格递增（5,5,9）→ 拒绝（-3） */
+    cmd.aero_lam_small[1] = 5.0;
+    ASSERT(fcr_bridge_mode2_find_beta(&cmd, 7.0, 0.70, &beta) == -3);
+    cmd.aero_lam_small[1] = 7.0;
+    /* 维度不足（n_lam=1）→ -2 */
+    cmd.aero_n_lam = 1;
+    ASSERT(fcr_bridge_mode2_find_beta(&cmd, 7.0, 0.70, &beta) == -2);
+}
+
 /* ---- 端到端：Mode0 旁路 / Mode1 控制分配 / Mode2 前馈 ---- */
 static void test_step_modes(void) {
     FcrBridgeCore *core = mk_core();
@@ -356,6 +379,7 @@ void test_bridge_core_register(void)
     RUN_TEST("mode1_power_ratio", test_mode1_power_ratio);
     RUN_TEST("mode2_ct_ref", test_mode2_ct_ref);
     RUN_TEST("mode2_find_beta", test_mode2_find_beta);
+    RUN_TEST("mode2_find_beta_robust", test_mode2_find_beta_robust);
     RUN_TEST("step_modes", test_step_modes);
     RUN_TEST("step_mode0", test_step_mode0);
     RUN_TEST("mode2_no_table_fallback", test_mode2_no_table_fallback);

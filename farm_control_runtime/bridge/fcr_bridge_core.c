@@ -137,14 +137,34 @@ static double ct_bilinear_interp(const double *lamv, const double *betav,
     return ct0 + fl * (ct1 - ct0);
 }
 
+/* W-05: 校验 Ct 表：维度下限(>=2)、长度上界、轴严格递增（含 NaN/相等拒绝） */
+static int ct_table_validate(const FcrBridgeCmd *cmd) {
+    int i;
+    const double *lamv, *betav;
+    if (!cmd) return -1;
+    if (cmd->aero_n_lam < 2 || cmd->aero_n_beta < 2) return -2;
+    if (cmd->aero_n_lam > FCR_BRIDGE_MAX_AERO_TABLE ||
+        cmd->aero_n_beta > FCR_BRIDGE_MAX_AERO_TABLE) return -2;
+    lamv = cmd->aero_lam_ptr ? cmd->aero_lam_ptr : cmd->aero_lam_small;
+    betav = cmd->aero_beta_deg_ptr ? cmd->aero_beta_deg_ptr : cmd->aero_beta_deg_small;
+    for (i = 1; i < cmd->aero_n_lam; ++i)
+        if (!(lamv[i] > lamv[i-1])) return -3;   /* 非严格递增 */
+    for (i = 1; i < cmd->aero_n_beta; ++i)
+        if (!(betav[i] > betav[i-1])) return -3;
+    return 0;
+}
+
 /* WIN-10: find beta by scanning with bilinear interpolation */
 int fcr_bridge_mode2_find_beta(const FcrBridgeCmd *cmd, double lam,
                                double ct_ref, double *beta_deg_out) {
-    int j;
+    int j, vrc;
     double best = 1e30, best_beta = 0.0, ct;
     const double *lamv, *betav, *ctv;
     if (!cmd || !beta_deg_out) return -1;
-    if (cmd->aero_n_lam <= 0 || cmd->aero_n_beta <= 0) return -2;
+    vrc = ct_table_validate(cmd);
+    if (vrc != 0) return vrc;                 /* -2 无表/维度不足；-3 轴非单调 */
+    /* W-05: 缺风速/转速（lam 非正）→ 不求解，避免退化为 lambda=0 */
+    if (!(lam > 0.0) || !isfinite(lam)) return -5;  /* NO_WIND */
     lamv = cmd->aero_lam_ptr ? cmd->aero_lam_ptr : cmd->aero_lam_small;
     betav = cmd->aero_beta_deg_ptr ? cmd->aero_beta_deg_ptr : cmd->aero_beta_deg_small;
     ctv = cmd->aero_ct_ptr ? cmd->aero_ct_ptr : cmd->aero_ct_small;
@@ -343,8 +363,8 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
                         st->induction_fallback = 1;
                         st->fallback_active = 1;
                         sp.command_status_flags |= 0x4;   /* FALLBACK */
-                        sp.command_status_flags |= (rc == -2) ? 0x200 : 0x100;
-                        /* -2 → CT_LOOKUP_INVALID(0x200)；-4 → UNACHIEVABLE(0x100) */
+                        sp.command_status_flags |= ((rc == -2 || rc == -5) ? 0x200 : 0x100);
+                        /* -2 无表 / -5 缺风速 → CT_LOOKUP_INVALID(0x200)；-3/-4 → UNACHIEVABLE(0x100) */
                         st->min_pitch_ref_rad = 0.0;
                         sp.min_pitch_ref_rad = 0.0;
                         sp.induction_enable = 0;
