@@ -4,6 +4,7 @@
 #include "test_framework.h"
 #include "observation_manager.h"
 #include "wind_mapper.h"
+#include "awae_frame_builder.h"
 #include <string.h>
 #include <math.h>
 
@@ -126,10 +127,107 @@ static void test_wind_mapper_lambda(void) {
     ASSERT(fcr_wind_mapper_lambda(&w, 1.0, 63.0) == 0.0);
 }
 
+/* ---- ICD v1.5 GG-04/GG-13：AWAE 目录帧组装（awae_frame_builder） ---- */
+static void test_awae_catalog_build(void) {
+    FcrAWAECatalog cat;
+    FcrAWAECatalogFrame fr;
+    int n;
+
+    /* NULL 安全 */
+    ASSERT(fcr_awae_build_catalog_frame(NULL, 1, &fr) == -1);
+    ASSERT(fcr_awae_build_catalog_frame(&cat, 1, NULL) == -1);
+    ASSERT(fcr_awae_catalog_set_point(NULL, 0, 1, 0, 0, 0) == -1);
+
+    /* 空目录（未注入）仍产出合法帧，但不伪造点 */
+    memset(&cat, 0, sizeof(cat));
+    ASSERT(fcr_awae_build_catalog_frame(&cat, 7, &fr) == 0);
+    ASSERT(fr.n_points == 0);
+    ASSERT(fr.protocol_version == FCR_PROTOCOL_VERSION);
+    ASSERT(fr.frame_seq == 7);
+
+    /* 注入 3 点 */
+    fcr_awae_catalog_reset(&cat, 3, 42u);
+    ASSERT(cat.valid == 1);
+    ASSERT(cat.n_points == 3);
+    ASSERT(fcr_awae_catalog_set_point(&cat, 0, 101, 1.5, -2.5, 90.0) == 0);
+    ASSERT(fcr_awae_catalog_set_point(&cat, 1, 102, 10.0, 0.0, 90.0) == 0);
+    ASSERT(fcr_awae_catalog_set_point(&cat, 2, 103, 0.0, 20.0, 91.0) == 0);
+    ASSERT(fcr_awae_catalog_set_point(&cat, FCR_MAX_OBSERVATION_POINTS, 1, 0, 0, 0) == -2);
+
+    n = fcr_awae_build_catalog_frame(&cat, 8, &fr);
+    ASSERT(n == 3);
+    ASSERT(fr.n_points == 3);
+    ASSERT(fr.entries[0].point_id == 101);
+    ASSERT(fr.entries[2].point_id == 103);
+    ASSERT_NEAR(fr.entries[0].point_position_xyz_m[0], 1.5, 1e-12);
+    ASSERT_NEAR(fr.entries[0].point_position_xyz_m[1], -2.5, 1e-12);
+    ASSERT_NEAR(fr.entries[2].point_position_xyz_m[2], 91.0, 1e-12);
+    /* S0403 目录版本号逐点携带 */
+    ASSERT(fr.entries[0].point_catalog_version == 42u);
+    ASSERT(fr.entries[2].point_catalog_version == 42u);
+}
+
+/* ---- ICD v1.5 GG-05/GG-12：AWAE 观测帧组装 ---- */
+static void test_awae_observation_build(void) {
+    FcrFlowState flow;
+    FcrAWAECatalog cat;
+    FcrAWAEObservationFrame obs;
+    int n;
+
+    ASSERT(fcr_awae_build_observation_frame(NULL, &cat, 0, &obs) == -1);
+    ASSERT(fcr_awae_build_observation_frame(&flow, &cat, 0, NULL) == -1);
+
+    memset(&flow, 0, sizeof(flow));
+    flow.valid = 1;
+    flow.flow_seq = 33;
+    flow.flow_source_time_s = 12.5;
+    flow.n_points = 2;
+    flow.ambient_u[0] = 8.0;  flow.ambient_v[0] = 0.5;  flow.ambient_w[0] = -0.25;
+    flow.ambient_u[1] = 7.5;  flow.ambient_v[1] = 0.0;  flow.ambient_w[1] = 0.0;
+    flow.point_ti[0] = 0.08;  flow.point_ti[1] = 0.12;
+
+    /* 目录未注入 → point_id 退化为 index+1（字段不空） */
+    memset(&cat, 0, sizeof(cat));
+    n = fcr_awae_build_observation_frame(&flow, &cat, FCR_AWAE_QUALITY_SIMULATED, &obs);
+    ASSERT(n == 2);
+    ASSERT(obs.n_observations == 2);
+    ASSERT(obs.protocol_version == FCR_PROTOCOL_VERSION);
+    ASSERT(obs.frame_seq == 33);
+    ASSERT(obs.observations[0].observation_frame_seq == 33);
+    ASSERT_NEAR(obs.observations[0].observation_sample_sim_time_s, 12.5, 1e-12);
+    ASSERT(obs.observations[0].observation_point_count == 2);
+    ASSERT(obs.observations[0].point_id == 1);
+    ASSERT(obs.observations[1].point_id == 2);
+    ASSERT_NEAR((double)obs.observations[0].wind_uvw_mps[0], 8.0, 1e-6);
+    ASSERT_NEAR((double)obs.observations[0].wind_uvw_mps[1], 0.5, 1e-6);
+    ASSERT_NEAR((double)obs.observations[0].wind_uvw_mps[2], -0.25, 1e-6);
+    ASSERT_NEAR((double)obs.observations[1].turbulence_intensity, 0.12, 1e-6);
+    /* 质量位 = OK | SIMULATED（合成数据可追溯，用户指示"不删字段"） */
+    ASSERT((obs.observations[0].observation_quality_flags & FCR_AWAE_QUALITY_OK) != 0);
+    ASSERT((obs.observations[0].observation_quality_flags & FCR_AWAE_QUALITY_SIMULATED) != 0);
+
+    /* 目录已注入 → point_id 取自目录 */
+    fcr_awae_catalog_reset(&cat, 2, 1u);
+    fcr_awae_catalog_set_point(&cat, 0, 501, 0.0, 0.0, 0.0);
+    fcr_awae_catalog_set_point(&cat, 1, 502, 0.0, 0.0, 0.0);
+    n = fcr_awae_build_observation_frame(&flow, &cat, 0, &obs);
+    ASSERT(n == 2);
+    ASSERT(obs.observations[0].point_id == 501);
+    ASSERT(obs.observations[1].point_id == 502);
+    ASSERT((obs.observations[0].observation_quality_flags & FCR_AWAE_QUALITY_SIMULATED) == 0);
+
+    /* flow 无效 → 不带 OK 位（帧仍合法，数据保留） */
+    flow.valid = 0;
+    ASSERT(fcr_awae_build_observation_frame(&flow, &cat, 0, &obs) == 2);
+    ASSERT((obs.observations[0].observation_quality_flags & FCR_AWAE_QUALITY_OK) == 0);
+}
+
 void test_awae_register(void)
 {
     RUN_TEST("om_register_and_ring", test_om_register_and_ring);
     RUN_TEST("wind_mapper_256", test_wind_mapper_256);
     RUN_TEST("wind_mapper_1000", test_wind_mapper_1000);
     RUN_TEST("wind_mapper_lambda", test_wind_mapper_lambda);
+    RUN_TEST("awae_catalog_build", test_awae_catalog_build);
+    RUN_TEST("awae_observation_build", test_awae_observation_build);
 }

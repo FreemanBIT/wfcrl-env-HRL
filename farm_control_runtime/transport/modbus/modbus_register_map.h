@@ -68,7 +68,7 @@
 #define MB_ST_FAST_STEP          6   /* u64            */
 #define MB_ST_GEN_POWER_W        10  /* S1004: f64    */
 #define MB_ST_GEN_POWER_MEAN     14  /* S1005: f64    */
-#define MB_ST_GEN_POWER_RMS      18  /* S1006: f64    */
+#define MB_ST_GEN_POWER_RMS      18  /* f64（扩展，非 ICD 信号） */
 #define MB_ST_ROTOR_AERO_THRUST  22  /* S1010: f64 */
 /* 注：S0209 shaft_torque_nm 属于 OpenFAST RawState，不在 S10 状态帧内，
  * 因此本寄存器承载 S10 实际提供的塔基前后向弯矩（历史上被误标为 shaft_torque）。 */
@@ -95,20 +95,29 @@
 #define MB_ST_WIND_QUALITY      100  /* S1017: u16    */
 #define MB_ST_TURBINE_STATUS    101  /* S1015: u16    */
 
-/* ---- AWAE 观察点帧缓冲（DR-8）：0x2000 起，每点 32 寄存器 ---- */
-#define MB_AWAE_BASE             0x2000
+/* ---- AWAE 观察点帧缓冲（ICD v1.5 GG-12/GG-13）：0x3000 起，每点 32 寄存器 ----
+ * 修正（Phase C）：原置于 0x2000，与状态区 0x1000..0x2FFF（64 机 × 128）在
+ * ≥33 机时**地址冲突**（0x2000 = 状态区第 33 机起）。ICD v1.5 §5.3 G-6 明确
+ * 不约束 Modbus 地址，故移到状态区之后。寄存器区总长随之扩到 0x4000。
+ * 本区当前由 modbus_transport.c 的 publish_awae 写入。 */
+#define MB_AWAE_BASE             0x3000
 #define MB_AWAE_PER_POINT        32
-#define MB_AWAE_N_POINTS_SLOT    0x2000   /* S0503: u16（当前帧点数） */
-#define MB_AWAE_FRAME_SEQ_SLOT   0x2001   /* S0501: u64（帧序号） */
-#define MB_AWAE_SOURCE_TIME      0x2005   /* S0502: f64（采样仿真时间） */
-#define MB_AWAE_POINT_0          0x2009   /* 点 0 起始 */
+#define MB_AWAE_N_POINTS_SLOT    0x3000   /* S0503: u16（当前帧点数） */
+#define MB_AWAE_FRAME_SEQ_SLOT   0x3001   /* S0501: u64（帧序号，0x3001..0x3004） */
+#define MB_AWAE_SOURCE_TIME      0x3005   /* S0502: f64（采样仿真时间，0x3005..0x3008） */
+#define MB_AWAE_POINT_0          0x3009   /* 点 0 起始（末点 0x3808） */
+/* 单点字段（相对点起始的寄存器下标）。
+ * ⚠ 修正（Phase C）：原布局把 f64 当作 2 寄存器，导致 3×f64 坐标跨到
+ *   1..6 并与 wind_xyz(7) 重叠、且与 mb_put_double 的 4 寄存器写法不符。
+ *   现按 f64 = 4 寄存器排布：1 + 12 + 12 + 4 + 1 + 1 + 1(保留) = 32。
+ *   同时删除 wind_speed / wind_direction —— 二者非 ICD v1.5 信号
+ *   （S0505 wind_uvw 已含矢量），保留会使单点超过 32 寄存器。 */
 #define MB_AWAE_POINT_POINT_ID   0        /* S0504: u16（点 ID） */
-#define MB_AWAE_POINT_POS_XYZ    1        /* S0402: 3×f64（坐标） */
-#define MB_AWAE_POINT_WIND_XYZ   7        /* S0505: 3×f64（风矢量分量） */
-#define MB_AWAE_POINT_WIND_SPEED 13       /* f64（幅值） */
-#define MB_AWAE_POINT_WIND_DIR   17       /* f64（风向 rad） */
-#define MB_AWAE_POINT_TI         21       /* S0507: f64（湍流强度） */
-#define MB_AWAE_POINT_QUALITY    25       /* S0506: u16（质量标志） */
-#define MB_AWAE_POINT_CRC16      31       /* u16（单点完整性） */
+#define MB_AWAE_POINT_POS_XYZ    1        /* S0402: 3×f64（坐标，1..12） */
+#define MB_AWAE_POINT_WIND_XYZ   13       /* S0505: 3×f64（风矢量分量，13..24） */
+#define MB_AWAE_POINT_TI         25       /* S0507: f64（湍流强度，25..28） */
+#define MB_AWAE_POINT_QUALITY    29       /* S0506: u16（质量标志） */
+#define MB_AWAE_POINT_CRC16      30       /* u16（单点完整性） */
+/* 31: 保留（对齐 32 寄存器/点） */
 
 #endif /* MODBUS_REGISTER_MAP_H */

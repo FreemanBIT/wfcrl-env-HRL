@@ -104,25 +104,29 @@ state_area:
     crc16: 112                 # u16
   reserved: "113..127"
 
-# ---- AWAE 观察点帧缓冲（DR-8）：0x2000 起，每点 32 寄存器 ----
+# ---- AWAE 观察点帧缓冲（ICD v1.5 GG-12/GG-13）：0x3000 起，每点 32 寄存器 ----
 # ICD v1.5 S0402/S0501-S0507；离线由 Provider 注入（见 fcr_awae_types.h）。
+# 修正：原置 0x2000，与状态区 0x1000..0x2FFF（64 机 × 128）在 ≥33 机时冲突；
+# G-6 不约束 Modbus 地址，故移到状态区之后（寄存器区总长 0x4000）。
+# 由 modbus_transport.c 的 publish_awae 写入（ICD v1.5 Phase C）。
 awae_frame_buffer:
-  base: 0x2000
+  base: 0x3000
   per_point: 32
   header:
-    n_points_slot: 0x2000      # S0503 u16（当前帧点数）
-    frame_seq_slot: 0x2001     # S0501 u64（帧序号）
-    source_time: 0x2005        # S0502 f64（采样仿真时间）
-    point0: 0x2009             # 点 0 起始
-  point_fields:                # 相对单点起始的寄存器下标
+    n_points_slot: 0x3000      # S0503 u16（当前帧点数）
+    frame_seq_slot: 0x3001     # S0501 u64（帧序号）
+    source_time: 0x3005        # S0502 f64（采样仿真时间）
+    point0: 0x3009             # 点 0 起始（末点 0x3808）
+  point_fields:                # 相对单点起始的寄存器下标（f64/u64 = 4 寄存器）
     point_id: 0                # S0504 u16
-    position_xyz: 1            # S0402 3×f64（1..6）
-    wind_xyz: 7                # S0505 3×f64（7..12）
-    wind_speed: 13             # f64（幅值）
-    wind_direction: 17         # f64 rad
-    turbulence_intensity: 21   # S0507 f64
-    quality_flags: 25          # S0506 u16
-    crc16: 31                  # u16（单点完整性）
+    position_xyz: 1            # S0402 3×f64（1..12）
+    wind_xyz: 13               # S0505 3×f64（13..24）
+    turbulence_intensity: 25   # S0507 f64（25..28）
+    quality_flags: 29          # S0506 u16
+    crc16: 30                  # u16（单点完整性）
+    # 31 保留（对齐 32 寄存器/点）
+    # 注：v1.1 的 wind_speed / wind_direction 已删除 —— 非 ICD v1.5 信号，
+    #     S0505 wind_uvw 已含矢量；保留会使单点超过 32 寄存器。
 
 # 并发模型：单客户端；RCP 轮询状态区（建议 100 ms）并异步写命令区。
 # 单位与坐标语义与 fcr_state_types.h 一致（角度 rad，CCW+，0=+X）。

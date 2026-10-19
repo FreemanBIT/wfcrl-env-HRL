@@ -72,6 +72,10 @@ int fcr_rosco_publish_state(int32_t turbine_id, const FcrRoscoRawState *st);
 /* ROSCO 每 ~10 ms 调用：发布确认信息 */
 int fcr_rosco_publish_ack(int32_t turbine_id, const FcrRoscoAck *ack);
 
+/* 读取最新 Bridge 确认（S09，GG-09 回读路径）。
+ * 注：本原型此前缺失，调用方依赖隐式声明（C99 起非法），现补上。 */
+int fcr_rosco_get_ack(int32_t turbine_id, FcrRoscoAck *out);
+
 #ifdef __cplusplus
 }
 #endif

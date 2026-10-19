@@ -9,6 +9,7 @@
 #include "modbus_register_map.h"
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 /* 静态链接到实现内部函数（同一编译单元直接引用） */
 extern FcrTransport *modbus_transport_create(int port, uint32_t n_turbines);
@@ -179,6 +180,93 @@ static void test_state_area_layout(void)
     ASSERT(MB_ST_CRC16 < (int)MB_STATE_PER_TURBINE);
 }
 
+/* 寄存器布局守卫：AWAE 缓冲必须整体落在寄存器区内，且不与状态区重叠 */
+static void test_awae_area_layout(void)
+{
+    int last = MB_AWAE_POINT_0 + (FCR_MAX_OBSERVATION_POINTS - 1) * MB_AWAE_PER_POINT
+               + MB_AWAE_POINT_CRC16;
+    /* 不与状态区（0x1000..0x2FFF = 64 机 × 128）重叠：
+     * 修复前 AWAE 置 0x2000，恰是状态区第 33 机起始。 */
+    ASSERT(MB_AWAE_BASE >= (int)MB_STATE_BASE
+                          + (int)MB_STATE_PER_TURBINE * (int)FCR_MAX_TURBINES);
+    /* 单点字段不互相覆盖（f64 = 4 寄存器；修复前按 2 寄存器排布会重叠） */
+    ASSERT(MB_AWAE_POINT_POINT_ID + 1 <= MB_AWAE_POINT_POS_XYZ);
+    ASSERT(MB_AWAE_POINT_POS_XYZ + 12 <= MB_AWAE_POINT_WIND_XYZ);
+    ASSERT(MB_AWAE_POINT_WIND_XYZ + 12 <= MB_AWAE_POINT_TI);
+    ASSERT(MB_AWAE_POINT_TI + 4 <= MB_AWAE_POINT_QUALITY);
+    ASSERT(MB_AWAE_POINT_QUALITY + 1 <= MB_AWAE_POINT_CRC16);
+    ASSERT(MB_AWAE_POINT_CRC16 + 1 <= (int)MB_AWAE_PER_POINT);
+    /* 头部不与点 0 重叠 */
+    ASSERT(MB_AWAE_FRAME_SEQ_SLOT + 4 <= MB_AWAE_SOURCE_TIME);
+    ASSERT(MB_AWAE_SOURCE_TIME + 4 <= MB_AWAE_POINT_0);
+    /* 末点仍落在 modbus_transport_create 分配的 0x4000 寄存器区内 */
+    ASSERT(last < 0x4000);
+}
+
+/* ICD v1.5 GG-12/GG-13：publish_awae 把观测/目录写入 AWAE 缓冲 */
+static void test_publish_awae(void)
+{
+    FcrTransport *tr = modbus_transport_create(15505, 2);
+    struct FcrModbusTransport *mt;
+    FcrAWAEObservationFrame obs;
+    FcrAWAECatalogFrame cat;
+    FcrAWAECatalog catalog;
+    FcrFlowState flow;
+    int i;
+
+    ASSERT(tr != NULL);
+    mt = (struct FcrModbusTransport *)tr->impl;
+    ASSERT(mt != NULL);
+    ASSERT(tr->ops->publish_awae != NULL);
+
+    memset(&flow, 0, sizeof(flow));
+    flow.valid = 1;
+    flow.flow_seq = 77;
+    flow.flow_source_time_s = 42.0;
+    flow.n_points = 3;
+    for (i = 0; i < 3; ++i) {
+        flow.ambient_u[i] = 8.0 + i;
+        flow.ambient_v[i] = 0.25 * i;
+        flow.ambient_w[i] = 0.0;
+        flow.point_ti[i] = 0.10;
+    }
+    fcr_awae_catalog_reset(&catalog, 3, 5u);
+    for (i = 0; i < 3; ++i)
+        fcr_awae_catalog_set_point(&catalog, i, (uint32_t)(900 + i),
+                                   10.0 * i, 20.0 * i, 90.0);
+
+    ASSERT(fcr_awae_build_observation_frame(&flow, &catalog,
+                                            FCR_AWAE_QUALITY_SIMULATED, &obs) == 3);
+    ASSERT(fcr_awae_build_catalog_frame(&catalog, 77, &cat) == 3);
+    ASSERT(fcr_transport_publish_awae(tr, &obs, &cat) == 1);
+
+    /* 头部：S0503 / S0501 / S0502 */
+    ASSERT(mb_get_u16(mt->regs, MB_AWAE_N_POINTS_SLOT) == 3);
+    ASSERT(mb_get_u64(mt->regs, MB_AWAE_FRAME_SEQ_SLOT) == 77);
+    ASSERT_NEAR(mb_get_double(mt->regs, MB_AWAE_SOURCE_TIME), 42.0, 1e-12);
+
+    /* 点 1：ID / 坐标(S0402) / 风矢量(S0505) / TI(S0507) / 质量(S0506) */
+    {
+        int b = MB_AWAE_POINT_0 + 1 * MB_AWAE_PER_POINT;
+        ASSERT(mb_get_u16(mt->regs, b + MB_AWAE_POINT_POINT_ID) == 901);
+        ASSERT_NEAR(mb_get_double(mt->regs, b + MB_AWAE_POINT_POS_XYZ), 10.0, 1e-12);
+        ASSERT_NEAR(mb_get_double(mt->regs, b + MB_AWAE_POINT_POS_XYZ + 4), 20.0, 1e-12);
+        ASSERT_NEAR(mb_get_double(mt->regs, b + MB_AWAE_POINT_POS_XYZ + 8), 90.0, 1e-12);
+        ASSERT_NEAR(mb_get_double(mt->regs, b + MB_AWAE_POINT_WIND_XYZ), 9.0, 1e-6);
+        ASSERT_NEAR(mb_get_double(mt->regs, b + MB_AWAE_POINT_WIND_XYZ + 4), 0.25, 1e-6);
+        ASSERT_NEAR(mb_get_double(mt->regs, b + MB_AWAE_POINT_TI), 0.10, 1e-6);
+        ASSERT((mb_get_u16(mt->regs, b + MB_AWAE_POINT_QUALITY)
+                & FCR_AWAE_QUALITY_SIMULATED) != 0);
+    }
+
+    /* NULL 观测帧：头部清零，不崩溃（Transport 可选能力语义） */
+    ASSERT(fcr_transport_publish_awae(tr, NULL, NULL) == 1);
+    ASSERT(mb_get_u16(mt->regs, MB_AWAE_N_POINTS_SLOT) == 0);
+    ASSERT(mb_get_u64(mt->regs, MB_AWAE_FRAME_SEQ_SLOT) == 0);
+
+    modbus_transport_destroy(tr);
+}
+
 void test_modbus_register(void)
 {
     RUN_TEST("register_encode_decode", test_register_encode_decode);
@@ -186,6 +274,8 @@ void test_modbus_register(void)
     RUN_TEST("state_region_from_frame", test_state_region_from_frame);
     RUN_TEST("command_area_layout", test_command_area_layout);
     RUN_TEST("state_area_layout", test_state_area_layout);
+    RUN_TEST("awae_area_layout", test_awae_area_layout);
+    RUN_TEST("publish_awae", test_publish_awae);
 }
 
 

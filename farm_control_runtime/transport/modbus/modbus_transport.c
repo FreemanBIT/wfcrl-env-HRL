@@ -256,7 +256,53 @@ static int mb_publish_state(FcrTransport *self, const FarmStateFrame *state)
     return 1;
 }
 
-static const FcrTransportOps mb_ops = { mb_poll_command, mb_publish_state };
+/* ICD v1.5 GG-12/GG-13：把 AWAE 观测/目录帧写入 AWAE 观察点缓冲（0x3000 起）。
+ * 离线环境由 Provider 注入合成数据（标记 SIMULATED），本函数不做任何数值处理。
+ * 返回 1 = 已上送。 */
+static int mb_publish_awae(FcrTransport *self,
+                           const FcrAWAEObservationFrame *obs,
+                           const FcrAWAECatalogFrame *catalog)
+{
+    struct FcrModbusTransport *mt = (struct FcrModbusTransport *)self->impl;
+    uint32_t i, n;
+
+    if (!mt || !mt->regs) return -1;
+
+    n = obs ? obs->n_observations : 0u;
+    if (n > FCR_MAX_OBSERVATION_POINTS) n = FCR_MAX_OBSERVATION_POINTS;
+
+    mb_put_u16(mt->regs, MB_AWAE_N_POINTS_SLOT, (uint16_t)n);          /* S0503 */
+    if (obs) {
+        mb_put_u64(mt->regs, MB_AWAE_FRAME_SEQ_SLOT, obs->frame_seq);  /* S0501 */
+        mb_put_double(mt->regs, MB_AWAE_SOURCE_TIME,                   /* S0502 */
+                      n ? obs->observations[0].observation_sample_sim_time_s : 0.0);
+    } else {
+        mb_put_u64(mt->regs, MB_AWAE_FRAME_SEQ_SLOT, 0);
+        mb_put_double(mt->regs, MB_AWAE_SOURCE_TIME, 0.0);
+    }
+
+    for (i = 0; i < n; ++i) {
+        int b = MB_AWAE_POINT_0 + (int)i * MB_AWAE_PER_POINT;
+        const FcrAWAEObservation *o = &obs->observations[i];
+        mb_put_u16(mt->regs, b + MB_AWAE_POINT_POINT_ID, (uint16_t)o->point_id); /* S0504 */
+        mb_put_double(mt->regs, b + MB_AWAE_POINT_WIND_XYZ + 0, o->wind_uvw_mps[0]); /* S0505 */
+        mb_put_double(mt->regs, b + MB_AWAE_POINT_WIND_XYZ + 4, o->wind_uvw_mps[1]);
+        mb_put_double(mt->regs, b + MB_AWAE_POINT_WIND_XYZ + 8, o->wind_uvw_mps[2]);
+        mb_put_double(mt->regs, b + MB_AWAE_POINT_TI, o->turbulence_intensity);  /* S0507 */
+        mb_put_u16(mt->regs, b + MB_AWAE_POINT_QUALITY,                          /* S0506 */
+                   o->observation_quality_flags);
+        /* S0402 坐标与观测同槽上送，便于 RCP 在单区内完成点定位 */
+        if (catalog && i < catalog->n_points) {
+            const FcrAWAECatalogEntry *e = &catalog->entries[i];
+            mb_put_double(mt->regs, b + MB_AWAE_POINT_POS_XYZ + 0, e->point_position_xyz_m[0]);
+            mb_put_double(mt->regs, b + MB_AWAE_POINT_POS_XYZ + 4, e->point_position_xyz_m[1]);
+            mb_put_double(mt->regs, b + MB_AWAE_POINT_POS_XYZ + 8, e->point_position_xyz_m[2]);
+        }
+    }
+    return 1;
+}
+
+static const FcrTransportOps mb_ops = { mb_poll_command, mb_publish_state, mb_publish_awae };
 
 /* WSA 生命周期引用计数（多实例安全） */
 static int g_wsa_refcount = 0;
@@ -302,8 +348,9 @@ FcrTransport *modbus_transport_create(int port, uint32_t n_turbines)
         free(mt);
         return NULL;
     }
-    /* 寄存器区覆盖命令(0x0000+0x1000)+时钟(0x0800)+状态(0x1000..0x2FFF) */
-    mt->regs = (uint16_t *)calloc(0x3000, sizeof(uint16_t));
+    /* 寄存器区覆盖命令(0x0000+0x1000)+时钟(0x0800)+状态(0x1000..0x2FFF)
+     * +AWAE 观察点缓冲(0x3000..0x3808)。 */
+    mt->regs = (uint16_t *)calloc(0x4000, sizeof(uint16_t));
     if (!mt->regs) { closesocket(mt->listen_sock); free(mt); return NULL; }
     mt->stop = 0;
     mt->last_frame_seq = 0;

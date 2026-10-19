@@ -294,7 +294,16 @@ int fcr_runtime_step_low(FcrRuntime *rt, double sim_time_s)
         aggregate_state(rt, &out, rt->ss->sim_time_s);
     }
     if (rt->cfg.transport) {
+        FcrAWAEObservationFrame obs;
+        FcrAWAECatalogFrame cat;
         fcr_transport_publish(rt->cfg.transport, &out);
+        /* ICD v1.5 GG-12/GG-13：AWAE 观测/目录帧上送 RCP（第二跳）。
+         * 离线环境数据由 Provider 注入；合成数据带 SIMULATED 质量位以便追溯。
+         * 目录未注入时仍上送合法空帧（不删字段、不伪造点）。 */
+        fcr_awae_build_catalog_frame(&rt->ss->awae_cat, rt->ss->low_step, &cat);
+        fcr_awae_build_observation_frame(&rt->ss->flow, &rt->ss->awae_cat,
+                                         rt->ss->awae_extra_quality_flags, &obs);
+        fcr_transport_publish_awae(rt->cfg.transport, &obs, &cat);
     }
     rt->last_low_step_time_s = rt->ss->sim_time_s;
     return 0;

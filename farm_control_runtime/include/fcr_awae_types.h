@@ -58,6 +58,12 @@ typedef struct {
     FcrAWAEObservation    observations[FCR_MAX_OBSERVATION_POINTS];
 } FcrAWAEObservationFrame;
 
+/* observation_quality_flags (S0506) 位定义 */
+#define FCR_AWAE_QUALITY_OK          (1u << 0)  /* 观测有效 */
+#define FCR_AWAE_QUALITY_STALE       (1u << 1)  /* 数据超龄（超 flow stale 阈值） */
+#define FCR_AWAE_QUALITY_SIMULATED   (1u << 2)  /* 合成/外部注入，非真实 AWAE */
+#define FCR_AWAE_QUALITY_LOW_CONF    (1u << 3)  /* 低置信度 */
+
 /* ================================================================== */
 /* TurbineWindEstimate_to_Bridge (S0601-S0604)                       */
 /* ================================================================== */

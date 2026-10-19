@@ -108,3 +108,19 @@ int fcr_state_store_get_wind_estimate(const FcrStateStore *ss, int32_t turbine_i
     *out = ss->wind_est[turbine_id - 1];
     return 0;
 }
+
+/* ---- ICD v1.5 GG-04/GG-05：AWAE 目录与质量位（离线注入） ---------- */
+
+int fcr_state_store_set_awae_catalog(FcrStateStore *ss, const FcrAWAECatalog *cat)
+{
+    if (!ss || !cat) return -1;
+    ss->awae_cat = *cat;
+    return 0;
+}
+
+int fcr_state_store_set_awae_quality(FcrStateStore *ss, uint16_t extra_quality_flags)
+{
+    if (!ss) return -1;
+    ss->awae_extra_quality_flags = extra_quality_flags;
+    return 0;
+}

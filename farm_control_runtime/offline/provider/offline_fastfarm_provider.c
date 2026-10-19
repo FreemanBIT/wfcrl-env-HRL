@@ -28,6 +28,15 @@
 
 extern FcrRuntime *fcr_rosco_api_runtime(void);
 
+/* WIN-13：合成 AWAE 流场生成。定义在本文件末尾，但 publish_flow_snapshot
+ * （ICD v1.5 GG-04/05 合成测点注入）会先用到，故此处前置声明，
+ * 避免隐式声明（C99 起非法）。 */
+int fcr_offline_provider_generate_synthetic_flow(FcrFlowState *flow,
+                                                  uint32_t n_points,
+                                                  double sim_time_s,
+                                                  uint32_t n_turbines,
+                                                  uint32_t seed);
+
 static double g_dt_low = 1.0;
 static double g_dt_high = 0.01;
 static double g_ambient_mps = 0.0;   /* 0 = 未配置（用全场最大 hub 估算） */
@@ -38,6 +47,10 @@ static double g_hub_wind[FCR_MAX_TURBINES];
 static uint32_t g_hub_valid[FCR_MAX_TURBINES];
 static double g_last_flow_time = -1.0;
 static uint64_t g_flow_seq = 0;
+/* ICD v1.5 GG-04/GG-05：合成 AWAE 测点数（0 = 关闭；env FCR_CFG_AWAE_SYNTH_POINTS） */
+static uint32_t g_awae_synth_points = 0;
+/* 合成测点目录版本号（S0403）；真实 AWAE 目录版本由 AWAE 侧提供 */
+#define FCR_AWAE_CATALOG_VERSION_SYNTH 0u
 
 int fcr_offline_provider_init(void)
 {
@@ -49,6 +62,13 @@ int fcr_offline_provider_init(void)
     if (s && atof(s) > 0.0) g_dt_high = atof(s);
     s = getenv("FCR_CFG_AMBIENT_MPS");
     if (s && atof(s) > 0.0) g_ambient_mps = atof(s);
+    /* ICD v1.5 GG-04/GG-05：合成 AWAE 测点数（默认 0 = 关闭，见 publish_flow_snapshot） */
+    s = getenv("FCR_CFG_AWAE_SYNTH_POINTS");
+    if (s && atoi(s) > 0) {
+        g_awae_synth_points = (uint32_t)atoi(s);
+        if (g_awae_synth_points > FCR_MAX_OBSERVATION_POINTS)
+            g_awae_synth_points = FCR_MAX_OBSERVATION_POINTS;
+    }
     g_init = 1;
     return 0;
 }
@@ -76,6 +96,42 @@ static void publish_flow_snapshot(FcrRuntime *rt, double sim_time_s)
     fl.flow_seq = ++g_flow_seq;
     fl.n_turbines = FCR_MAX_TURBINES;
     fl.n_points = 0;   /* 观察点（U/V/W 网格）离线不可得：RT Provider 提供 */
+
+    /* ICD v1.5 GG-04/GG-05：FAST.Farm 离线**无法**产生真实 AWAE 量测。
+     * 按用户指示，由 Provider 注入**合成**测点（明确标记 SIMULATED），
+     * 以便验证 S05→S12/S13 发布链路。
+     * ⚠ 默认关闭（FCR_CFG_AWAE_SYNTH_POINTS 未设/为 0）：注入观察点会改变
+     *   WindMapper 的映射结果，从而扰动既有 300 s 回归基线，故必须显式开启。
+     *   只覆盖观察点数组，**不动** disk_* 盘面量（那些来自真实 hub 风）。 */
+    if (g_awae_synth_points > 0) {
+        FcrFlowState syn;
+        FcrAWAECatalog cat;
+        uint32_t np = g_awae_synth_points;
+        if (np > FCR_MAX_OBSERVATION_POINTS) np = FCR_MAX_OBSERVATION_POINTS;
+        if (fcr_offline_provider_generate_synthetic_flow(&syn, np, sim_time_s,
+                                                        FCR_MAX_TURBINES, 1u) == 0) {
+            for (i = 0; i < np; ++i) {
+                fl.ambient_u[i] = syn.ambient_u[i];
+                fl.ambient_v[i] = syn.ambient_v[i];
+                fl.ambient_w[i] = syn.ambient_w[i];
+                fl.disturbed_u[i] = syn.disturbed_u[i];
+                fl.disturbed_v[i] = syn.disturbed_v[i];
+                fl.disturbed_w[i] = syn.disturbed_w[i];
+                fl.point_ti[i] = syn.point_ti[i];
+            }
+            fl.n_points = np;
+        }
+        /* 静态测点目录（S0401-S0403）：合成点均匀布置在半径 300 m 圆上 */
+        fcr_awae_catalog_reset(&cat, np, FCR_AWAE_CATALOG_VERSION_SYNTH);
+        for (i = 0; i < np; ++i) {
+            double ang = 2.0 * 3.14159265358979323846 * (double)i / (double)np;
+            fcr_awae_catalog_set_point(&cat, i, i + 1u,
+                                       300.0 * cos(ang), 300.0 * sin(ang), 90.0);
+        }
+        fcr_state_store_set_awae_catalog(rt->ss, &cat);
+        fcr_state_store_set_awae_quality(rt->ss, FCR_AWAE_QUALITY_SIMULATED);
+    }
+
     fcr_publish_flow_state(rt, &fl);
 
     /* 1 s 低速步驱动：聚合（SignalStatistics 窗口闭合）+ watchdog +

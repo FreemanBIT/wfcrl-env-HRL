@@ -8,6 +8,7 @@
 #include "fcr_state_types.h"
 #include "fcr_runtime.h"
 #include "fcr_rosco_api.h"
+#include "awae_frame_builder.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -106,6 +107,8 @@ struct FcrStateStore {
     FcrTurbineExtraState   extra[FCR_MAX_TURBINES];    /* OF 额外 10 ms 槽 */
     FcrTurbineWindEstimate wind_est[FCR_MAX_TURBINES]; /* S06 风速估计 1 s 槽 */
     FcrFlowState           flow;                       /* AWAE 1 s ZOH 槽 */
+    FcrAWAECatalog         awae_cat;                   /* GG-04 静态测点目录（注入） */
+    uint16_t               awae_extra_quality_flags;   /* GG-05 注入方声明的质量位 */
     double   sim_time_s;
     uint64_t fast_step;
     uint64_t low_step;
@@ -131,6 +134,12 @@ int fcr_state_store_set_wind_estimate(FcrStateStore *ss,
                                       const FcrTurbineWindEstimate *est);
 int fcr_state_store_get_wind_estimate(const FcrStateStore *ss, int32_t turbine_id,
                                       FcrTurbineWindEstimate *out);
+
+/* ICD v1.5 GG-04/GG-05：AWAE 静态测点目录与注入方质量位。
+ * FAST.Farm 离线无法产生真实 AWAE 量测，故目录由 Provider/配置注入；
+ * 合成数据请把 extra_quality_flags 置 FCR_AWAE_QUALITY_SIMULATED。 */
+int fcr_state_store_set_awae_catalog(FcrStateStore *ss, const FcrAWAECatalog *cat);
+int fcr_state_store_set_awae_quality(FcrStateStore *ss, uint16_t extra_quality_flags);
 
 /* ------------------------------------------------------------------ */
 /* signal_statistics.c + state_aggregator.c                            */
