@@ -19,6 +19,7 @@ Phase C 发布链路（Modbus 侧）已完成。
 | 集成测试（FAST.Farm 闭环） | `pytest farm_control_runtime\tests\integration -q` | **21/21 PASS** |
 | ROSCO DLL | `.venv\Scripts\python.exe wfcrl\simulators\fastfarm\src\_compile.py` | **OK**（2351.7 KB，含 Phase C 模块） |
 | **T-21** 300 s 基线回归 | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run.regress_300s` | **PASS**：`mean_farm_power=4364 kW`（基线 4366 kW，偏差 **0.05%**），wall 162.5 s，steps=100 |
+| **T-22** 诱导通道 300 s | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run._test_induction_only` | **PASS**：T1 `a=0.20` → **-15.14%**（判据 -15.8% ±2%）；T2 +10.9%（尾流恢复，符合物理）；T3 -0.08%；`induction_seq_applied` 仅 T1=1、T2/T3=0（通道隔离） |
 
 > 集成测试建议**逐文件**运行：libzmq 偶发在 teardown 触发
 > `Assertion failed: Socket operation on non-socket` 会 abort 进程，导致
@@ -68,19 +69,36 @@ Phase C 发布链路（Modbus 侧）已完成。
 
 **尚未做**：ZMQ 侧尚未承载 AWAE 帧（见 §4）。
 
-### Phase E — 系统回归（**T-21 已通过**）
+### Phase E — 系统回归（**T-21 / T-22 已通过**）
 
 - **T-21（300 s 基线回归）PASS**：`mean_farm_power = 4364 kW`，与基线 **4366 kW**
   偏差 **0.05%**；wall 162.5 s，100 个控制步全部走完。
   意义：Phase A/B/F 的改动（含诱导配置字段错位修复、G-4 时间基准修复、
   Modbus 重排）**没有扰动基线**。
-- 该次运行使用 Phase C **之前**的 DLL，因此是对 Phase A/B/F 的干净验证。
-- 其余 T-22…T-27 仍待跑（见 §4）。
-- ⚠ **操作注意**：首次运行曾卡死（FAST.Farm 已在 303 s 正常结束，但 replay
-  进程空转不再推进、不产出 CSV）。同时并行跑 gcc 构建/测试会与其争抢 CPU，
-  疑似导致 replay 跟不上仿真步进而卡在等待。**跑 300 s 回归时不要并行做重编译**；
-  且**务必把 stdout 重定向到文件**（管道 `| Select-Object` 会缓冲，看不到
-  Python 侧诊断输出）。
+- **T-22（诱导通道 300 s）PASS**：T1 `a=0.20` → **-15.14%**，落在判据
+  **-15.8% ±2%**（即 -17.8%~-13.8%）之内。逐机结果：
+
+  | 机位 | 基线 (kW) | a=0.20 (kW) | Δ |
+  |---|---|---|---|
+  | T1（受控） | 1764.2 | 1497.1 | **-15.14%** |
+  | T2 | 1273.0 | 1411.5 | +10.88% |
+  | T3 | 1327.1 | 1326.1 | -0.08% |
+
+  T2 上升符合物理（T1 降载 → T1 尾流变弱 → 下游 T2 来流增强）；
+  T3 基本不变（离 T1 最远）。同时 `induction_seq_applied` 只有 T1=1、
+  T2/T3=0，**逐机通道隔离成立**。
+- 该次 T-21 运行使用 Phase C **之前**的 DLL，因此是对 Phase A/B/F 的干净验证；
+  T-22 使用重建后的 DLL。
+- **方法学注意**：T-22 的 -15.14% 是**跨 run** 比较（T-21 基线 run vs T-22 run）。
+  交接文档指出 TI=10% 下跨 run 绝对量比较不可靠；本次降载是**确定性控制作用**
+  且 T3 几乎不变（-0.08%），说明该比较在此场景仍有效，但若要严格结论，
+  应改用**同一 run 内**先基线后加命令的方法复核。
+- 其余 T-23…T-27 仍待跑（见 §4）。
+- ⚠ **操作注意**：首次 T-21 运行曾卡死（FAST.Farm 已在 303 s 正常结束，但 replay
+  进程空转不再推进、不产出 CSV）。并行跑 gcc 构建/测试会与其争抢 CPU，
+  疑似导致 replay 跟不上仿真步进。实测：无并发负载时 303 s 仿真仅需 **80 s** wall，
+  有并发构建时需 162 s。**跑回归时不要并行重编译**；且**务必把 stdout 重定向到
+  文件**（管道 `| Select-Object` 会缓冲，看不到 Python 侧诊断输出）。
 
 ### Phase F — 清理与文档（commit `c4fe9a6`）- 删除 `tools/_test_yaw_state.c`（引用已删除的 `yaw_delta_rad`/`yaw_enable`）。
 - 修正 `ZMQ_PROTOCOL.md`、`ROSCO_INTEGRATION.md`、`OFFLINE_PROVIDER.md`、
@@ -160,10 +178,10 @@ Phase C 发布链路（Modbus 侧）已完成。
 - 已完成：T-04/T-12 的 Python 侧（`tests/integration/test_icd_v15_abi_python.py`，7 例）。
 - 待补：T-05…T-11、T-13…T-20（AWAE、S06/S07/S09 契约、超时/回退等）。
 
-### Phase E — 300 s FAST.Farm 系统回归（**T-21 完成，其余待跑**）
-- **已完成**：T-21 基线回归 PASS（4364 kW vs 基线 4366 kW，偏差 0.05%）。
+### Phase E — 300 s FAST.Farm 系统回归（**T-21 / T-22 完成，其余待跑**）
+- **已完成**：T-21 基线回归 PASS（4364 kW vs 基线 4366 kW，偏差 0.05%）；
+  T-22 诱导通道 PASS（T1 a=0.20 → -15.14%，判据 -15.8%±2%）。
 - **待跑**（命令见任务计划 §2.3）：
-  - T-22 诱导通道 300 s：`_test_induction_only.py`，判据 T1 a=0.20 → **-15.8% ±2%**
   - T-23 偏航通道 300 s：`_test_yaw_only.py`，判据 T1 +10° → 同 run 惩罚 **-2.8%~-8.1%**
   - T-24 多机隔离 300 s：`verify_multiturbine_isolation.py`
   - T-25 Bridge 模式 300 s：`verify_bridge_modes.py`，判据 Bridge vs Legacy **<0.1%**
