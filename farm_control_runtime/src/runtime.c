@@ -110,22 +110,33 @@ void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id)
     if (rt->cfg.bridge_enable && rt->bridge_core && tc) {
         FcrBridgeCmd cmd;
         FcrBridgeMeas meas;
+        FcrBridgeInput bin;
         FcrRoscoRawState fast;
         FcrTurbineExtraState extra;
+        FcrTurbineWindEstimate wind_est;
         const FcrFlowState *flow;
         memset(&fast, 0, sizeof(fast));
         memset(&extra, 0, sizeof(extra));
         fcr_state_store_get_fast(rt->ss, turbine_id, &fast);
         fcr_state_store_get_extra(rt->ss, turbine_id, &extra);
         flow = fcr_state_store_get_flow(rt->ss);
-        fcr_bridge_adapter_cmd_from_state(tc, rt->cfg.bridge_induction_mode,
+        /* S07: FcrBridgeInput 是 bridge 的唯一输入路径（S0701-S0710）。
+         * TTL 不属 S07 信号组，由 CommandStore 侧显式提供。 */
+        fcr_bridge_adapter_input_from_state(tc, turbine_id, rt->ss->sim_time_s, &bin);
+        fcr_bridge_adapter_cmd_from_input(&bin, rt->cfg.bridge_induction_mode,
                                           rt->cfg.bridge_alloc_w_pitch,
                                           rt->cfg.bridge_alloc_w_speed,
                                           rt->cfg.bridge_alloc_w_torque,
-                                          &cmd);
-        cmd.turbine_id = turbine_id;
+                                          tc->ind_ttl_s, tc->yaw_ttl_s, &cmd);
         /* WIN-11: full measurement synthesis from StateStore */
         fcr_bridge_adapter_meas_from_state(&fast, &extra, flow, turbine_id, &meas);
+        /* S06: 风速估计（离线由 Provider 注入；未注入则不采用） */
+        memset(&wind_est, 0, sizeof(wind_est));
+        if (fcr_state_store_get_wind_estimate(rt->ss, turbine_id, &wind_est) == 0 &&
+            wind_est.turbine_id == turbine_id) {
+            fcr_bridge_adapter_meas_apply_wind_estimate(
+                &meas, &wind_est, rt->ss->sim_time_s, rt->cfg.flow_stale_threshold_s);
+        }
         /* bridge step 把诱导结果合并进 sp（yaw 保留 CommandStore） */
         if (fcr_bridge_adapter_apply((FcrBridgeCore *)rt->bridge_core, turbine_id,
                                      rt->ss->sim_time_s, &cmd, &meas, &sp) == 0) {

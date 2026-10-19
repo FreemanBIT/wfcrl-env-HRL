@@ -47,12 +47,16 @@
 #define MB_CLK_PROTOCOL_VERSION   0x0815  /* u16（DR-8：协议版本） */
 #define MB_CLK_CRC16              0x0816  /* u16（时钟区 CRC16 完整性，DR-8） */
 
-/* ---- 状态区质量/完整性（每机 128 寄存器尾部，DR-8）---- */
-#define MB_ST_DATA_VERSION       0x7B   /* u16（数据版本） */
-#define MB_ST_QUALITY_FLAGS      0x7C   /* u16（bit0 valid/bit1 stale/bit2 fallback） */
-#define MB_ST_TIMESTAMP_SLOT     0x7D   /* u64（帧时间戳） */
-#define MB_ST_CRC16              0x7E   /* u16（本机状态区 CRC16，DR-8） */
-#define MB_ST_SEQ_SLOT           0x7F   /* u64（帧序号） */
+/* ---- 状态区质量/完整性（每机 128 寄存器内的保留尾部，DR-8）----
+ * 修正（ICD v1.5 Phase B）：原布局把 u64 timestamp 放在偏移 125，会跨越
+ * 本机 128 寄存器块边界（125..128）并与 CRC16/SEQ 槽重叠。ICD v1.5 §5.3 G-6
+ * 明确"不产生 Modbus 地址约束"，故此处重新排布到互不重叠的 102..112。
+ * 这些槽目前**尚未由 modbus_transport.c 实现**（DR-8 完整性待落地）。 */
+#define MB_ST_DATA_VERSION       102  /* u16（数据版本） */
+#define MB_ST_QUALITY_FLAGS      103  /* u16（bit0 valid/bit1 stale/bit2 fallback） */
+#define MB_ST_TIMESTAMP_SLOT     104  /* u64（帧时间戳，104..107） */
+#define MB_ST_SEQ_SLOT           108  /* u64（帧序号，108..111） */
+#define MB_ST_CRC16              112  /* u16（本机状态区 CRC16，DR-8） */
 
 /* ---- 状态区（只读保持寄存器）：每机 128 寄存器，0x1000 + (tid-1)*128 ---- */
 #define MB_STATE_BASE            0x1000
@@ -65,8 +69,10 @@
 #define MB_ST_GEN_POWER_W        10  /* S1004: f64    */
 #define MB_ST_GEN_POWER_MEAN     14  /* S1005: f64    */
 #define MB_ST_GEN_POWER_RMS      18  /* S1006: f64    */
-#define MB_ST_ROTOR_AERO_THRUST  22  /* S1010: f64    */
-#define MB_ST_SHAFT_TORQUE_NM    26  /* S0209: f64    */
+#define MB_ST_ROTOR_AERO_THRUST  22  /* S1010: f64 */
+/* 注：S0209 shaft_torque_nm 属于 OpenFAST RawState，不在 S10 状态帧内，
+ * 因此本寄存器承载 S10 实际提供的塔基前后向弯矩（历史上被误标为 shaft_torque）。 */
+#define MB_ST_TOWER_BASE_FA_MOM  26  /* f64 (N·m) 塔基前后向弯矩 */
 #define MB_ST_NACELLE_HEADING    30  /* S1009: f64 (rad, 实际) */
 #define MB_ST_NACELLE_VANE       34  /* f64 (rad)     */
 #define MB_ST_HUB_WIND_MPS       38  /* f64           */

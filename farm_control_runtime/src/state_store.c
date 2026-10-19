@@ -88,3 +88,23 @@ int fcr_state_store_get_extra(const FcrStateStore *ss, int32_t turbine_id,
     *out = ss->extra[turbine_id - 1];
     return 0;
 }
+
+/* ---- S06 TurbineWindEstimate_to_Bridge ---------------------------- */
+
+int fcr_state_store_set_wind_estimate(FcrStateStore *ss,
+                                      const FcrTurbineWindEstimate *est)
+{
+    if (!ss || !est) return -1;
+    if (est->turbine_id < 1 || est->turbine_id > (int32_t)ss->n_turbines) return -2;
+    ss->wind_est[est->turbine_id - 1] = *est;   /* ZOH：保持到下一次估计 */
+    return 0;
+}
+
+int fcr_state_store_get_wind_estimate(const FcrStateStore *ss, int32_t turbine_id,
+                                      FcrTurbineWindEstimate *out)
+{
+    if (!ss || !out) return -1;
+    if (turbine_id < 1 || turbine_id > (int32_t)ss->n_turbines) return -2;
+    *out = ss->wind_est[turbine_id - 1];
+    return 0;
+}

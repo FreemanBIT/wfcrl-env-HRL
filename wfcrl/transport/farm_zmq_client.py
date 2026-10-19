@@ -49,6 +49,7 @@ class FarmZmqClient:
         self._latest_state: Optional[bytes] = None
         self._turbine_slots: dict = {}
         self._last_heading: dict = {}      # tid -> 最新实际机舱方位 (rad, CCW+)
+        self._last_state_sim_time = 0.0    # S1002: 最近状态帧采样仿真时刻（供 S0102）
         self._frame_header: Optional[bytes] = None
         self._state_lock = threading.Lock()
         self._frame_seq = 0
@@ -109,6 +110,9 @@ class FarmZmqClient:
             with self._state_lock:
                 self._latest_state = raw
                 self._frame_header = raw[: self._FRAME_HEADER]
+                # S1002: 记录采样仿真时刻，供 S0102 command_basis 使用（G-4 禁墙钟）
+                self._last_state_sim_time = struct.unpack_from(
+                    "<d", raw, FarmStateFrame.state_sample_sim_time_s.offset)[0]
                 for i in range(FCR_MAX_TURBINES):
                     base = self._FRAME_HEADER + i * self._TURBINE_SIZE
                     tid = int.from_bytes(raw[base : base + 4], "little", signed=True)
@@ -180,11 +184,29 @@ class FarmZmqClient:
             return self._merged_frame()
 
     # ---------------- 命令 ----------------
+    def _fill_command_basis(self, frame: FarmCommandFrame) -> None:
+        """S0102（ICD v1.5 G-4）：命令依据时刻必须是**仿真时刻**，不得用墙钟。
+
+        取最近一次状态帧的 state_sample_sim_time_s。尚未收到任何状态帧时保持
+        0.0，由 ZMQ 传输层 WIN-05 校验拒收该帧——基于未知状态的指令本就无意义。
+        这与 runtime 侧 command_store 的"命令超龄"判定（sim_time - basis >
+        stale_threshold）在同一时间轴上，故墙钟替换会静默废掉该保护。
+        """
+        basis = self._last_state_sim_time
+        if basis <= 0.0:
+            return
+        n = min(int(frame.n_turbines), FCR_MAX_TURBINES)
+        for i in range(n):
+            t = frame.turbines[i]
+            if t.command_basis_sim_time_s <= 0.0:
+                t.command_basis_sim_time_s = basis
+
     def _send_frame(self, frame: FarmCommandFrame) -> None:
         if not self._started or self._cmd_sock is None:
             raise RuntimeError("client not started")
         self._frame_seq += 1
         frame.command_frame_seq = self._frame_seq   # ICD v1.5 S0101（commit_seq 已删除）
+        self._fill_command_basis(frame)
         self._cmd_sock.send(frame_to_bytes(frame))
 
     def send_yaw_delta(self, turbine_id: int, delta_rad: float,

@@ -56,6 +56,11 @@ typedef struct {
     double    disk_wind_speed_mps;   /* 映射后盘面等效风速（WindMapper 输出）*/
     double    disk_turbulence;       /* 映射后盘面湍流 */
     double    gen_power_w;           /* ICD: generator_power */
+    /* ---- S06 TurbineWindEstimate_to_Bridge（S0603/S0604）----
+     * 上游风速估计的来源与质量，随 S0601/S0602 一起注入；
+     * 未接线时保持 0（FCR_WIND_SOURCE_UNKNOWN / 无质量标志）。 */
+    uint16_t  wind_source;           /* S0603: 0=unknown,1=ROSCO_WE,2=OpenFAST,3=AWAE */
+    uint16_t  wind_quality_flags;    /* S0604: FCR_WIND_QUALITY_* */
 } FcrBridgeMeas;
 
 /* ------------------------------------------------------------------ */

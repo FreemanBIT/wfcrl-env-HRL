@@ -100,10 +100,126 @@ static void test_adapter_null(void) {
     ASSERT(fcr_bridge_adapter_apply(NULL, 1, 0.0, NULL, NULL, NULL) == -1);
 }
 
+/* ---- S07: runtime 命令状态 → FcrBridgeInput（S0701-S0710）---- */
+static void test_input_from_state(void) {
+    FcrTurbineCommandState tc;
+    FcrBridgeInput in;
+    memset(&tc, 0, sizeof(tc));
+    tc.control_enable = 1;
+    tc.control_mode = FCR_CONTROL_MODE_PRC;
+    tc.command_basis_sim_time_s = 12.5;
+    tc.yaw_valid = 1; tc.yaw_seq_rx = 3;
+    tc.yaw_target_heading_rad = -0.2; tc.yaw_ttl_s = 60.0;
+    tc.ind_valid = 1; tc.ind_seq_rx = 7; tc.induction_ref = 0.2; tc.ind_ttl_s = 5.0;
+
+    fcr_bridge_adapter_input_from_state(&tc, 2, 30.0, &in);
+    ASSERT_NEAR(in.bridge_step_sim_time_s, 30.0, 1e-12);      /* S0701 */
+    ASSERT(in.turbine_id == 2);                                /* S0703 */
+    ASSERT(in.control_enable == 1);                            /* S0704 */
+    ASSERT(in.control_mode == FCR_CONTROL_MODE_PRC);           /* S0709 */
+    ASSERT_NEAR(in.command_basis_sim_time_s, 12.5, 1e-12);     /* S0710 */
+    ASSERT_NEAR(in.induction_ref, 0.2, 1e-12);                 /* S0705 */
+    ASSERT(in.induction_seq == 7);                             /* S0706 */
+    ASSERT_NEAR(in.yaw_target_heading_rad, -0.2, 1e-12);      /* S0707 */
+    ASSERT(in.yaw_seq == 3);                                   /* S0708 */
+    ASSERT((in.bridge_command_valid_flags & FCR_BRIDGE_CMD_VALID) != 0);
+    ASSERT((in.bridge_command_valid_flags & FCR_BRIDGE_CMD_YAW_VALID) != 0);
+    ASSERT((in.bridge_command_valid_flags & FCR_BRIDGE_CMD_INDUCTION_VALID) != 0);
+    ASSERT((in.bridge_command_valid_flags & FCR_BRIDGE_CMD_CONTROL_ENABLED) != 0);
+
+    /* S0704=0：回退 ROSCO，不得带任何通道有效标记 */
+    tc.control_enable = 0;
+    fcr_bridge_adapter_input_from_state(&tc, 2, 30.0, &in);
+    ASSERT(in.control_enable == 0);
+    ASSERT(in.bridge_command_valid_flags == 0);
+    ASSERT(in.yaw_seq == 0 && in.induction_seq == 0);
+    ASSERT_NEAR(in.yaw_target_heading_rad, 0.0, 1e-12);
+}
+
+/* ---- S07: FcrBridgeInput → FcrBridgeCmd ---- */
+static void test_cmd_from_input(void) {
+    FcrBridgeInput in;
+    FcrBridgeCmd cmd;
+    memset(&in, 0, sizeof(in));
+    in.turbine_id = 3;
+    in.control_enable = 1;
+    in.control_mode = FCR_CONTROL_MODE_PRC;
+    in.bridge_command_valid_flags = FCR_BRIDGE_CMD_VALID | FCR_BRIDGE_CMD_CONTROL_ENABLED
+                                  | FCR_BRIDGE_CMD_INDUCTION_VALID | FCR_BRIDGE_CMD_YAW_VALID;
+    in.induction_ref = 0.2; in.induction_seq = 5;
+    in.yaw_target_heading_rad = -0.3; in.yaw_seq = 9;
+    in.command_basis_sim_time_s = 4.0;
+
+    fcr_bridge_adapter_cmd_from_input(&in, 1, 400, 300, 300, 5.0, 60.0, &cmd);
+    ASSERT(cmd.turbine_id == 3);
+    ASSERT(cmd.valid == 1);
+    ASSERT(cmd.induction_mode == 1);
+    ASSERT(cmd.induction_valid == 1);
+    ASSERT_NEAR(cmd.induction_ref, 0.2, 1e-12);
+    ASSERT(cmd.induction_seq == 5);
+    ASSERT_NEAR(cmd.induction_ttl_s, 5.0, 1e-12);
+    ASSERT(cmd.yaw_valid == 1);
+    ASSERT(cmd.yaw_seq == 9);
+    ASSERT_NEAR(cmd.yaw_target_heading_rad, -0.3, 1e-12);
+    ASSERT_NEAR(cmd.alloc_w_pitch, 0.4, 1e-9);
+    ASSERT_NEAR(cmd.alloc_w_speed, 0.3, 1e-9);
+    ASSERT_NEAR(cmd.alloc_w_torque, 0.3, 1e-9);
+    /* S0710 是仿真时刻，绝不能被墙钟替换（ICD v1.5 G-4） */
+    ASSERT_NEAR(cmd.source_time_s, 4.0, 1e-12);
+
+    /* 无有效标记 → valid=0 且通道全部无效 */
+    memset(&in.bridge_command_valid_flags, 0, sizeof(in.bridge_command_valid_flags));
+    fcr_bridge_adapter_cmd_from_input(&in, 1, 400, 300, 300, 0.0, 0.0, &cmd);
+    ASSERT(cmd.valid == 0);
+    ASSERT(cmd.induction_valid == 0);
+    ASSERT(cmd.yaw_valid == 0);
+}
+
+/* ---- S06: TurbineWindEstimate → FcrBridgeMeas ---- */
+static void test_wind_estimate(void) {
+    FcrBridgeMeas meas;
+    FcrTurbineWindEstimate est;
+    memset(&meas, 0, sizeof(meas));
+    meas.valid = 1; meas.ambient_upstream_wind_mps = 7.0;
+    memset(&est, 0, sizeof(est));
+    est.turbine_id = 1; est.estimated_wind_mps = 8.4; est.estimate_sim_time_s = 100.0;
+    est.wind_source = FCR_WIND_SOURCE_ROSCO_WE;
+    est.wind_quality_flags = FCR_WIND_QUALITY_OK;
+
+    /* 质量 OK 且未超龄 → 采用 S0601 并回填 S0603/S0604 */
+    ASSERT(fcr_bridge_adapter_meas_apply_wind_estimate(&meas, &est, 100.5, 2.0) == 0);
+    ASSERT_NEAR(meas.ambient_upstream_wind_mps, 8.4, 1e-12);
+    ASSERT(meas.wind_source == FCR_WIND_SOURCE_ROSCO_WE);
+    ASSERT(meas.wind_quality_flags == FCR_WIND_QUALITY_OK);
+
+    /* 超龄（S0602）→ 不采用，保留旧值并置 STALE */
+    meas.ambient_upstream_wind_mps = 7.0;
+    meas.wind_quality_flags = 0;
+    ASSERT(fcr_bridge_adapter_meas_apply_wind_estimate(&meas, &est, 105.0, 2.0) == -1);
+    ASSERT_NEAR(meas.ambient_upstream_wind_mps, 7.0, 1e-12);
+    ASSERT((meas.wind_quality_flags & FCR_WIND_QUALITY_STALE) != 0);
+
+    /* 质量未置 OK → 不采用 */
+    est.wind_quality_flags = 0;
+    ASSERT(fcr_bridge_adapter_meas_apply_wind_estimate(&meas, &est, 100.5, 2.0) == -1);
+    ASSERT_NEAR(meas.ambient_upstream_wind_mps, 7.0, 1e-12);
+
+    /* stale_threshold=0 → 关闭超龄判定 */
+    est.wind_quality_flags = FCR_WIND_QUALITY_OK;
+    ASSERT(fcr_bridge_adapter_meas_apply_wind_estimate(&meas, &est, 1e6, 0.0) == 0);
+
+    /* 空指针安全 */
+    ASSERT(fcr_bridge_adapter_meas_apply_wind_estimate(NULL, &est, 0.0, 1.0) == -1);
+    ASSERT(fcr_bridge_adapter_meas_apply_wind_estimate(&meas, NULL, 0.0, 1.0) == -1);
+}
+
 void test_bridge_adapter_register(void)
 {
     RUN_TEST("cmd_from_state", test_cmd_from_state);
     RUN_TEST("meas_from_fast", test_meas_from_fast);
     RUN_TEST("adapter_apply", test_adapter_apply);
     RUN_TEST("adapter_null", test_adapter_null);
+    RUN_TEST("input_from_state", test_input_from_state);
+    RUN_TEST("cmd_from_input", test_cmd_from_input);
+    RUN_TEST("wind_estimate", test_wind_estimate);
 }

@@ -186,6 +186,7 @@ def test_yaw_delta_uses_latest_heading():
     c._yaw_seq = 0
     c._ind_seq = 0
     c._last_heading = {}
+    c._last_state_sim_time = 0.0
 
     # 尚未收到状态：按机舱初始 0° 处理 → +10° CW 应下发 -10°
     c.send_yaw_delta(1, 10.0 * DEG)
@@ -204,6 +205,59 @@ def test_yaw_delta_uses_latest_heading():
     c.send_yaw_target(1, -5.0 * DEG)
     fr = fp.bytes_to_frame(sent[-1])
     assert abs(fr.turbines[0].yaw_target_heading_rad - (-5.0 * DEG)) < 1e-12
+
+
+def test_command_basis_is_sim_time_not_wall_clock():
+    """ICD v1.5 G-4：S0102 必须是仿真时刻，绝不能被墙钟替换。
+
+    背景：runtime 侧 command_store 用 (sim_time - command_basis) > stale_threshold
+    判定"命令超龄"。若 RCP 写入墙钟（~1.77e9），该差值为巨大负数 → 永不超龄，
+    安全回退被静默废掉。
+    """
+    # 1) 低层 setter 不再偷偷写墙钟：未提供即保持 0.0
+    fr = fp.new_command_frame(1, 1)
+    fp.set_yaw_cmd(fr, 1, 0.1, 1)
+    assert fr.turbines[0].command_basis_sim_time_s == 0.0, (
+        "set_yaw_cmd must not substitute wall clock for S0102"
+    )
+    fr2 = fp.new_command_frame(1, 1)
+    fp.set_induction_cmd(fr2, 1, 0.2, 1)
+    assert fr2.turbines[0].command_basis_sim_time_s == 0.0
+
+    # 2) 显式传入则原样落地
+    fr3 = fp.new_command_frame(1, 1)
+    fp.set_yaw_cmd(fr3, 1, 0.1, 1, command_basis_sim_time_s=12.5)
+    assert abs(fr3.turbines[0].command_basis_sim_time_s - 12.5) < 1e-12
+
+    # 3) 客户端用最近状态帧的采样仿真时刻补齐（而非墙钟）
+    from wfcrl.transport.farm_zmq_client import FarmZmqClient
+
+    def _mk_client(sent):
+        c = FarmZmqClient.__new__(FarmZmqClient)     # 不启动 socket
+        c._cmd_sock = type("S", (), {"send": staticmethod(lambda b: sent.append(b))})()
+        c._started = True
+        c._n_turbines = 1
+        c._frame_seq = 0
+        c._yaw_seq = 0
+        c._ind_seq = 0
+        c._last_heading = {}
+        c._last_state_sim_time = 0.0
+        return c
+
+    sent = []
+    c = _mk_client(sent)
+    c._last_state_sim_time = 33.25
+    c.send_yaw_target(1, 0.05)
+    fr4 = fp.bytes_to_frame(sent[-1])
+    assert abs(fr4.turbines[0].command_basis_sim_time_s - 33.25) < 1e-12
+    assert fr4.turbines[0].command_basis_sim_time_s < 1.0e6, "wall clock leaked into S0102"
+
+    # 4) 尚无状态帧 → 保持 0.0（由 ZMQ WIN-05 校验拒收），仍不得写墙钟
+    sent2 = []
+    c2 = _mk_client(sent2)
+    c2.send_yaw_target(1, 0.05)
+    fr5 = fp.bytes_to_frame(sent2[-1])
+    assert fr5.turbines[0].command_basis_sim_time_s == 0.0
 
 
 def _main() -> int:

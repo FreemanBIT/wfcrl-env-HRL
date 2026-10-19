@@ -111,6 +111,13 @@ static void test_state_region_from_frame(void)
     st.turbines[0].nacelle_heading_actual_rad = 0.1;      /* ICD v1.5 S1009 */
     st.turbines[0].yaw_seq_applied = 3;
     st.turbines[0].induction_seq_applied = 2;
+    /* ICD v1.5 S1011/S1012/S1015-S1017 新增字段 */
+    st.turbines[0].estimated_wind_mps = 8.1;
+    st.turbines[0].ct_hat = 0.78;
+    st.turbines[0].wind_source = 1;
+    st.turbines[0].wind_quality_flags = 3;
+    st.turbines[0].turbine_status_flags = 0x0005;
+    st.turbines[0].tower_base_fa_moment_nm.instant = 9.9e6;
 
     ASSERT(tr->ops->publish_state(tr, &st) == 1);
 
@@ -125,7 +132,51 @@ static void test_state_region_from_frame(void)
     ASSERT_NEAR(mb_get_double(mt->regs, b + MB_ST_NACELLE_HEADING), 0.1, 1e-12);
     ASSERT(mb_get_u64(mt->regs, b + MB_ST_YAW_SEQ_APPLIED) == 3);
     ASSERT(mb_get_u64(mt->regs, b + MB_ST_IND_SEQ_APPLIED) == 2);
+    /* ICD v1.5 新增状态寄存器 */
+    ASSERT_NEAR(mb_get_double(mt->regs, b + MB_ST_EST_WIND_MPS), 8.1, 1e-12);
+    ASSERT_NEAR(mb_get_double(mt->regs, b + MB_ST_CT_HAT), 0.78, 1e-12);
+    ASSERT(mb_get_u16(mt->regs, b + MB_ST_WIND_SOURCE) == 1);
+    ASSERT(mb_get_u16(mt->regs, b + MB_ST_WIND_QUALITY) == 3);
+    ASSERT(mb_get_u16(mt->regs, b + MB_ST_TURBINE_STATUS) == 5);
+    /* 原误标的 shaft_torque 槽现承载塔基前后向弯矩 */
+    ASSERT_NEAR(mb_get_double(mt->regs, b + MB_ST_TOWER_BASE_FA_MOM), 9.9e6, 1e-3);
     modbus_transport_destroy(tr);
+}
+
+/* 寄存器布局守卫：命令区字段不得互相覆盖或越界到下一机 */
+static void test_command_area_layout(void)
+{
+    ASSERT(MB_CMD_YAW_TARGET_HEADING + 4 <= MB_CMD_YAW_SEQ);
+    ASSERT(MB_CMD_YAW_SEQ + 4 <= MB_CMD_YAW_VALID);
+    ASSERT(MB_CMD_YAW_VALID + 1 <= MB_CMD_REQ_EFFECTIVE_TIME);
+    ASSERT(MB_CMD_REQ_EFFECTIVE_TIME + 4 <= MB_CMD_YAW_TTL_S);
+    ASSERT(MB_CMD_YAW_TTL_S + 4 <= MB_CMD_IND_REF);
+    ASSERT(MB_CMD_IND_REF + 4 <= MB_CMD_IND_SEQ);
+    ASSERT(MB_CMD_IND_SEQ + 4 <= MB_CMD_IND_VALID);
+    ASSERT(MB_CMD_IND_VALID + 1 <= MB_CMD_CONTROL_ENABLE);
+    ASSERT(MB_CMD_CONTROL_ENABLE + 1 <= MB_CMD_CONTROL_MODE);
+    ASSERT(MB_CMD_CONTROL_MODE + 1 <= MB_CMD_IND_TTL_S);
+    ASSERT(MB_CMD_IND_TTL_S + 4 <= MB_CMD_COMMAND_BASIS_TIME);
+    ASSERT(MB_CMD_COMMAND_BASIS_TIME + 4 <= MB_CMD_COMMAND_FRAME_SEQ);
+    ASSERT(MB_CMD_COMMAND_FRAME_SEQ + 4 <= (int)MB_CMD_PER_TURBINE);
+}
+
+/* 寄存器布局守卫：状态区（含 DR-8 完整性尾部）必须落在本机 128 寄存器块内 */
+static void test_state_area_layout(void)
+{
+    ASSERT(MB_ST_TURBINE_STATUS < (int)MB_STATE_PER_TURBINE);
+    ASSERT(MB_ST_FLOW_SEQ + 4 <= MB_ST_EST_WIND_MPS);
+    ASSERT(MB_ST_CT_HAT + 4 <= MB_ST_WIND_SOURCE);
+    ASSERT(MB_ST_WIND_SOURCE + 1 <= MB_ST_WIND_QUALITY);
+    ASSERT(MB_ST_WIND_QUALITY + 1 <= MB_ST_TURBINE_STATUS);
+    ASSERT(MB_ST_TURBINE_STATUS + 1 <= MB_ST_DATA_VERSION);
+    /* u64 槽必须完整落在本机块内（修复前 0x7D 会溢出到 128） */
+    ASSERT(MB_ST_TIMESTAMP_SLOT + 4 <= (int)MB_STATE_PER_TURBINE);
+    ASSERT(MB_ST_SEQ_SLOT + 4 <= (int)MB_STATE_PER_TURBINE);
+    ASSERT(MB_ST_QUALITY_FLAGS + 1 <= MB_ST_TIMESTAMP_SLOT);
+    ASSERT(MB_ST_TIMESTAMP_SLOT + 4 <= MB_ST_SEQ_SLOT);
+    ASSERT(MB_ST_SEQ_SLOT + 4 <= MB_ST_CRC16);
+    ASSERT(MB_ST_CRC16 < (int)MB_STATE_PER_TURBINE);
 }
 
 void test_modbus_register(void)
@@ -133,6 +184,8 @@ void test_modbus_register(void)
     RUN_TEST("register_encode_decode", test_register_encode_decode);
     RUN_TEST("command_region_to_frame", test_command_region_to_frame);
     RUN_TEST("state_region_from_frame", test_state_region_from_frame);
+    RUN_TEST("command_area_layout", test_command_area_layout);
+    RUN_TEST("state_area_layout", test_state_area_layout);
 }
 
 

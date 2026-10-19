@@ -81,6 +81,106 @@ void fcr_bridge_adapter_meas_from_state(const FcrRoscoRawState *fast,
     out->gen_power_w = fast->gen_power_w;
 }
 
+/* ------------------------------------------------------------------ */
+/* S07 Scheduler_to_Bridge（S0701-S0710）                              */
+/* ------------------------------------------------------------------ */
+
+void fcr_bridge_adapter_input_from_state(const FcrTurbineCommandState *tc,
+                                         int32_t turbine_id,
+                                         double bridge_step_sim_time_s,
+                                         FcrBridgeInput *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (!tc || !out) return;
+
+    out->bridge_step_sim_time_s = bridge_step_sim_time_s;         /* S0701 */
+    out->turbine_id = (uint32_t)turbine_id;                       /* S0703 */
+    out->control_enable = tc->control_enable ? 1u : 0u;           /* S0704 */
+    out->control_mode = tc->control_mode;                         /* S0709 */
+    out->command_basis_sim_time_s = tc->command_basis_sim_time_s; /* S0710 */
+
+    /* S0704=0：回退 ROSCO 原控制，不得下发任何通道有效标记 */
+    if (tc->control_enable) {
+        out->induction_ref = tc->induction_ref;                   /* S0705 */
+        out->induction_seq = tc->ind_seq_rx;                      /* S0706 */
+        out->yaw_target_heading_rad = tc->yaw_target_heading_rad; /* S0707 */
+        out->yaw_seq = tc->yaw_seq_rx;                            /* S0708 */
+        out->bridge_command_valid_flags |= FCR_BRIDGE_CMD_CONTROL_ENABLED;
+        if (tc->yaw_valid) out->bridge_command_valid_flags |= FCR_BRIDGE_CMD_YAW_VALID;
+        if (tc->ind_valid) out->bridge_command_valid_flags |= FCR_BRIDGE_CMD_INDUCTION_VALID;
+        if (tc->control_mode == FCR_CONTROL_MODE_CLOSEDLOOP)
+            out->bridge_command_valid_flags |= FCR_BRIDGE_CMD_CLOSEDLOOP_REQ;
+    }
+    if (out->bridge_command_valid_flags)
+        out->bridge_command_valid_flags |= FCR_BRIDGE_CMD_VALID;
+}
+
+void fcr_bridge_adapter_cmd_from_input(const FcrBridgeInput *in,
+                                       uint32_t induction_mode,
+                                       uint32_t alloc_w_pitch,
+                                       uint32_t alloc_w_speed,
+                                       uint32_t alloc_w_torque,
+                                       double induction_ttl_s,
+                                       double yaw_ttl_s,
+                                       FcrBridgeCmd *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (!in || !out) return;
+
+    out->turbine_id = (int32_t)in->turbine_id;                    /* S0703 */
+    out->valid = (in->bridge_command_valid_flags & FCR_BRIDGE_CMD_VALID) ? 1u : 0u;
+    out->induction_mode = induction_mode;                          /* DR-3 */
+
+    /* 诱导通道（S0705/S0706） */
+    out->induction_valid =
+        (in->bridge_command_valid_flags & FCR_BRIDGE_CMD_INDUCTION_VALID) ? 1u : 0u;
+    out->induction_ref = in->induction_ref;
+    out->induction_seq = in->induction_seq;
+    out->induction_ttl_s = induction_ttl_s;
+
+    /* 偏航通道（S0707/S0708）—— bridge 只读不接管（DR-5 由 CommandStore 输出） */
+    out->yaw_valid = (in->bridge_command_valid_flags & FCR_BRIDGE_CMD_YAW_VALID) ? 1u : 0u;
+    out->yaw_target_heading_rad = in->yaw_target_heading_rad;
+    out->yaw_seq = in->yaw_seq;
+    out->yaw_ttl_s = yaw_ttl_s;
+
+    /* 控制分配（千分比 → 归一化 [0,1]） */
+    out->alloc_w_pitch = alloc_w_pitch / 1000.0;
+    out->alloc_w_speed = alloc_w_speed / 1000.0;
+    out->alloc_w_torque = alloc_w_torque / 1000.0;
+
+    /* S0710：命令依据的仿真时刻（不得用墙钟替换） */
+    out->source_time_s = in->command_basis_sim_time_s;
+}
+
+/* ------------------------------------------------------------------ */
+/* S06 TurbineWindEstimate_to_Bridge（S0601-S0604）                    */
+/* ------------------------------------------------------------------ */
+
+int fcr_bridge_adapter_meas_apply_wind_estimate(FcrBridgeMeas *meas,
+                                                const FcrTurbineWindEstimate *est,
+                                                double sim_time_s,
+                                                double stale_threshold_s)
+{
+    if (!meas || !est) return -1;
+
+    /* S0603/S0604 始终回填（诊断可见），但仅在质量 OK 时才采用数值 */
+    meas->wind_source = est->wind_source;
+    meas->wind_quality_flags = est->wind_quality_flags;
+
+    if (!(est->wind_quality_flags & FCR_WIND_QUALITY_OK)) return -1;
+
+    /* S0602：估计所对应的仿真时间；超龄则不采用并置 STALE */
+    if (stale_threshold_s > 0.0 &&
+        (sim_time_s - est->estimate_sim_time_s) > stale_threshold_s) {
+        meas->wind_quality_flags |= FCR_WIND_QUALITY_STALE;
+        return -1;
+    }
+
+    meas->ambient_upstream_wind_mps = est->estimated_wind_mps;     /* S0601 */
+    return 0;
+}
+
 /* 调 bridge core step，诱导结果合并进基础 setpoint（yaw 保留 base） */
 int fcr_bridge_adapter_apply(FcrBridgeCore *core, int32_t turbine_id,
                              double sim_time_s,

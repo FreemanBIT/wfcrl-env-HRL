@@ -199,6 +199,13 @@ typedef struct {
     double    command_basis_sim_time_s;    /* S0710: 下发指令所依据的状态仿真时刻 */
 } FcrBridgeInput;
 
+/* S0702: bridge_command_valid_flags 位定义 */
+#define FCR_BRIDGE_CMD_VALID              (1u << 0)  /* 桥接命令整体有效 */
+#define FCR_BRIDGE_CMD_YAW_VALID          (1u << 1)  /* 偏航通道有效 */
+#define FCR_BRIDGE_CMD_INDUCTION_VALID    (1u << 2)  /* 诱导通道有效 */
+#define FCR_BRIDGE_CMD_CONTROL_ENABLED    (1u << 3)  /* S0704 control_enable=1 */
+#define FCR_BRIDGE_CMD_CLOSEDLOOP_REQ     (1u << 4)  /* 请求闭环（Mode3，未实现） */
+
 /* ================================================================== */
 /* 8. FcrBridgeOutput — Bridge_to_ROSCO (S0801-S0807)                  */
 /* ================================================================== */

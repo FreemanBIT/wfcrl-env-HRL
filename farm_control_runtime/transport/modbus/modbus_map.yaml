@@ -1,6 +1,23 @@
-# modbus_map.yaml — Modbus TCP 寄存器映射（Phase 9 冻结；DR-8 v2 冻结 2026-10-13，
-#   同步 modbus_register_map.h；吞吐已测：30 台 1.63ms/轮、100 台 3.06ms/轮，见
-#   induction_vs_yaw_study/results/_modbus_bench/benchmark.json）
+# modbus_map.yaml — Modbus TCP 寄存器映射（ICD v1.5 对齐）
+#
+# 权威定义：transport/modbus/modbus_register_map.h（本文件必须与其逐项一致）。
+#
+# ⚠ ICD v1.5 §5.3 G-6 明确**不定义 Modbus 地址**；本映射是本工程的内部实现
+#   选择，字段语义跟随 ICD 信号，但地址不构成接口约束。
+#
+# 字节序：big-endian（Modbus 标准）。64 位量 = 4 寄存器；32 位 = 2；16 位 = 1。
+# 单精度浮点双寄存器；双精度浮点四寄存器。偏移均为**相对各区/各机基址**的
+# 16 bit 寄存器下标。
+#
+# ICD v1.5 变更摘要：
+#   - yaw_delta_rad → yaw_target_heading（绝对目标，CCW+，S0108）
+#   - *_effective_low_step → requested_effective_sim_time（仿真时间轴，S0112）
+#   - source_time_s → command_basis_sim_time（S0102）
+#   - frame_seq → command_frame_seq（S0101）；commit_seq **删除**
+#   - 新增 control_enable(S0104) / control_mode(S0111)
+#   - rotor_thrust_n → rotor_aero_thrust（S1010）
+#   - 状态区新增 S1011/S1012/S1015/S1016/S1017
+#   - 原误标的 shaft_torque_nm → tower_base_fa_moment（S10 状态帧不含 S0209）
 
 transport:
   type: modbus_tcp
@@ -11,85 +28,101 @@ transport:
     write_single: 0x06
     write_multiple: 0x10
 
+# ---- 命令区：0x0000 + (turbine_id-1)*64 ----
 command_area:
   base: 0x0000
   per_turbine: 64
-  turbine1:
-    yaw_delta_rad: 0      # f64 rad, CW+
-    yaw_seq: 4            # u64
-    yaw_valid: 8          # u16
-    yaw_effective_low_step: 9  # i64
-    yaw_ttl_s: 13         # f64 s
-    induction_ref: 17     # f64
-    induction_seq: 21     # u64
-    induction_valid: 25   # u16
-    induction_effective_low_step: 26 # i64
-    induction_ttl_s: 30   # f64 s
-    source_time_s: 34     # f64 s
-    frame_seq: 38         # u64
-    commit_seq: 42        # u64
+  turbine_fields:
+    yaw_target_heading: 0      # S0108 f64 rad（绝对机舱目标方位，CCW+）
+    yaw_seq: 4                 # S0109 u64
+    yaw_valid: 8               # S0110 u16
+    requested_effective_time: 9  # S0112 f64 s（期望生效仿真时刻）
+    yaw_ttl_s: 13              # f64 s
+    induction_ref: 17          # S0105 f64（目标轴向诱导 a）
+    induction_seq: 21          # S0106 u64
+    induction_valid: 25        # S0107 u16
+    control_enable: 26         # S0104 u16（0 = 回退 ROSCO 原控制）
+    control_mode: 27           # S0111 u16（0基线/1PRC/2Ct前馈/3闭环预留）
+    induction_ttl_s: 30        # f64 s
+    command_basis_time: 34     # S0102 f64 s（命令依据的仿真时刻）
+    command_frame_seq: 38      # S0101 u64
+  reserved: "42..63（v1.4 的 commit_seq 已按 ICD v1.5 删除）"
 
+# ---- 时钟/健康区：0x0800 ----
 clock_area:
   base: 0x0800
-  sim_time_s: 0           # f64
-  fast_step: 4            # u64
-  low_step: 8             # u64
-  rt_health: 12           # u16
+  fields:
+    state_sample_sim_time_s: 0    # S1002 f64 s
+    fast_step: 4                  # u64
+    low_step: 8                   # u64
+    rt_health_flags: 12           # u16
+    command_frame_seq_slot: 13    # S0101 镜像 u64（RCP 写 = 有新命令）
+    protocol_version: 21          # u16（DR-8）
+    clock_crc16: 22               # u16（时钟区 CRC16，DR-8）
 
+# ---- 状态区（只读）：0x1000 + (turbine_id-1)*128 ----
 state_area:
   base: 0x1000
   per_turbine: 128
-  turbine1:
-    turbine_id: 0         # u16
-    valid: 1              # u16
-    source_time: 2        # f64
-    gen_power_w: 10       # f64
-    gen_power_mean: 14    # f64
-    gen_power_rms: 18     # f64
-    rotor_thrust_n: 22    # f64
-    shaft_torque_nm: 26   # f64
-    nacelle_heading_rad: 30
-    nacelle_vane_rad: 34
-    hub_wind_mps: 38
-    rotor_speed_rad_s: 42
-    gen_speed_rad_s: 46
-    rotor_ct: 50
-    rotor_cp: 54
-    yaw_target_heading_rad: 58
-    yaw_seq_applied: 62   # u64
-    induction_seq_applied: 66 # u64
-    controller_status_flags: 70 # u16
-    disk_ambient_wind_mps: 71
-    disk_disturbed_wind_mps: 75
-    disk_ambient_ti: 79
-    flow_source_time_s: 83
-    flow_seq: 87          # u64
+  turbine_fields:
+    turbine_id: 0              # u16
+    valid: 1                   # u16
+    source_time: 2             # f64
+    fast_step: 6               # u64
+    gen_power_w: 10            # S1004 f64（瞬时）
+    gen_power_mean: 14         # S1005 f64（1 s 均值）
+    gen_power_rms: 18          # f64
+    rotor_aero_thrust: 22      # S1010 f64
+    tower_base_fa_moment: 26   # f64 N·m（S10 不含 S0209 shaft_torque）
+    nacelle_heading_actual: 30 # S1009 f64 rad（实际绝对方位）
+    nacelle_vane: 34           # f64 rad
+    hub_wind_mps: 38           # f64
+    rotor_speed_rad_s: 42      # S1006 f64
+    gen_speed_rad_s: 46        # S1007 f64
+    rotor_ct: 50               # f64
+    rotor_cp: 54               # f64
+    yaw_target_heading: 58     # f64 rad（锁存目标）
+    yaw_seq_applied: 62        # S1013 u64
+    induction_seq_applied: 66  # S1014 u64
+    controller_status_flags: 70  # u16
+    disk_ambient_wind_mps: 71  # f64
+    disk_disturbed_wind_mps: 75  # f64
+    disk_ambient_ti: 79        # f64
+    flow_source_time_s: 83     # f64
+    flow_seq: 87               # u64
+    estimated_wind_mps: 91     # S1011 f64
+    ct_hat: 95                 # S1012 f64
+    wind_source: 99            # S1016 u16
+    wind_quality_flags: 100    # S1017 u16
+    turbine_status_flags: 101  # S1015 u16
+  # DR-8 完整性尾部（当前 modbus_transport.c **尚未实现**；已修正为互不重叠）
+  integrity_tail:
+    data_version: 102          # u16
+    quality_flags: 103         # u16（bit0 valid/bit1 stale/bit2 fallback）
+    timestamp: 104             # u64（104..107）
+    seq: 108                   # u64（108..111）
+    crc16: 112                 # u16
+  reserved: "113..127"
 
-# 并发模型：单客户端；RCP 轮询状态区（建议 100 ms）并异步写命令区。
-# 单位与坐标语义与 fcr_state_types.h / PROTOCOL_DECISIONS.md 一致。
-
-# ---- DR-8 扩展（2026-10-13，v2 冻结草案，待吞吐测量后最终冻结）----
+# ---- AWAE 观察点帧缓冲（DR-8）：0x2000 起，每点 32 寄存器 ----
+# ICD v1.5 S0402/S0501-S0507；离线由 Provider 注入（见 fcr_awae_types.h）。
 awae_frame_buffer:
   base: 0x2000
   per_point: 32
-  n_points_slot: 0        # u16
-  frame_seq_slot: 1       # u64
-  source_time: 5          # f64
-  point0: 9
-  point_fields:
-    point_id: 0           # u16
-    position_xyz: 1       # 3×f64
-    wind_xyz: 7           # 3×f64
-    wind_speed: 13        # f64
-    wind_direction: 17    # f64 (rad)
-    turbulence: 21        # f64
-    crc16: 31             # u16
+  header:
+    n_points_slot: 0x2000      # S0503 u16（当前帧点数）
+    frame_seq_slot: 0x2001     # S0501 u64（帧序号）
+    source_time: 0x2005        # S0502 f64（采样仿真时间）
+    point0: 0x2009             # 点 0 起始
+  point_fields:                # 相对单点起始的寄存器下标
+    point_id: 0                # S0504 u16
+    position_xyz: 1            # S0402 3×f64（1..6）
+    wind_xyz: 7                # S0505 3×f64（7..12）
+    wind_speed: 13             # f64（幅值）
+    wind_direction: 17         # f64 rad
+    turbulence_intensity: 21   # S0507 f64
+    quality_flags: 25          # S0506 u16
+    crc16: 31                  # u16（单点完整性）
 
-integrity:
-  protocol_version: 0x0815  # u16（时钟区）
-  clock_crc16: 0x0816       # u16
-  state_quality_flags: 0x7C # 每机 128 寄存器尾部 u16（bit0 valid/bit1 stale/bit2 fallback）
-  state_timestamp: 0x7D     # u64
-  state_crc16: 0x7E         # u16
-  state_data_version: 0x7B  # u16
-
+# 并发模型：单客户端；RCP 轮询状态区（建议 100 ms）并异步写命令区。
+# 单位与坐标语义与 fcr_state_types.h 一致（角度 rad，CCW+，0=+X）。

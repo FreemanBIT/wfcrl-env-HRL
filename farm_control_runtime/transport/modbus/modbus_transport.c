@@ -229,7 +229,7 @@ static int mb_publish_state(FcrTransport *self, const FarmStateFrame *state)
         mb_put_double(mt->regs, b + MB_ST_GEN_POWER_MEAN, ts->gen_power_w.mean);
         mb_put_double(mt->regs, b + MB_ST_GEN_POWER_RMS, ts->gen_power_w.rms);
         mb_put_double(mt->regs, b + MB_ST_ROTOR_AERO_THRUST, ts->rotor_aero_thrust_n.instant);
-        mb_put_double(mt->regs, b + MB_ST_SHAFT_TORQUE_NM, ts->tower_base_fa_moment_nm.instant);
+        mb_put_double(mt->regs, b + MB_ST_TOWER_BASE_FA_MOM, ts->tower_base_fa_moment_nm.instant);
         mb_put_double(mt->regs, b + MB_ST_NACELLE_HEADING, ts->nacelle_heading_actual_rad);
         mb_put_double(mt->regs, b + MB_ST_NACELLE_VANE, ts->nacelle_vane_rad);
         mb_put_double(mt->regs, b + MB_ST_HUB_WIND_MPS, ts->hub_wind_speed_mps);

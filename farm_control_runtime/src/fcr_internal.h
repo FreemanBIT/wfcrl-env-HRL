@@ -104,6 +104,7 @@ struct FcrStateStore {
     uint32_t n_turbines;
     FcrRoscoRawState       fast[FCR_MAX_TURBINES];     /* ROSCO 10 ms 槽 */
     FcrTurbineExtraState   extra[FCR_MAX_TURBINES];    /* OF 额外 10 ms 槽 */
+    FcrTurbineWindEstimate wind_est[FCR_MAX_TURBINES]; /* S06 风速估计 1 s 槽 */
     FcrFlowState           flow;                       /* AWAE 1 s ZOH 槽 */
     double   sim_time_s;
     uint64_t fast_step;
@@ -125,6 +126,11 @@ int fcr_state_store_get_fast(const FcrStateStore *ss, int32_t turbine_id,
 const FcrFlowState *fcr_state_store_get_flow(const FcrStateStore *ss);
 int fcr_state_store_get_extra(const FcrStateStore *ss, int32_t turbine_id,
                               FcrTurbineExtraState *out);
+/* S06: TurbineWindEstimate_to_Bridge（离线由 Provider 注入） */
+int fcr_state_store_set_wind_estimate(FcrStateStore *ss,
+                                      const FcrTurbineWindEstimate *est);
+int fcr_state_store_get_wind_estimate(const FcrStateStore *ss, int32_t turbine_id,
+                                      FcrTurbineWindEstimate *out);
 
 /* ------------------------------------------------------------------ */
 /* signal_statistics.c + state_aggregator.c                            */

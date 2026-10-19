@@ -235,33 +235,40 @@ def new_command_frame(n_turbines: int, command_frame_seq: int, receive_time_s: f
 
 def set_yaw_cmd(frame: FarmCommandFrame, turbine_id: int, target_heading_rad: float,
                 seq: int, ttl_s: float = 60.0, 
-                requested_effective_sim_time_s: float = 0.0) -> None:
+                requested_effective_sim_time_s: float = 0.0,
+                command_basis_sim_time_s: float = 0.0) -> None:
     """填入单机 yaw 通道 (S0108-S0110)。
 
     ⚠ ICD v1.5：target_heading_rad 是**绝对机舱目标方位**（CCW+，0=+X），
     不是增量。CW+ 动作语义请先经 yaw_delta_cw_to_absolute_ccw() 换算。
+
+    ⚠ ICD v1.5 G-4：command_basis_sim_time_s (S0102) 必须是**仿真时刻**
+    （即本指令所依据的状态帧 state_sample_sim_time_s），**不得用墙钟替换**。
+    留 0.0 表示未提供；此时 ZMQ 传输层的 WIN-05 校验会拒收该帧
+    （FarmZmqClient 会从最近一次状态帧自动补齐，正常路径无需手动传）。
     """
     if not (1 <= turbine_id <= FCR_MAX_TURBINES):
         raise ValueError(turbine_id)
-    import time as _time
     t = frame.turbines[turbine_id - 1]
     t.yaw_valid = 1
     t.yaw_seq = seq
     t.yaw_target_heading_rad = float(target_heading_rad)
     t.yaw_ttl_s = float(ttl_s)
     t.requested_effective_sim_time_s = float(requested_effective_sim_time_s)
-    # WIN-05: set command_basis_sim_time_s for ZMQ frame validation
-    if t.command_basis_sim_time_s <= 0.0:
-        t.command_basis_sim_time_s = _time.time()
+    if command_basis_sim_time_s > 0.0:                 # S0102（仿真时刻）
+        t.command_basis_sim_time_s = float(command_basis_sim_time_s)
 
 def set_induction_cmd(frame: FarmCommandFrame, turbine_id: int, induction_ref: float,
                       seq: int, ttl_s: float = 1.0,
                       requested_effective_sim_time_s: float = 0.0,
-                      control_mode: int = FCR_CONTROL_MODE_PRC) -> None:
-    """填入单机 induction 通道 (S0105-S0107)"""
+                      control_mode: int = FCR_CONTROL_MODE_PRC,
+                      command_basis_sim_time_s: float = 0.0) -> None:
+    """填入单机 induction 通道 (S0105-S0107)
+
+    ⚠ ICD v1.5 G-4：command_basis_sim_time_s 语义同 set_yaw_cmd（仿真时刻）。
+    """
     if not (1 <= turbine_id <= FCR_MAX_TURBINES):
         raise ValueError(turbine_id)
-    import time as _time
     t = frame.turbines[turbine_id - 1]
     t.induction_valid = 1
     t.induction_seq = seq
@@ -269,9 +276,8 @@ def set_induction_cmd(frame: FarmCommandFrame, turbine_id: int, induction_ref: f
     t.induction_ttl_s = float(ttl_s)
     t.requested_effective_sim_time_s = float(requested_effective_sim_time_s)
     t.control_mode = control_mode
-    # WIN-05: set command_basis_sim_time_s for ZMQ frame validation
-    if t.command_basis_sim_time_s <= 0.0:
-        t.command_basis_sim_time_s = _time.time()
+    if command_basis_sim_time_s > 0.0:                 # S0102（仿真时刻）
+        t.command_basis_sim_time_s = float(command_basis_sim_time_s)
 
 def set_control_enable(frame: FarmCommandFrame, turbine_id: int, enable: bool) -> None:
     """设置 control_enable (S0104)"""
