@@ -45,30 +45,34 @@ static void test_command_region_to_frame(void)
     ASSERT(tr != NULL);
     mt = (struct FcrModbusTransport *)tr->impl;
 
-    /* 写命令区 T1：yaw seq=1 delta=+5°CW */
+    /* 写命令区 T1：yaw seq=1 绝对目标 -5°（CCW+） */
     b = MB_CMD_BASE + 0 * MB_CMD_PER_TURBINE;
-    mb_put_double(mt->regs, b + MB_CMD_YAW_DELTA_RAD, 5.0 * 3.141592653589793 / 180.0);
+    mb_put_double(mt->regs, b + MB_CMD_YAW_TARGET_HEADING, -5.0 * 3.141592653589793 / 180.0);
     mb_put_u64(mt->regs, b + MB_CMD_YAW_SEQ, 1);
     mb_put_u16(mt->regs, b + MB_CMD_YAW_VALID, 1);
+    mb_put_u16(mt->regs, b + MB_CMD_CONTROL_ENABLE, 1);   /* ICD v1.5 S0104 */
     mb_put_double(mt->regs, b + MB_CMD_YAW_TTL_S, 60.0);
     /* T2 induction */
     b = MB_CMD_BASE + 1 * MB_CMD_PER_TURBINE;
     mb_put_double(mt->regs, b + MB_CMD_IND_REF, 0.2);
     mb_put_u64(mt->regs, b + MB_CMD_IND_SEQ, 1);
     mb_put_u16(mt->regs, b + MB_CMD_IND_VALID, 1);
+    mb_put_u16(mt->regs, b + MB_CMD_CONTROL_ENABLE, 1);
     mb_put_double(mt->regs, b + MB_CMD_IND_TTL_S, 10.0);
 
-    /* 设置 frame_seq 门控（时钟区） */
-    mb_put_u64(mt->regs, MB_CLK_FRAME_SEQ_SLOT, 7);
+    /* 设置 command_frame_seq 门控（时钟区） */
+    mb_put_u64(mt->regs, MB_CLK_CMD_FRAME_SEQ_SLOT, 7);
     mt->last_frame_seq = 0;
 
     memset(&cmd, 0, sizeof(cmd));
     ASSERT(tr->ops->poll_command(tr, &cmd) == 1);
-    ASSERT(cmd.frame_seq == 7);
+    ASSERT(cmd.command_frame_seq == 7);                   /* ICD v1.5 S0101 */
     ASSERT(cmd.n_turbines == 2);
     ASSERT(cmd.turbines[0].yaw_valid == 1);
     ASSERT(cmd.turbines[0].yaw_seq == 1);
-    ASSERT_NEAR(cmd.turbines[0].yaw_delta_rad, 5.0 * 3.141592653589793 / 180.0, 1e-12);
+    ASSERT(cmd.turbines[0].control_enable == 1);
+    ASSERT_NEAR(cmd.turbines[0].yaw_target_heading_rad,
+                -5.0 * 3.141592653589793 / 180.0, 1e-12);
     ASSERT_NEAR(cmd.turbines[0].yaw_ttl_s, 60.0, 1e-12);
     ASSERT(cmd.turbines[1].induction_valid == 1);
     ASSERT(cmd.turbines[1].induction_seq == 1);
@@ -92,7 +96,7 @@ static void test_state_region_from_frame(void)
 
     memset(&st, 0, sizeof(st));
     st.protocol_version = FCR_PROTOCOL_VERSION;
-    st.sim_time_s = 12.5;
+    st.state_sample_sim_time_s = 12.5;    /* ICD v1.5 S1002 */
     st.fast_step = 1250;
     st.low_step = 4;
     st.rt_health_flags = FCR_RT_HEALTH_OK;
@@ -103,21 +107,21 @@ static void test_state_region_from_frame(void)
     st.turbines[0].gen_power_w.instant = 4.05e6;
     st.turbines[0].gen_power_w.mean = 4.0e6;
     st.turbines[0].gen_power_w.rms = 4.02e6;
-    st.turbines[0].rotor_thrust_n.instant = 4.5e5;
-    st.turbines[0].nacelle_heading_rad = 0.1;
+    st.turbines[0].rotor_aero_thrust_n.instant = 4.5e5;   /* ICD v1.5 S1010 */
+    st.turbines[0].nacelle_heading_actual_rad = 0.1;      /* ICD v1.5 S1009 */
     st.turbines[0].yaw_seq_applied = 3;
     st.turbines[0].induction_seq_applied = 2;
 
     ASSERT(tr->ops->publish_state(tr, &st) == 1);
 
-    ASSERT_NEAR(mb_get_double(mt->regs, MB_CLK_SIM_TIME_S), 12.5, 1e-12);
+    ASSERT_NEAR(mb_get_double(mt->regs, MB_CLK_STATE_SAMPLE_TIME), 12.5, 1e-12);
     ASSERT(mb_get_u64(mt->regs, MB_CLK_FAST_STEP) == 1250);
     b = MB_STATE_BASE + 0 * MB_STATE_PER_TURBINE;
     ASSERT(mb_get_u16(mt->regs, b + MB_ST_TURBINE_ID) == 1);
     ASSERT(mb_get_u16(mt->regs, b + MB_ST_VALID) == 1);
     ASSERT_NEAR(mb_get_double(mt->regs, b + MB_ST_GEN_POWER_W), 4.05e6, 1e-3);
     ASSERT_NEAR(mb_get_double(mt->regs, b + MB_ST_GEN_POWER_MEAN), 4.0e6, 1e-3);
-    ASSERT_NEAR(mb_get_double(mt->regs, b + MB_ST_ROTOR_THRUST_N), 4.5e5, 1e-3);
+    ASSERT_NEAR(mb_get_double(mt->regs, b + MB_ST_ROTOR_AERO_THRUST), 4.5e5, 1e-3);
     ASSERT_NEAR(mb_get_double(mt->regs, b + MB_ST_NACELLE_HEADING), 0.1, 1e-12);
     ASSERT(mb_get_u64(mt->regs, b + MB_ST_YAW_SEQ_APPLIED) == 3);
     ASSERT(mb_get_u64(mt->regs, b + MB_ST_IND_SEQ_APPLIED) == 2);

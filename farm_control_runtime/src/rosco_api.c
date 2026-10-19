@@ -185,7 +185,7 @@ int fcr_rosco_read_setpoint(int32_t turbine_id, FcrRoscoExternalSetpoint *sp)
     return 0;
 }
 
-int fcr_rosco_publish_state(int32_t turbine_id, const FcrRoscoFastState *st)
+int fcr_rosco_publish_state(int32_t turbine_id, const FcrRoscoRawState *st)
 {
     if (!g_rt || !st) return -1;
     FCR_LOCK();
@@ -195,11 +195,35 @@ int fcr_rosco_publish_state(int32_t turbine_id, const FcrRoscoFastState *st)
     return 0;
 }
 
+/* ICD v1.5 S0901-S0904: Bridge 确认发布（seq 回读 + 状态字 + ct_ref） */
+static FcrRoscoAck g_ack[FCR_MAX_TURBINES];
+
+int fcr_rosco_publish_ack(int32_t turbine_id, const FcrRoscoAck *ack)
+{
+    if (!g_rt || !ack) return -1;
+    if (turbine_id < 1 || turbine_id > (int32_t)FCR_MAX_TURBINES) return -2;
+    FCR_LOCK();
+    g_ack[turbine_id - 1] = *ack;
+    FCR_UNLOCK();
+    return 0;
+}
+
+/* ICD v1.5: 查询已采纳 seq（供状态帧 S1013/S1014 填充） */
+int fcr_rosco_get_ack(int32_t turbine_id, FcrRoscoAck *out)
+{
+    if (!out) return -1;
+    if (turbine_id < 1 || turbine_id > (int32_t)FCR_MAX_TURBINES) return -2;
+    FCR_LOCK();
+    *out = g_ack[turbine_id - 1];
+    FCR_UNLOCK();
+    return 0;
+}
+
 /* 单机 10 ms 主步进：transport 拉取 + 命令 refresh（含 yaw 目标锁存）+ setpoint */
 int fcr_rosco_step_high(int32_t turbine_id, double sim_time_s)
 {
     double heading;
-    FcrRoscoFastState st;
+    FcrRoscoRawState st;
     uint64_t qdepth = 0;
     if (!g_rt) return -1;
     FCR_LOCK();

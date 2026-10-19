@@ -1,5 +1,6 @@
 /*
- * test_command_store.c — 命令通道独立 / seq 幂等与乱序 / TTL / 锁存（Phase 1）
+ * test_command_store.c — 命令通道独立 / seq 幂等与乱序 / TTL / 锁存
+ * ICD v1.5：绝对偏航目标（无 delta）、control_enable 门控、requested_effective_sim_time_s
  */
 #include "test_framework.h"
 #include "fcr_internal.h"
@@ -12,24 +13,27 @@ static FcrCommandStore *make_store(void)
     return fcr_command_store_create(2, 60.0, 1.0, 5.0, 1.0);
 }
 
-static void fill_yaw(FcrTurbineCommand *cmd, uint64_t seq, double delta_rad)
+/* S0108: 绝对目标方位（OpenFAST 内部约定，无 delta 推导） */
+static void fill_yaw(FcrTurbineCommand *cmd, uint64_t seq, double target_rad)
 {
     memset(cmd, 0, sizeof(*cmd));
+    cmd->control_enable = 1;              /* S0104 */
     cmd->yaw_valid = 1;
     cmd->yaw_seq = seq;
-    cmd->yaw_delta_rad = delta_rad;
+    cmd->yaw_target_heading_rad = target_rad;
     cmd->yaw_ttl_s = 60.0;
-    cmd->source_time_s = 0.0;
+    cmd->command_basis_sim_time_s = 0.0;
 }
 
 static void fill_ind(FcrTurbineCommand *cmd, uint64_t seq, double ref)
 {
     memset(cmd, 0, sizeof(*cmd));
+    cmd->control_enable = 1;              /* S0104 */
     cmd->induction_valid = 1;
     cmd->induction_seq = seq;
     cmd->induction_ref = ref;
     cmd->induction_ttl_s = 1.0;
-    cmd->source_time_s = 0.0;
+    cmd->command_basis_sim_time_s = 0.0;
 }
 
 static FarmCommandFrame make_frame(FcrTurbineCommand *t1, FcrTurbineCommand *t2)
@@ -37,7 +41,7 @@ static FarmCommandFrame make_frame(FcrTurbineCommand *t1, FcrTurbineCommand *t2)
     FarmCommandFrame fr;
     memset(&fr, 0, sizeof(fr));
     fr.protocol_version = FCR_PROTOCOL_VERSION;
-    fr.frame_seq = 1;
+    fr.command_frame_seq = 1;
     fr.n_turbines = 2;
     if (t1) fr.turbines[0] = *t1;
     if (t2) fr.turbines[1] = *t2;
@@ -62,12 +66,14 @@ static void test_channels_independent(void)
     FarmCommandFrame fr = make_frame(&yaw, NULL);
     ASSERT(fcr_command_store_accept_frame(cs, &fr) == 0);
 
-    /* 锁存需要机舱方位 */
     fcr_command_store_refresh(cs, 0.0, heading, 1);
     fcr_command_store_get_setpoint(cs, 1, &sp);
-    ASSERT(sp.yaw_enable == 1);
+    ASSERT(sp.external_yaw_enable == 1);
     ASSERT(sp.induction_enable == 1);
-    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(-5.0), 1e-12);
+    /* ICD v1.5：绝对目标直接生效，不做 heading 相对推导 */
+    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(5.0), 1e-12);
+    ASSERT(sp.yaw_seq == 1);
+    ASSERT(sp.induction_seq == 1);
 
     /* 再只发 induction 新 seq —— yaw 目标不得变化 */
     FcrTurbineCommand ind2;
@@ -77,7 +83,7 @@ static void test_channels_independent(void)
     heading[0] = fcr_deg2rad(10.0);   /* 机舱动了，但 yaw 目标应仍是旧锁存 */
     fcr_command_store_refresh(cs, 0.0, heading, 1);
     fcr_command_store_get_setpoint(cs, 1, &sp);
-    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(-5.0), 1e-12);
+    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(5.0), 1e-12);
     ASSERT(sp.induction_enable == 1);
     ASSERT(sp.induction_seq == 2);
 
@@ -88,7 +94,7 @@ static void test_channels_independent(void)
     ASSERT(fcr_command_store_accept_frame(cs, &fr3) == 0);
     fcr_command_store_refresh(cs, 0.0, heading, 1);
     fcr_command_store_get_setpoint(cs, 1, &sp);
-    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(15.0) /* heading 10 + (-5 CW → +5 CCW) = 15 */, 1e-12);
+    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(-5.0), 1e-12);
     ASSERT(sp.yaw_seq == 2);
     fcr_command_store_destroy(cs);
 }
@@ -112,7 +118,8 @@ static void test_duplicate_seq_idempotent(void)
     ASSERT(fcr_command_store_accept_frame(cs, &fr2) == 0);
     fcr_command_store_refresh(cs, 0.5, heading, 1);
     fcr_command_store_get_setpoint(cs, 1, &sp);
-    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(-5.0), 1e-12);
+    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(5.0), 1e-12);
+    ASSERT(sp.yaw_seq == 1);
     fcr_command_store_destroy(cs);
 }
 
@@ -129,7 +136,7 @@ static void test_out_of_order_seq_rejected(void)
     ASSERT(fcr_command_store_accept_frame(cs, &fr) == 0);
     fcr_command_store_refresh(cs, 0.0, heading, 1);
     fcr_command_store_get_setpoint(cs, 1, &sp);
-    ASSERT(sp.yaw_enable == 1);
+    ASSERT(sp.external_yaw_enable == 1);
     ASSERT(sp.yaw_seq == 2);
 
     /* seq=1 落后 → 拒绝，且目标保持 seq=2 的锁存 */
@@ -138,9 +145,9 @@ static void test_out_of_order_seq_rejected(void)
     ASSERT(fcr_command_store_accept_frame(cs, &fr2) == 0);
     fcr_command_store_refresh(cs, 0.0, heading, 1);
     fcr_command_store_get_setpoint(cs, 1, &sp);
-    ASSERT(sp.yaw_enable == 1);
+    ASSERT(sp.external_yaw_enable == 1);
     ASSERT(sp.yaw_seq == 2);
-    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(-5.0), 1e-12);
+    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(5.0), 1e-12);
     ASSERT((sp.command_status_flags & FCR_CMD_FLAG_INVALID_SEQ) != 0);
     fcr_command_store_destroy(cs);
 }
@@ -174,7 +181,7 @@ static void test_ttl_expiry(void)
     fcr_command_store_refresh(cs, 0.0, heading, 1);
     fcr_command_store_refresh(cs, 5.0, heading, 1);
     fcr_command_store_get_setpoint(cs, 1, &sp);
-    ASSERT(sp.yaw_enable == 1);
+    ASSERT(sp.external_yaw_enable == 1);
     fcr_command_store_destroy(cs);
 }
 
@@ -187,16 +194,16 @@ static void test_stale_flag(void)
     double heading[2] = {0.0, 0.0};
 
     fill_yaw(&cmd, 1, fcr_deg2rad(5.0));
-    cmd.source_time_s = 1.0;   /* 命令发出于 t=1 s */
+    cmd.command_basis_sim_time_s = 1.0;   /* 命令依据 t=1 s 的状态 */
     FarmCommandFrame fr = make_frame(&cmd, NULL);
     fcr_command_store_accept_frame(cs, &fr);
-    fcr_command_store_refresh(cs, 10.0, heading, 1);  /* 距 source 9 s > 5 s 阈值 */
+    fcr_command_store_refresh(cs, 10.0, heading, 1);  /* 距 basis 9 s > 5 s 阈值 */
     fcr_command_store_get_setpoint(cs, 1, &sp);
     ASSERT((sp.command_status_flags & FCR_CMD_FLAG_YAW_STALE) != 0);
     fcr_command_store_destroy(cs);
 }
 
-/* --- 目标锁存只发生在新 seq 生效时（heading 已知）--- */
+/* --- 目标锁存只发生在新 seq 生效时 --- */
 static void test_yaw_target_not_reevaluated(void)
 {
     FcrCommandStore *cs = make_store();
@@ -207,16 +214,73 @@ static void test_yaw_target_not_reevaluated(void)
     fill_yaw(&cmd, 1, fcr_deg2rad(5.0));
     FarmCommandFrame fr = make_frame(&cmd, NULL);
     fcr_command_store_accept_frame(cs, &fr);
-    fcr_command_store_refresh(cs, 0.0, heading, 1);       /* 锁存：heading=0 → target=-5° */
+    fcr_command_store_refresh(cs, 0.0, heading, 1);
     fcr_command_store_get_setpoint(cs, 1, &sp);
-    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(-5.0), 1e-12);
+    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(5.0), 1e-12);
 
     /* 后续每次 refresh 即使机舱方位变化，目标保持不变 */
     heading[0] = fcr_deg2rad(40.0);
     fcr_command_store_refresh(cs, 0.1, heading, 1);
     fcr_command_store_refresh(cs, 0.2, heading, 1);
     fcr_command_store_get_setpoint(cs, 1, &sp);
-    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(-5.0), 1e-12);
+    ASSERT_NEAR(sp.yaw_target_heading_rad, fcr_deg2rad(5.0), 1e-12);
+    fcr_command_store_destroy(cs);
+}
+
+/* --- S0104: control_enable=0 回退 ROSCO 原控制 --- */
+static void test_control_disable_fallback(void)
+{
+    FcrCommandStore *cs = make_store();
+    FcrTurbineCommand cmd;
+    FcrRoscoExternalSetpoint sp;
+    double heading[2] = {0.0, 0.0};
+
+    fill_yaw(&cmd, 1, fcr_deg2rad(5.0));
+    cmd.induction_valid = 1;
+    cmd.induction_seq = 1;
+    cmd.induction_ref = 0.25;
+    cmd.induction_ttl_s = 10.0;
+    FarmCommandFrame fr = make_frame(&cmd, NULL);
+    fcr_command_store_accept_frame(cs, &fr);
+    fcr_command_store_refresh(cs, 0.0, heading, 1);
+    fcr_command_store_get_setpoint(cs, 1, &sp);
+    ASSERT(sp.external_yaw_enable == 1);
+    ASSERT(sp.induction_enable == 1);
+
+    /* control_enable=0 → 两通道清零 + DISABLED 标志 */
+    cmd.control_enable = 0;
+    cmd.yaw_seq = 2;
+    cmd.induction_seq = 2;
+    FarmCommandFrame fr2 = make_frame(&cmd, NULL);
+    fcr_command_store_accept_frame(cs, &fr2);
+    fcr_command_store_refresh(cs, 0.5, heading, 1);
+    fcr_command_store_get_setpoint(cs, 1, &sp);
+    ASSERT(sp.external_yaw_enable == 0);
+    ASSERT(sp.induction_enable == 0);
+    ASSERT((sp.command_status_flags & FCR_CMD_FLAG_CONTROL_DISABLED) != 0);
+    fcr_command_store_destroy(cs);
+}
+
+/* --- S0112: requested_effective_sim_time_s 到点才生效 --- */
+static void test_requested_effective_time(void)
+{
+    FcrCommandStore *cs = make_store();
+    FcrTurbineCommand cmd;
+    FcrRoscoExternalSetpoint sp;
+    double heading[2] = {0.0, 0.0};
+
+    fill_ind(&cmd, 1, 0.25);
+    cmd.requested_effective_sim_time_s = 2.0;
+    FarmCommandFrame fr = make_frame(&cmd, NULL);
+    fcr_command_store_accept_frame(cs, &fr);
+
+    fcr_command_store_refresh(cs, 1.0, heading, 1);
+    fcr_command_store_get_setpoint(cs, 1, &sp);
+    ASSERT(sp.induction_enable == 0);          /* 未到生效时刻 */
+
+    fcr_command_store_refresh(cs, 2.5, heading, 1);
+    fcr_command_store_get_setpoint(cs, 1, &sp);
+    ASSERT(sp.induction_enable == 1);          /* 已到生效时刻 */
     fcr_command_store_destroy(cs);
 }
 
@@ -228,4 +292,6 @@ void test_command_store_register(void)
     RUN_TEST("ttl_expiry", test_ttl_expiry);
     RUN_TEST("stale_flag", test_stale_flag);
     RUN_TEST("yaw_target_not_reevaluated", test_yaw_target_not_reevaluated);
+    RUN_TEST("control_disable_fallback", test_control_disable_fallback);
+    RUN_TEST("requested_effective_time", test_requested_effective_time);
 }

@@ -110,7 +110,7 @@ void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id)
     if (rt->cfg.bridge_enable && rt->bridge_core && tc) {
         FcrBridgeCmd cmd;
         FcrBridgeMeas meas;
-        FcrRoscoFastState fast;
+        FcrRoscoRawState fast;
         FcrTurbineExtraState extra;
         const FcrFlowState *flow;
         memset(&fast, 0, sizeof(fast));
@@ -173,7 +173,7 @@ int fcr_runtime_step_high(FcrRuntime *rt, double sim_time_s)
 
     /* 2) 取最新机舱方位（ROSCO fast state 槽） */
     for (i = 0; i < rt->cfg.n_turbines; ++i) {
-        FcrRoscoFastState st;
+        FcrRoscoRawState st;
         memset(&st, 0, sizeof(st));
         fcr_state_store_get_fast(rt->ss, (int32_t)(i + 1), &st);
         heading[i] = st.valid ? st.nacelle_heading_rad : 0.0;
@@ -194,7 +194,8 @@ static void aggregate_state(FcrRuntime *rt, FarmStateFrame *out, double sim_time
     uint32_t i;
     memset(out, 0, sizeof(*out));
     out->protocol_version = FCR_PROTOCOL_VERSION;
-    out->sim_time_s = sim_time_s;
+    out->state_frame_seq = ++rt->state_frame_seq;
+    out->state_sample_sim_time_s = sim_time_s;
     out->fast_step = rt->ss->fast_step;
     out->low_step = rt->ss->low_step;
     out->rt_health_flags = fcr_watchdog_health(rt->wd);
@@ -204,13 +205,13 @@ static void aggregate_state(FcrRuntime *rt, FarmStateFrame *out, double sim_time
 
     for (i = 0; i < rt->cfg.n_turbines; ++i) {
         FcrFarmTurbineState *ts = &out->turbines[i];
-        const FcrRoscoFastState *fast = &rt->ss->fast[i];
+        const FcrRoscoRawState *fast = &rt->ss->fast[i];
         const FcrTurbineExtraState *extra = &rt->ss->extra[i];
         ts->turbine_id = (int32_t)(i + 1);
         if (!fast->valid) continue;
         ts->valid = 1;
         ts->source_time_s = fast->source_time_s;
-        ts->nacelle_heading_rad = fast->nacelle_heading_rad;
+        ts->nacelle_heading_actual_rad = fast->nacelle_heading_rad;
         ts->nacelle_vane_rad = fast->nacelle_vane_rad;
         ts->hub_wind_speed_mps = fast->hub_wind_speed_mps;
         ts->rotor_speed_rad_s = fast->rotor_speed_rad_s;
@@ -221,7 +222,14 @@ static void aggregate_state(FcrRuntime *rt, FarmStateFrame *out, double sim_time
         ts->yaw_target_heading_rad = fast->yaw_target_heading_rad;
         ts->yaw_seq_applied = fast->yaw_seq_applied;
         ts->induction_seq_applied = fast->induction_seq_applied;
-        ts->controller_status_flags = fast->controller_status_flags;
+        ts->controller_status_flags = fast->rosco_controller_status_flags;
+        /* ICD v1.5 S1008/S1011/S1012/S1015/S1016/S1017 */
+        ts->collective_pitch_actual_rad = fast->blade_pitch_rad[0];
+        ts->estimated_wind_mps = fast->hub_wind_speed_mps;
+        ts->wind_source = FCR_WIND_SOURCE_ROSCO_WE;
+        ts->wind_quality_flags = FCR_WIND_QUALITY_OK;
+        ts->ct_hat = extra->valid ? extra->rotor_ct : 0.0;
+        ts->turbine_status_flags = fast->rosco_controller_status_flags;
 
         /* 1 s 统计：Phase 5 由 SignalStatistics 填充；当前直通瞬时 */
         ts->gen_power_w.instant = fast->gen_power_w;
@@ -232,12 +240,12 @@ static void aggregate_state(FcrRuntime *rt, FarmStateFrame *out, double sim_time
         ts->gen_power_w.min = fast->gen_power_w;
         ts->gen_power_w.max = fast->gen_power_w;
         if (extra->valid) {
-            ts->rotor_thrust_n.instant = extra->rotor_thrust_n;
-            ts->rotor_thrust_n.valid = 1; ts->rotor_thrust_n.n_samples = 1;
-            ts->rotor_thrust_n.mean = extra->rotor_thrust_n;
-            ts->rotor_thrust_n.rms = extra->rotor_thrust_n;
-            ts->rotor_thrust_n.min = extra->rotor_thrust_n;
-            ts->rotor_thrust_n.max = extra->rotor_thrust_n;
+            ts->rotor_aero_thrust_n.instant = extra->rotor_aero_thrust_n;
+            ts->rotor_aero_thrust_n.valid = 1; ts->rotor_aero_thrust_n.n_samples = 1;
+            ts->rotor_aero_thrust_n.mean = extra->rotor_aero_thrust_n;
+            ts->rotor_aero_thrust_n.rms = extra->rotor_aero_thrust_n;
+            ts->rotor_aero_thrust_n.min = extra->rotor_aero_thrust_n;
+            ts->rotor_aero_thrust_n.max = extra->rotor_aero_thrust_n;
             ts->tower_base_fa_moment_nm.instant = extra->tower_base_fa_moment_nm;
             ts->tower_base_fa_moment_nm.valid = 1; ts->tower_base_fa_moment_nm.n_samples = 1;
             ts->tower_base_fa_moment_nm.mean = extra->tower_base_fa_moment_nm;
@@ -285,7 +293,7 @@ int fcr_runtime_step_low(FcrRuntime *rt, double sim_time_s)
 /* 高速样本喂入（发布事件驱动 1 s 统计；Phase 5）                      */
 /* ------------------------------------------------------------------ */
 void fcr_runtime_feed_fast(FcrRuntime *rt, int32_t turbine_id,
-                           const FcrRoscoFastState *st)
+                           const FcrRoscoRawState *st)
 {
     FcrStateAggregator *a;
     if (!rt || !st) return;

@@ -42,7 +42,7 @@ int fcr_shm_command_start(void)
     if (!g_shm_map) return -1;
     g_shm_view = MapViewOfFile(g_shm_map, FILE_MAP_ALL_ACCESS, 0, 0, FCR_SHM_SIZE);
     if (!g_shm_view) { CloseHandle(g_shm_map); g_shm_map = NULL; return -2; }
-    g_last_frame_seq = ((volatile FarmCommandFrame *)g_shm_view)->frame_seq;
+    g_last_frame_seq = ((volatile FarmCommandFrame *)g_shm_view)->command_frame_seq;
     g_shm_stop = 0;
     g_shm_thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)shm_thread_fn, NULL, 0, NULL);
     if (!g_shm_thread) { UnmapViewOfFile(g_shm_view); CloseHandle(g_shm_map);
@@ -77,8 +77,8 @@ static DWORD WINAPI shm_thread_fn(LPVOID param)
     while (!g_shm_stop) {
         volatile FarmCommandFrame *f = (volatile FarmCommandFrame *)g_shm_view;
         if (f && f->protocol_version == FCR_PROTOCOL_VERSION &&
-            f->frame_seq != g_last_frame_seq) {
-            g_last_frame_seq = f->frame_seq;
+            f->command_frame_seq != g_last_frame_seq) {
+            g_last_frame_seq = f->command_frame_seq;
             if (shm_runtime()) {
                 fcr_rosco_inject_command_frame((const FarmCommandFrame *)f);
             }

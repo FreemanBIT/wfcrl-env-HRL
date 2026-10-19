@@ -1,19 +1,20 @@
 /*
- * command_store.c — 命令存储与通道独立维护（Phase 1）
+ * command_store.c — 命令存储与通道独立维护（ICD v1.5 S0101-S0112）
  *
- * 关键规则（对应 PROTOCOL_DECISIONS.md）：
+ * 关键规则（对应 ICD v1.5）：
  *   1. yaw / induction 通道完全独立，互不覆盖互不推导；
  *   2. 新 seq 才更新生效值；重复 seq 幂等；乱序 seq（<= 已应用）拒绝；
- *   3. TTL 到期自动失效（yaw 回退使能清除；induction 回退使能清除）；
- *   4. 命令超龄（source_time 距当前 sim_time 超过阈值）置 stale 标志。
+ *   3. TTL 到期自动失效；
+ *   4. 命令超龄（command_basis_sim_time_s 距当前 sim_time 超过阈值）置 stale 标志。
  *   5. yaw 绝对目标只在新 seq 生效时用最新机舱方位锁存一次。
+ *   6. control_enable=0 时回退 ROSCO 原始控制（S0104）。
  */
 #include "fcr_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-/* WIN-09 debug: acceptance counters */
+/* debug counters */
 uint32_t g_dbg_yaw_accept = 0, g_dbg_ind_accept = 0;
 uint32_t g_dbg_yaw_latch = 0, g_dbg_ind_latch = 0;
 
@@ -46,65 +47,58 @@ FcrTurbineCommandState *fcr_command_store_turbine(FcrCommandStore *cs, int32_t t
     return &cs->t[turbine_id - 1];
 }
 
-/* WIN-09: 处理单条 turbine 命令（通道状态机：IDLE→ACCEPTED→SCHEDULED→ACTIVE→EXPIRED） */
+/* 处理单条 turbine 命令（通道状态机：IDLE→ACCEPTED→SCHEDULED→ACTIVE→EXPIRED） */
 static void accept_turbine(FcrCommandStore *cs, const FcrTurbineCommand *cmd,
                            int32_t turbine_id)
 {
     FcrTurbineCommandState *tc = fcr_command_store_turbine(cs, turbine_id);
     if (!tc) return;
 
-    /* ---- yaw 通道 ---- */
+    /* ---- 通用控制字段 (S0104, S0111, S0112) ---- */
+    tc->control_enable = cmd->control_enable;
+    tc->control_mode = cmd->control_mode;
+    tc->requested_effective_sim_time_s = cmd->requested_effective_sim_time_s;
+    tc->command_basis_sim_time_s = cmd->command_basis_sim_time_s;
+
+    /* ---- yaw 通道 (S0108-S0110) ---- */
     if (cmd->yaw_valid) {
         if (cmd->yaw_seq > tc->yaw_seq_rx) {
             /* 新 seq：更新待生效值，进入 ACCEPTED 状态 */
             tc->yaw_seq_rx = cmd->yaw_seq;
-            tc->yaw_delta_rad = cmd->yaw_delta_rad;
+            tc->yaw_target_heading_rad = cmd->yaw_target_heading_rad;
             tc->yaw_valid = 1;
-            tc->yaw_target_latched = 0;
-            tc->yaw_effective_low_step = cmd->yaw_effective_low_step;
+            tc->yaw_target_latched = 1;  /* ICD v1.5: absolute heading latched immediately */
             tc->yaw_ttl_s = (cmd->yaw_ttl_s > 0.0) ? cmd->yaw_ttl_s : cs->default_yaw_ttl_s;
             tc->yaw_issue_time_s = -1.0;
-            tc->source_time_s = cmd->source_time_s;
-            /* WIN-16: v2 absolute yaw target — store directly, no delta conversion */
-            if (cmd->yaw_absolute_valid) {
-                tc->yaw_target_heading = cmd->yaw_absolute_heading_rad;
-                tc->yaw_target_latched = 1;
-                tc->yaw_seq_applied = cmd->yaw_seq;
-            }
             tc->yaw_state = FCR_CH_ACCEPTED;
             tc->command_status_flags &= ~FCR_CMD_FLAG_INVALID_SEQ;
-            g_dbg_yaw_accept++;  /* WIN-09 debug */
+            g_dbg_yaw_accept++;
         } else if (cmd->yaw_seq == tc->yaw_seq_rx) {
-            /* WIN-09: 重复 seq — 幂等，不续命。
-             * 不更新 TTL、source_time、issue_time。
-             * 仅当处于 IDLE/EXPIRED 时重新激活（防御性）。 */
+            /* 重复 seq — 幂等，不续命 */
             if (tc->yaw_state == FCR_CH_IDLE || tc->yaw_state == FCR_CH_EXPIRED) {
                 tc->yaw_state = FCR_CH_ACCEPTED;
                 tc->yaw_issue_time_s = -1.0;
             }
-            /* 其他状态：忽略重复 seq，不改变有效期 */
         } else {
             /* 乱序 seq：拒绝 */
             tc->command_status_flags |= FCR_CMD_FLAG_INVALID_SEQ;
         }
     }
 
-    /* ---- induction 通道 ---- */
+    /* ---- induction 通道 (S0105-S0107) ---- */
     if (cmd->induction_valid) {
         if (cmd->induction_seq > tc->ind_seq_rx) {
             tc->ind_seq_rx = cmd->induction_seq;
             tc->induction_ref = cmd->induction_ref;
             tc->ind_valid = 1;
-            tc->ind_effective_low_step = cmd->induction_effective_low_step;
             tc->ind_ttl_s = (cmd->induction_ttl_s > 0.0) ? cmd->induction_ttl_s
                                                          : cs->default_induction_ttl_s;
             tc->ind_issue_time_s = -1.0;
-            tc->source_time_s = cmd->source_time_s;
             tc->ind_state = FCR_CH_ACCEPTED;
             tc->command_status_flags &= ~FCR_CMD_FLAG_INVALID_SEQ;
-            g_dbg_ind_accept++;  /* WIN-09 debug */
+            g_dbg_ind_accept++;
         } else if (cmd->induction_seq == tc->ind_seq_rx) {
-            /* WIN-09: 重复 seq — 幂等，不续命 */
+            /* 重复 seq — 幂等，不续命 */
             if (tc->ind_state == FCR_CH_IDLE || tc->ind_state == FCR_CH_EXPIRED) {
                 tc->ind_state = FCR_CH_ACCEPTED;
                 tc->ind_issue_time_s = -1.0;
@@ -126,14 +120,7 @@ int fcr_command_store_accept_frame(FcrCommandStore *cs, const FarmCommandFrame *
     return 0;
 }
 
-/* WIN-09: 单台机状态机推进（每高速步调用）
- * 状态转换：
- *   IDLE → ACCEPTED:  新 seq 到达
- *   ACCEPTED → SCHEDULED: low_step >= effective_low_step
- *   SCHEDULED → ACTIVE: 首次 refresh 激活（issue_time 起算）
- *   ACTIVE → EXPIRED: TTL 到期
- *   EXPIRED → IDLE: 通道清理
- */
+/* 单台机状态机推进（每高速步调用） */
 void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
                                    double sim_time_s, double heading_now_rad,
                                    uint64_t low_step)
@@ -143,9 +130,21 @@ void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
     tc = fcr_command_store_turbine(cs, turbine_id);
     if (!tc) return;
 
+    /* ---- control_enable 检查 (S0104) ---- */
+    if (!tc->control_enable) {
+        /* 外部场控禁用：清除所有通道，回退 ROSCO */
+        tc->yaw_valid = 0;
+        tc->ind_valid = 0;
+        tc->yaw_state = FCR_CH_IDLE;
+        tc->ind_state = FCR_CH_IDLE;
+        tc->command_status_flags |= FCR_CMD_FLAG_CONTROL_DISABLED;
+        return;
+    }
+    tc->command_status_flags &= ~FCR_CMD_FLAG_CONTROL_DISABLED;
+
     /* ---- stale（命令来源时间过老）---- */
-    if (tc->source_time_s > 0.0 &&
-        (sim_time_s - tc->source_time_s) > cs->stale_threshold_s) {
+    if (tc->command_basis_sim_time_s > 0.0 &&
+        (sim_time_s - tc->command_basis_sim_time_s) > cs->stale_threshold_s) {
         tc->command_status_flags |= FCR_CMD_FLAG_YAW_STALE |
                                     FCR_CMD_FLAG_INDUCTION_STALE;
     } else {
@@ -153,19 +152,20 @@ void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
                                       FCR_CMD_FLAG_INDUCTION_STALE);
     }
 
-    /* ---- yaw 通道状态机（允许同次 refresh 内连续转换） ---- */
+    /* ---- yaw 通道状态机 ---- */
     {
         FcrChannelState st = tc->yaw_state;
-        /* ACCEPTED → SCHEDULED（检查 effective_low_step） */
+        /* ACCEPTED → SCHEDULED（检查 requested_effective_sim_time_s） */
         if (st == FCR_CH_ACCEPTED) {
-            if (tc->yaw_effective_low_step <= 0 ||
-                (int64_t)low_step >= tc->yaw_effective_low_step) {
+            if (tc->requested_effective_sim_time_s <= 0.0 ||
+                sim_time_s >= tc->requested_effective_sim_time_s) {
                 st = FCR_CH_SCHEDULED;
             }
         }
         /* SCHEDULED → ACTIVE（起算 TTL） */
         if (st == FCR_CH_SCHEDULED) {
             tc->yaw_valid = 1;
+            tc->yaw_seq_applied = tc->yaw_seq_rx;   /* S0902: 生效序号回读 */
             if (tc->yaw_issue_time_s < 0.0 && tc->yaw_ttl_s > 0.0) {
                 tc->yaw_issue_time_s = sim_time_s;
             }
@@ -183,7 +183,7 @@ void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
                 tc->command_status_flags &= ~FCR_CMD_FLAG_YAW_TTL_EXPIRED;
             }
         }
-        /* EXPIRED → IDLE（下次 refresh 清理） */
+        /* EXPIRED → IDLE */
         if (st == FCR_CH_EXPIRED) {
             st = FCR_CH_IDLE;
         }
@@ -194,13 +194,14 @@ void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
     {
         FcrChannelState st = tc->ind_state;
         if (st == FCR_CH_ACCEPTED) {
-            if (tc->ind_effective_low_step <= 0 ||
-                (int64_t)low_step >= tc->ind_effective_low_step) {
+            if (tc->requested_effective_sim_time_s <= 0.0 ||
+                sim_time_s >= tc->requested_effective_sim_time_s) {
                 st = FCR_CH_SCHEDULED;
             }
         }
         if (st == FCR_CH_SCHEDULED) {
             tc->ind_valid = 1;
+            tc->ind_seq_applied = tc->ind_seq_rx;   /* S0901: 生效序号回读 */
             if (tc->ind_issue_time_s < 0.0 && tc->ind_ttl_s > 0.0) {
                 tc->ind_issue_time_s = sim_time_s;
             }
@@ -221,32 +222,16 @@ void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
         }
         tc->ind_state = st;
     }
-
-    /* ---- yaw 目标锁存：新 seq 且机舱方位已知，只执行一次 ----   */
-    /* WIN-16: skip if absolute target already latched in accept_turbine */
-    if (tc->yaw_valid && !tc->yaw_target_latched) {
-        if (fcr_is_finite(heading_now_rad)) {
-            tc->yaw_target_heading =
-                fcr_compute_yaw_target(heading_now_rad, tc->yaw_delta_rad);
-            tc->yaw_target_latched = 1;
-            tc->yaw_seq_applied = tc->yaw_seq_rx;
-            g_dbg_yaw_latch++;  /* WIN-09 debug */
-        } else {
-            fprintf(stderr, "[FCR-DBG] yaw latch SKIP: tid=%d heading not finite\n", turbine_id);
-        }
-        /* 方位未知：保持未锁存，等待下一高速步 */
-    }
 }
 
-/* TTL / stale 检查 + yaw 目标锁存（整场版，供集中式 harness）         */
 void fcr_command_store_refresh(FcrCommandStore *cs, double sim_time_s,
-                               const double *heading_now_rad, uint64_t low_step)
+                               const double *heading_now_rad,
+                               uint64_t low_step)
 {
     uint32_t i;
     if (!cs) return;
     for (i = 0; i < cs->n_turbines; ++i) {
-        double h = (heading_now_rad && fcr_is_finite(heading_now_rad[i]))
-                       ? heading_now_rad[i] : (0.0 / 0.0);
+        double h = (heading_now_rad) ? heading_now_rad[i] : 0.0;
         fcr_command_store_refresh_one(cs, (int32_t)(i + 1), sim_time_s, h, low_step);
     }
 }
@@ -255,50 +240,36 @@ void fcr_command_store_get_setpoint(const FcrCommandStore *cs, int32_t turbine_i
                                     FcrRoscoExternalSetpoint *sp)
 {
     const FcrTurbineCommandState *tc;
-    memset(sp, 0, sizeof(*sp));
     if (!cs || !sp) return;
-    tc = (turbine_id >= 1 && turbine_id <= (int32_t)cs->n_turbines)
-             ? &cs->t[turbine_id - 1] : NULL;
+    tc = fcr_command_store_turbine((FcrCommandStore *)cs, turbine_id);
     if (!tc) return;
 
+    memset(sp, 0, sizeof(*sp));
+    sp->valid = 1;
+    sp->farm_control_enable = tc->control_enable;
     sp->command_status_flags = tc->command_status_flags;
-    if (tc->yaw_valid) sp->command_status_flags |= FCR_CMD_FLAG_YAW_VALID;
-    if (tc->ind_valid) sp->command_status_flags |= FCR_CMD_FLAG_INDUCTION_VALID;
 
-    /* 外部场控总使能 = 任一通道有效 */
-    if (tc->yaw_valid || tc->ind_valid) {
-        sp->farm_control_enable = 1;
-        sp->valid = 1;
-    }
-
-    /* ---- yaw ---- */
-    if (tc->yaw_valid && tc->yaw_target_latched) {
-        sp->yaw_enable = 1;
+    /* yaw 通道 (S0801-S0802) */
+    if (tc->yaw_valid && tc->yaw_state == FCR_CH_ACTIVE) {
+        sp->external_yaw_enable = 1;
         sp->yaw_seq = tc->yaw_seq_applied;
-        sp->yaw_target_heading_rad = tc->yaw_target_heading;
+        sp->yaw_target_heading_rad = tc->yaw_target_heading_rad;
+        sp->command_status_flags |= FCR_CMD_FLAG_YAW_VALID;
     }
 
-    /* ---- induction（Phase 1 透传有效性；Phase 6 由 InductionSupervisor
-     *      覆盖 ct_ref/power_ratio/speed_ref_ratio/torque_limit_ratio/
-     *      min_pitch_rad 的实际映射） ---- */
-    if (tc->ind_valid) {
+    /* induction 通道 (S0803-S0807) */
+    if (tc->ind_valid && tc->ind_state == FCR_CH_ACTIVE) {
         sp->induction_enable = 1;
-        sp->induction_seq = tc->ind_seq_applied ? tc->ind_seq_applied : tc->ind_seq_rx;
-        sp->power_ratio = 1.0;          /* 默认额定（disabled 语义） */
-        sp->speed_ref_ratio = 1.0;
-        sp->torque_limit_ratio = 1.0;
-        sp->ct_ref = 0.0;
-        sp->min_pitch_rad = 0.0;
+        sp->induction_seq = tc->ind_seq_applied;
+        sp->command_status_flags |= FCR_CMD_FLAG_INDUCTION_VALID;
     }
-
-    if (sp->valid) sp->command_status_flags |= FCR_CMD_FLAG_VALID;
 }
 
-/* WIN-09 debug: read acceptance counters */
 void fcr_command_store_debug_counters(uint32_t *yaw_accept, uint32_t *ind_accept,
-                                      uint32_t *yaw_latch, uint32_t *ind_latch) {
+                                      uint32_t *yaw_latch, uint32_t *ind_latch)
+{
     if (yaw_accept) *yaw_accept = g_dbg_yaw_accept;
     if (ind_accept) *ind_accept = g_dbg_ind_accept;
     if (yaw_latch) *yaw_latch = g_dbg_yaw_latch;
-    if (ind_latch) *ind_latch = 0;
+    if (ind_latch) *ind_latch = g_dbg_ind_latch;
 }

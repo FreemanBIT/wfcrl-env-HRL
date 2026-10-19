@@ -56,7 +56,7 @@ void fcr_yaw_manager_update(FcrYawActionManager *mgr, int32_t turbine_id,
 
     /* 目标锁存后固定；未锁存（方位未知）则不更新目标 */
     if (tc->yaw_target_latched) {
-        st->target_heading_rad = tc->yaw_target_heading;
+        st->target_heading_rad = tc->yaw_target_heading_rad;
     }
 
     if (fcr_is_finite(heading_now_rad)) {

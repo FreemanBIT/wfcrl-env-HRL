@@ -67,7 +67,7 @@ void fcr_state_aggregator_destroy(FcrStateAggregator *a)
 
 /* 发布事件驱动（10 ms）：ROSCO fast state 样本 */
 void fcr_state_aggregator_feed_fast(FcrStateAggregator *a, int32_t turbine_id,
-                                    const FcrRoscoFastState *st)
+                                    const FcrRoscoRawState *st)
 {
     FcrSignalStatistics *s;
     if (!a || !st) return;
@@ -86,7 +86,7 @@ void fcr_state_aggregator_feed_extra(FcrStateAggregator *a, const FcrTurbineExtr
     if (st->turbine_id < 1 || st->turbine_id > (int32_t)a->n_turbines) return;
     if (!st->valid) return;
     fcr_signal_stat_update(a->rotor_thrust[st->turbine_id - 1], st->source_time_s,
-                           st->rotor_thrust_n);
+                           st->rotor_aero_thrust_n);
     /* tower base 不可得（NaN）→ 不进入统计（保持 invalid） */
     if (isfinite(st->tower_base_fa_moment_nm)) {
         fcr_signal_stat_update(a->tower_base_fa[st->turbine_id - 1], st->source_time_s,
@@ -106,8 +106,8 @@ void fcr_state_aggregator_build_frame(FcrStateAggregator *a, const FcrStateStore
     if (!a || !ss || !out) return;
     memset(out, 0, sizeof(*out));
     out->protocol_version = FCR_PROTOCOL_VERSION;
-    out->frame_seq = (uint32_t)(++a->frame_seq);
-    out->sim_time_s = ss->sim_time_s;
+    out->state_frame_seq = (uint64_t)(++a->frame_seq);
+    out->state_sample_sim_time_s = ss->sim_time_s;
     out->fast_step = ss->fast_step;
     out->low_step = ss->low_step;
     out->rt_health_flags = ss->rt_health_flags;
@@ -117,13 +117,14 @@ void fcr_state_aggregator_build_frame(FcrStateAggregator *a, const FcrStateStore
 
     for (i = 0; i < a->n_turbines && i < ss->n_turbines; ++i) {
         FcrFarmTurbineState *ts = &out->turbines[i];
-        const FcrRoscoFastState *f = &ss->fast[i];
+        const FcrRoscoRawState *f = &ss->fast[i];
         const FcrTurbineExtraState *e = &ss->extra[i];
         ts->turbine_id = (int32_t)(i + 1);
         if (!f->valid) continue;
         ts->valid = 1;
         ts->source_time_s = f->source_time_s;
-        ts->nacelle_heading_rad = f->nacelle_heading_rad;
+        ts->nacelle_heading_actual_rad = f->nacelle_heading_rad;
+        ts->collective_pitch_actual_rad = f->blade_pitch_rad[0];
         ts->nacelle_vane_rad = f->nacelle_vane_rad;
         ts->hub_wind_speed_mps = f->hub_wind_speed_mps;
         ts->rotor_speed_rad_s = f->rotor_speed_rad_s;
@@ -132,13 +133,18 @@ void fcr_state_aggregator_build_frame(FcrStateAggregator *a, const FcrStateStore
         ts->yaw_target_heading_rad = f->yaw_target_heading_rad;
         ts->yaw_seq_applied = f->yaw_seq_applied;
         ts->induction_seq_applied = f->induction_seq_applied;
-        ts->controller_status_flags = f->controller_status_flags;
+        ts->controller_status_flags = f->rosco_controller_status_flags;
+        ts->turbine_status_flags = f->rosco_controller_status_flags;
+        ts->estimated_wind_mps = f->hub_wind_speed_mps;
+        ts->wind_source = FCR_WIND_SOURCE_ROSCO_WE;
+        ts->wind_quality_flags = FCR_WIND_QUALITY_OK;
+        ts->ct_hat = e->valid ? e->rotor_ct : 0.0;
         ts->rotor_ct = e->valid ? e->rotor_ct : 0.0;
         ts->rotor_cp = e->valid ? e->rotor_cp : 0.0;
 
         /* 1 s 统计结果 */
         fcr_signal_stat_get(a->gen_power[i], &ts->gen_power_w);
-        fcr_signal_stat_get(a->rotor_thrust[i], &ts->rotor_thrust_n);
+        fcr_signal_stat_get(a->rotor_thrust[i], &ts->rotor_aero_thrust_n);
         fcr_signal_stat_get(a->tower_base_fa[i], &ts->tower_base_fa_moment_nm);
         fcr_signal_stat_get(a->tower_base_ss[i], &ts->tower_base_ss_moment_nm);
         if (!ts->gen_power_w.valid) {

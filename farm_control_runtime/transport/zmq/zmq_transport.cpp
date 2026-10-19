@@ -137,7 +137,7 @@ static unsigned __stdcall cmd_thread_fn(void *arg)
             for (uint32_t ti = 0; ti < frame.n_turbines && ti < FCR_MAX_TURBINES; ++ti) {
                 const FcrTurbineCommand *tc = &frame.turbines[ti];
                 if ((tc->yaw_valid || tc->induction_valid) &&
-                    tc->source_time_s > 0.0 && tc->source_time_s < 1.0e12) {
+                    tc->command_basis_sim_time_s > 0.0 && tc->command_basis_sim_time_s < 1.0e12) {
                     any_valid = true;
                     break;
                 }

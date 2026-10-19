@@ -32,10 +32,10 @@ static void test_baseline_mapping(void)
     ASSERT(st.valid == 1);
     ASSERT(st.seq_applied == 1);
     ASSERT_NEAR(st.ct_ref, 8.0 / 9.0, 1e-9);
-    ASSERT_NEAR(st.power_ratio, 1.0, 1e-6);
-    ASSERT_NEAR(st.speed_ref_ratio, 1.0, 1e-6);
-    ASSERT_NEAR(st.torque_limit_ratio, 1.0, 1e-6);
-    ASSERT_NEAR(st.min_pitch_rad, 0.0, 1e-9);
+    ASSERT_NEAR(st.r_pitch, 1.0, 1e-6);
+    ASSERT_NEAR(st.r_speed, 1.0, 1e-6);
+    ASSERT_NEAR(st.r_torque, 1.0, 1e-6);
+    ASSERT_NEAR(st.min_pitch_ref_rad, 0.0, 1e-9);
 
     memset(&sp, 0, sizeof(sp));
     fcr_induction_supervisor_apply(s, 1, &sp);
@@ -51,27 +51,70 @@ static void test_derating_mapping(void)
     FcrInductionSupervisor *s = fcr_induction_supervisor_create(1, NULL);
     FcrTurbineCommandState tc;
     FcrInductionState st;
+    double pr, pe, pe0;
 
-    /* a = 0.2（降载）：power_ratio < 1, min_pitch > 0 */
+    /* a = 0.2（降载）：r_pitch < 1, min_pitch > 0 */
     make_ind_cmd(&tc, 1, 0.2, 10.0);
     fcr_induction_supervisor_update(s, 1, &tc, 0.0);
     fcr_induction_supervisor_get(s, 1, &st);
     ASSERT(st.valid == 1);
-    ASSERT(st.power_ratio < 1.0 && st.power_ratio > 0.0);
+    ASSERT(st.fallback == 0);
+    ASSERT(st.r_pitch < 1.0 && st.r_pitch > 0.0);
     ASSERT(st.ct_ref < 8.0 / 9.0);
-    /* P ∝ ω^3 → speed_ratio = pr^(1/3) > pr；T = P/ω → torque_ratio = pr^(2/3) */
-    ASSERT(st.speed_ref_ratio > st.power_ratio);
-    ASSERT(st.torque_limit_ratio > st.power_ratio);
-    ASSERT(st.speed_ref_ratio > st.torque_limit_ratio);
-    ASSERT(st.min_pitch_rad > 0.0);
 
-    /* a = 0.45（边界）：ct = 0.99 封顶？ 4*0.45*0.55=0.99 */
-    make_ind_cmd(&tc, 2, 0.45, 10.0);
+    /* 解析校验：pr = [a(1-a)^2] / [a0(1-a0)^2]，a0 = 1/3 → pr = 0.864 */
+    pe  = 0.2 * 0.8 * 0.8;
+    pe0 = (1.0 / 3.0) * (2.0 / 3.0) * (2.0 / 3.0);
+    pr  = pe / pe0;
+    ASSERT_NEAR(st.r_pitch, pr, 1e-12);
+    ASSERT_NEAR(st.r_speed, pow(pr, 1.0 / 3.0), 1e-12);
+    ASSERT_NEAR(st.r_torque, pow(pr, 2.0 / 3.0), 1e-12);
+    ASSERT_NEAR(st.ct_ref, 4.0 * 0.2 * 0.8, 1e-12);
+    /* P ∝ ω^3 → r_speed = pr^(1/3)；T = P/ω → r_torque = pr^(2/3) */
+    ASSERT(st.r_speed > st.r_torque);
+    ASSERT(st.r_torque > st.r_pitch);
+    ASSERT_NEAR(st.min_pitch_ref_rad, 0.55 * (1.0 - pr), 1e-12);
+    ASSERT(st.min_pitch_ref_rad > 0.0);
+
+    /* a = a_max = 1/3（基线边界）：不降载 */
+    make_ind_cmd(&tc, 2, 1.0 / 3.0, 10.0);
     fcr_induction_supervisor_update(s, 1, &tc, 0.5);
     fcr_induction_supervisor_get(s, 1, &st);
     ASSERT(st.valid == 1);
-    ASSERT_NEAR(st.ct_ref, 4.0 * 0.45 * 0.55, 1e-9);
+    ASSERT_NEAR(st.r_pitch, 1.0, 1e-9);
+    ASSERT_NEAR(st.ct_ref, 8.0 / 9.0, 1e-9);
+    ASSERT_NEAR(st.min_pitch_ref_rad, 0.0, 1e-12);
 
+    /* a = 0.45 > a_max → fallback（安全默认：不降载，valid=0） */
+    make_ind_cmd(&tc, 3, 0.45, 10.0);
+    fcr_induction_supervisor_update(s, 1, &tc, 1.0);
+    fcr_induction_supervisor_get(s, 1, &st);
+    ASSERT(st.fallback == 1);
+    ASSERT(st.valid == 0);
+    ASSERT_NEAR(st.r_pitch, 1.0, 1e-9);
+    ASSERT_NEAR(st.ct_ref, 8.0 / 9.0, 1e-9);
+
+    fcr_induction_supervisor_destroy(s);
+}
+
+/* 回归门禁：FcrInductionMapConfig 默认配置装配必须正确。
+ * 背景（真实缺陷）：v1.5 重构把 power_cap 移到结构体中部，但
+ * induction_supervisor.c 仍用位置初始化，导致 power_cap=0.55、
+ * min_pitch_gain=0.30、min_pitch_max=1.0 —— r_pitch 被错误钳到 0.55，
+ * 诱导通道严重过度降载（会直接破坏 300s 诱导回归 -15.8% 的判据）。 */
+static void test_config_wiring(void)
+{
+    FcrInductionSupervisor *s = fcr_induction_supervisor_create(1, NULL);
+    const FcrInductionMapConfig *c = fcr_induction_supervisor_cfg(s);
+    ASSERT(s != NULL);
+    ASSERT(c != NULL);
+    ASSERT_NEAR(c->a0, 1.0 / 3.0, 1e-12);
+    ASSERT_NEAR(c->a_min, 0.05, 1e-12);
+    ASSERT_NEAR(c->a_max, 1.0 / 3.0, 1e-12);
+    ASSERT_NEAR(c->ct_coef, 1.0, 1e-12);
+    ASSERT_NEAR(c->min_pitch_gain, 0.55, 1e-12);
+    ASSERT_NEAR(c->min_pitch_max, 0.30, 1e-12);
+    ASSERT_NEAR(c->power_cap, 1.0, 1e-12);   /* 关键：不得为 0.55 */
     fcr_induction_supervisor_destroy(s);
 }
 
@@ -86,8 +129,8 @@ static void test_fallback_on_out_of_range(void)
     fcr_induction_supervisor_update(s, 1, &tc, 0.0);
     fcr_induction_supervisor_get(s, 1, &st);
     ASSERT(st.fallback == 1);
-    ASSERT_NEAR(st.power_ratio, 1.0, 1e-9);
-    ASSERT_NEAR(st.min_pitch_rad, 0.0, 1e-9);
+    ASSERT_NEAR(st.r_pitch, 1.0, 1e-9);
+    ASSERT_NEAR(st.min_pitch_ref_rad, 0.0, 1e-9);
 
     /* 越界（a=0.8）同样 fallback */
     make_ind_cmd(&tc, 2, 0.8, 10.0);
@@ -147,7 +190,7 @@ static void test_multi_turbine(void)
 
     memset(&sp, 0, sizeof(sp));
     fcr_induction_supervisor_apply(s, 1, &sp);
-    ASSERT((sp.power_ratio > 0.0) && (sp.power_ratio < 1.0));
+    ASSERT((sp.r_pitch > 0.0) && (sp.r_pitch < 1.0));
     memset(&sp, 0, sizeof(sp));
     fcr_induction_supervisor_apply(s, 2, &sp);
     fcr_induction_supervisor_get(s, 2, &st);
@@ -160,6 +203,7 @@ void test_induction_supervisor_register(void)
 {
     RUN_TEST("baseline_mapping", test_baseline_mapping);
     RUN_TEST("derating_mapping", test_derating_mapping);
+    RUN_TEST("config_wiring", test_config_wiring);
     RUN_TEST("fallback_on_out_of_range", test_fallback_on_out_of_range);
     RUN_TEST("seq_zoh_and_disable", test_seq_zoh_and_disable);
     RUN_TEST("multi_turbine", test_multi_turbine);

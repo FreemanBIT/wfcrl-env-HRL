@@ -42,7 +42,7 @@ static void test_provider_extra_mapping(void)
     ASSERT(fcr_state_store_get_extra(rt->ss, 1, &st) == 0);
     ASSERT(st.valid == 1);
     ASSERT_NEAR(st.shaft_torque_nm, 3.0e6, 1.0);
-    ASSERT_NEAR(st.rotor_thrust_n, 5.5e5, 1.0);
+    ASSERT_NEAR(st.rotor_aero_thrust_n, 5.5e5, 1.0);   /* ICD v1.5 S0208 */
     ASSERT_NEAR(st.load_point_f[0][0], 5.5e5, 1.0);   /* Fx = thrust */
     ASSERT_NEAR(st.load_point_f[1][0], 1.2e4, 1.0);
     ASSERT_NEAR(st.load_point_f[2][0], -3.0e3, 1.0);
@@ -79,7 +79,7 @@ static void test_provider_turbine_routing(void)
     memset(&st, 0, sizeof(st));
     ASSERT(fcr_state_store_get_extra(rt->ss, 1, &st) == 0);
     ASSERT(st.valid == 1);
-    ASSERT_NEAR(st.rotor_thrust_n, 4.0e5, 1.0);
+    ASSERT_NEAR(st.rotor_aero_thrust_n, 4.0e5, 1.0);
     memset(&st, 0, sizeof(st));
     ASSERT(fcr_state_store_get_extra(rt->ss, 2, &st) == 0);
     ASSERT(st.valid == 0);

@@ -37,8 +37,9 @@ MODULE FarmControlInterface
    ! ---- 公开接口 ----
    PUBLIC :: FCR_Init, FCR_Step, FCR_PublishState, FCR_Shutdown
    PUBLIC :: FCR_IsExternalEnabled, FCR_IsYawExternal, FCR_GetYawTargetHeadingDeg, &
-             FCR_GetYawSeqApplied, FCR_GetPowerRatio, FCR_GetMinPitchDeg, &
-             FCR_GetCommandStatusFlags, FCR_Setpoint, FCR_CurrentTurbineId, FCR_PublishExtra, FCR_ProviderInit, FCR_ApplyReferences
+             FCR_GetYawSeqApplied, FCR_GetRPitch, FCR_GetRSpeed, FCR_GetRTorque, &
+             FCR_GetMinPitchDeg, FCR_GetCommandStatusFlags, FCR_Setpoint, &
+             FCR_CurrentTurbineId, FCR_PublishExtra, FCR_ProviderInit, FCR_ApplyReferences
 
 CONTAINS
 
@@ -120,16 +121,16 @@ CONTAINS
       st%nacelle_imu_fa_acc_mps2 = LocalVar%NacIMU_FA_RAcc
       st%rotor_azimuth_rad = LocalVar%Azimuth
       ! 最终命令（avrSWAP 输出槽，控制计算完成后）：
-      st%gen_torque_cmd_nm = avrSWAP(47)
+      st%generator_torque_command_nm = avrSWAP(47)
       st%yaw_rate_cmd_rad_s = avrSWAP(48)
-      st%pitch_cmd_rad(1) = avrSWAP(42)
-      st%pitch_cmd_rad(2) = avrSWAP(43)
-      st%pitch_cmd_rad(3) = avrSWAP(44)
+      st%pitch_command_rad(1) = avrSWAP(42)
+      st%pitch_command_rad(2) = avrSWAP(43)
+      st%pitch_command_rad(3) = avrSWAP(44)
       st%yaw_target_heading_rad = 0.0_C_DOUBLE
       st%yaw_seq_applied = 0
       st%induction_seq_applied = 0
       IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
-         IF (setpoint_(turbine_id)%yaw_enable /= 0) THEN
+         IF (setpoint_(turbine_id)%external_yaw_enable /= 0) THEN
             st%yaw_target_heading_rad = setpoint_(turbine_id)%yaw_target_heading_rad
             st%yaw_seq_applied = setpoint_(turbine_id)%yaw_seq
          END IF
@@ -191,17 +192,17 @@ CONTAINS
       ! WIN-02+WIN-03: independent channel evaluation
       ! pitch channel: power_ratio < 1 means derating via PRC_R_Pitch
       pitch_active  = sp%induction_enable /= 0 .AND. &
-                      sp%power_ratio < 1.0_8 - 1.0e-6_8
+                      sp%r_pitch < 1.0_8 - 1.0e-6_8
       ! speed channel: speed_ref_ratio differs from 1
       speed_active  = sp%induction_enable /= 0 .AND. &
-                      ABS(sp%speed_ref_ratio - 1.0_8) > 1.0e-6_8 .AND. &
-                      sp%speed_ref_ratio > 0.0_8
+                      ABS(sp%r_speed - 1.0_8) > 1.0e-6_8 .AND. &
+                      sp%r_speed > 0.0_8
       ! torque channel: torque_limit_ratio differs from 1
       torque_active = sp%induction_enable /= 0 .AND. &
-                      ABS(sp%torque_limit_ratio - 1.0_8) > 1.0e-6_8 .AND. &
-                      sp%torque_limit_ratio > 0.0_8
+                      ABS(sp%r_torque - 1.0_8) > 1.0e-6_8 .AND. &
+                      sp%r_torque > 0.0_8
       any_active = pitch_active .OR. speed_active .OR. torque_active .OR. &
-                   (sp%induction_enable /= 0 .AND. sp%min_pitch_rad > 0.001_8)
+                   (sp%induction_enable /= 0 .AND. sp%min_pitch_ref_rad > 0.001_8)
 
       IF (.NOT. any_active) THEN
          ! disabled or no-op: full ROSCO fallback
@@ -215,35 +216,38 @@ CONTAINS
       END IF
 
       ! --- pitch channel (PRC derating via PRC_R_Pitch -> PRC_Min_Pitch) ---
+      ! S0803: r_pitch = PRC桨距降载比例
       IF (pitch_active) THEN
          CntrPar%PRC_Mode = 2
          CntrPar%PRC_Comm = 0
-         CntrPar%PRC_R_Pitch = sp%power_ratio
+         CntrPar%PRC_R_Pitch = sp%r_pitch
          CntrPar%VS_ConstPower = 1
-         CntrPar%VS_RtPwr = VS_RtPwr_nom(tid) * sp%power_ratio
-         ! WIN-03: PS_Mode=1 required for PitchSaturation to apply PRC_Min_Pitch
+         CntrPar%VS_RtPwr = VS_RtPwr_nom(tid) * sp%r_pitch
+         ! PS_Mode=1 required for PitchSaturation to apply PRC_Min_Pitch
          CntrPar%PS_Mode = 1
       END IF
 
       ! --- speed channel (PRC_R_Speed -> WSE_TSR scaling) ---
+      ! S0804: r_speed = PRC转速参考比例
       IF (speed_active) THEN
          CntrPar%PRC_Mode = 2
          CntrPar%PRC_Comm = 0
-         CntrPar%PRC_R_Speed = sp%speed_ref_ratio
+         CntrPar%PRC_R_Speed = sp%r_speed
       END IF
 
       ! --- torque channel (PRC_R_Torque -> VS_MaxTq scaling) ---
+      ! S0805: r_torque = PRC转矩参考/额定比例
       IF (torque_active) THEN
          CntrPar%PRC_Mode = 2
          CntrPar%PRC_Comm = 0
-         CntrPar%PRC_R_Torque = sp%torque_limit_ratio
-         CntrPar%VS_MaxTq = VS_MaxTq_nom(tid) * sp%torque_limit_ratio
+         CntrPar%PRC_R_Torque = sp%r_torque
+         CntrPar%VS_MaxTq = VS_MaxTq_nom(tid) * sp%r_torque
       END IF
 
-      ! --- WIN-02: min_pitch channel independent of power_ratio ---
-      ! Mode2 Ct feedforward sets min_pitch_rad even when power_ratio=1.
-      ! This must NOT be swallowed by the greedy sentinel.
-      IF (sp%induction_enable /= 0 .AND. sp%min_pitch_rad > 0.001_8) THEN
+      ! --- min_pitch channel independent of r_pitch ---
+      ! S0806: min_pitch_ref_rad = 额外最小桨距约束
+      ! Mode2 Ct feedforward sets min_pitch even when r_pitch=1.
+      IF (sp%induction_enable /= 0 .AND. sp%min_pitch_ref_rad > 0.001_8) THEN
          CntrPar%PS_Mode = 1
          CntrPar%PS_BldPitchMin_N = 1
          IF (.NOT. ALLOCATED(CntrPar%PS_BldPitchMin)) &
@@ -251,8 +255,11 @@ CONTAINS
          IF (.NOT. ALLOCATED(CntrPar%PS_WindSpeeds)) &
             ALLOCATE(CntrPar%PS_WindSpeeds(1))
          CntrPar%PS_WindSpeeds(1)  = 0.0
-         CntrPar%PS_BldPitchMin(1) = sp%min_pitch_rad
+         CntrPar%PS_BldPitchMin(1) = sp%min_pitch_ref_rad
       END IF
+
+      ! --- collective pitch offset (S0807) ---
+      ! Currently unused in ROSCO v2.10.6; reserved for future implementation.
    END SUBROUTINE FCR_ApplyReferences
 
 
@@ -272,7 +279,7 @@ CONTAINS
       INTEGER, INTENT(IN) :: turbine_id
       r = .FALSE.
       IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
-         r = (setpoint_(turbine_id)%yaw_enable /= 0)
+         r = (setpoint_(turbine_id)%external_yaw_enable /= 0)
       ENDIF
    END FUNCTION FCR_IsYawExternal
 
@@ -293,19 +300,35 @@ CONTAINS
       ENDIF
    END FUNCTION FCR_GetYawSeqApplied
 
-   REAL(8) FUNCTION FCR_GetPowerRatio(turbine_id) RESULT(r)
+   REAL(8) FUNCTION FCR_GetRPitch(turbine_id) RESULT(r)
       INTEGER, INTENT(IN) :: turbine_id
       r = 1.0_8
       IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
-         r = setpoint_(turbine_id)%power_ratio
+         r = setpoint_(turbine_id)%r_pitch
       ENDIF
-   END FUNCTION FCR_GetPowerRatio
+   END FUNCTION FCR_GetRPitch
+
+   REAL(8) FUNCTION FCR_GetRSpeed(turbine_id) RESULT(r)
+      INTEGER, INTENT(IN) :: turbine_id
+      r = 1.0_8
+      IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
+         r = setpoint_(turbine_id)%r_speed
+      ENDIF
+   END FUNCTION FCR_GetRSpeed
+
+   REAL(8) FUNCTION FCR_GetRTorque(turbine_id) RESULT(r)
+      INTEGER, INTENT(IN) :: turbine_id
+      r = 1.0_8
+      IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
+         r = setpoint_(turbine_id)%r_torque
+      ENDIF
+   END FUNCTION FCR_GetRTorque
 
    REAL(8) FUNCTION FCR_GetMinPitchDeg(turbine_id) RESULT(r)
       INTEGER, INTENT(IN) :: turbine_id
       r = 0.0_8
       IF (turbine_id >= 1 .AND. turbine_id <= n_turbines_) THEN
-         r = setpoint_(turbine_id)%min_pitch_rad * 180.0_8 / 3.141592653589793_8
+         r = setpoint_(turbine_id)%min_pitch_ref_rad * 180.0_8 / 3.141592653589793_8
       ENDIF
    END FUNCTION FCR_GetMinPitchDeg
 

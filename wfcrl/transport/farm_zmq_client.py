@@ -14,14 +14,22 @@ import threading
 import time
 from typing import Optional
 
+import struct
 import zmq
 
 from .farm_protocol import (
     FarmCommandFrame,
+    FarmStateFrame,
+    FcrFarmTurbineState,
+    FCR_MAX_TURBINES,
+    FCR_STATE_FRAME_SIZE,
+    FCR_STATE_FRAME_HEADER_SIZE,
+    FCR_TURBINE_STATE_SIZE,
     frame_to_bytes,
     new_command_frame,
     set_yaw_cmd,
     set_induction_cmd,
+    yaw_delta_cw_to_absolute_ccw,
 )
 
 class FarmZmqClient:
@@ -40,6 +48,7 @@ class FarmZmqClient:
         self._stop = threading.Event()
         self._latest_state: Optional[bytes] = None
         self._turbine_slots: dict = {}
+        self._last_heading: dict = {}      # tid -> 最新实际机舱方位 (rad, CCW+)
         self._frame_header: Optional[bytes] = None
         self._state_lock = threading.Lock()
         self._frame_seq = 0
@@ -77,8 +86,13 @@ class FarmZmqClient:
         self._recv_thread.start()
         self._started = True
 
-    _FRAME_HEADER = 56   # FarmStateFrame.turbines 实际偏移（flow_seq@48 + 8 对齐）
-    _TURBINE_SIZE = 360
+    # ICD v1.5：全部由 farm_protocol.py 的 ctypes 镜像派生，禁止再硬编码。
+    # （v1.4 遗留的 56/360/23096 与 36 偏移曾导致所有状态帧被静默丢弃）
+    _FRAME_HEADER = FCR_STATE_FRAME_HEADER_SIZE        # FarmStateFrame.turbines 偏移 = 64
+    _TURBINE_SIZE = FCR_TURBINE_STATE_SIZE             # FcrFarmTurbineState = 400
+    _FRAME_SIZE = FCR_STATE_FRAME_SIZE                 # FarmStateFrame = 25664
+    _N_TURBINES_OFF = FarmStateFrame.n_turbines.offset            # = 44
+    _HEADING_OFF = FcrFarmTurbineState.nacelle_heading_actual_rad.offset  # = 232
 
     def _recv_loop(self) -> None:
         while not self._stop.is_set():
@@ -90,17 +104,20 @@ class FarmZmqClient:
             if msg is None or len(msg) == 0:
                 continue
             raw = bytes(msg)
-            if len(raw) != 23096:
+            if len(raw) != self._FRAME_SIZE:
                 continue
             with self._state_lock:
                 self._latest_state = raw
                 self._frame_header = raw[: self._FRAME_HEADER]
-                for i in range(64):
+                for i in range(FCR_MAX_TURBINES):
                     base = self._FRAME_HEADER + i * self._TURBINE_SIZE
                     tid = int.from_bytes(raw[base : base + 4], "little", signed=True)
                     valid = int.from_bytes(raw[base + 4 : base + 8], "little")
                     if tid >= 1 and valid:
                         self._turbine_slots[tid] = raw[base : base + self._TURBINE_SIZE]
+                        # 记录该机最新实际机舱方位（CCW+），供 yaw 增量→绝对目标换算
+                        self._last_heading[tid] = struct.unpack_from(
+                            "<d", raw, base + self._HEADING_OFF)[0]
             self._recv_thread = None
         for s in (self._state_sock, self._cmd_sock):
             if s is not None:
@@ -138,9 +155,10 @@ class FarmZmqClient:
         if self._frame_header is None or not self._turbine_slots:
             return self._latest_state
         buf = bytearray(self._frame_header)
-        # FarmStateFrame.n_turbines 在偏移 36（u32）
-        buf[36:40] = int(max(self._turbine_slots)).to_bytes(4, "little")
-        for i in range(64):
+        # FarmStateFrame.n_turbines（v1.5 偏移 44；由镜像派生，勿硬编码）
+        buf[self._N_TURBINES_OFF : self._N_TURBINES_OFF + 4] = \
+            int(max(self._turbine_slots)).to_bytes(4, "little")
+        for i in range(FCR_MAX_TURBINES):
             tid = i + 1
             if tid in self._turbine_slots:
                 buf.extend(self._turbine_slots[tid])
@@ -166,19 +184,42 @@ class FarmZmqClient:
         if not self._started or self._cmd_sock is None:
             raise RuntimeError("client not started")
         self._frame_seq += 1
-        frame.frame_seq = self._frame_seq
-        frame.commit_seq = self._frame_seq
+        frame.command_frame_seq = self._frame_seq   # ICD v1.5 S0101（commit_seq 已删除）
         self._cmd_sock.send(frame_to_bytes(frame))
 
     def send_yaw_delta(self, turbine_id: int, delta_rad: float,
-                       seq: Optional[int] = None, ttl_s: float = 60.0) -> None:
-        """异步下发单机偏航增量（全场帧：各 WT 进程按槽位领取自己命令）"""
+                       seq: Optional[int] = None, ttl_s: float = 60.0,
+                       heading_now_rad: Optional[float] = None) -> None:
+        """异步下发单机偏航**增量**（CW+，动作指令语义；全场帧按槽位领取）。
+
+        ICD v1.5 线协议只承载**绝对目标**（S0108, CCW+），因此这里在客户端
+        把增量换算为绝对目标：
+            target = wrap_pm_pi(heading_now - delta)
+        与 bridge/yaw_adapter.c 的 fcr_yaw_adapter_delta_to_target 严格等价。
+
+        heading_now_rad 缺省取最近一次收到的该机实际机舱方位；若尚未收到任何
+        状态帧则按 0.0（机舱初始正对风，与基线场景 NacYaw=0 一致）。
+        """
+        if seq is None:
+            self._yaw_seq += 1
+            seq = self._yaw_seq
+        if heading_now_rad is None:
+            heading_now_rad = self._last_heading.get(turbine_id, 0.0)
+        target_rad = yaw_delta_cw_to_absolute_ccw(delta_rad, heading_now_rad)
+        nt = self._n_turbines or turbine_id
+        frame = new_command_frame(nt, self._frame_seq + 1)
+        set_yaw_cmd(frame, turbine_id, target_rad, seq, ttl_s)
+        self._send_frame(frame)
+
+    def send_yaw_target(self, turbine_id: int, target_heading_rad: float,
+                        seq: Optional[int] = None, ttl_s: float = 60.0) -> None:
+        """异步下发单机偏航**绝对目标**（CCW+，ICD v1.5 S0108 正式通道）。"""
         if seq is None:
             self._yaw_seq += 1
             seq = self._yaw_seq
         nt = self._n_turbines or turbine_id
         frame = new_command_frame(nt, self._frame_seq + 1)
-        set_yaw_cmd(frame, turbine_id, delta_rad, seq, ttl_s)
+        set_yaw_cmd(frame, turbine_id, target_heading_rad, seq, ttl_s)
         self._send_frame(frame)
 
     def send_induction(self, turbine_id: int, induction_ref: float,

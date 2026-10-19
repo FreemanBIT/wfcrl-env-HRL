@@ -83,19 +83,19 @@ static void test_step_modes(void) {
     rc = fcr_bridge_core_step(core, 1, 10.0, &sp);
     ASSERT(rc == 0);
     ASSERT(sp.induction_enable == 1);
-    /* 默认纯 r_pitch：power_ratio = R_power < 1；speed/torque = 1 */
-    ASSERT(sp.power_ratio < 1.0);
-    ASSERT_NEAR(sp.speed_ref_ratio, 1.0, 1e-9);
-    ASSERT_NEAR(sp.torque_limit_ratio, 1.0, 1e-9);
+    /* 默认纯 r_pitch：r_pitch = R_power < 1；speed/torque = 1 */
+    ASSERT(sp.r_pitch < 1.0);
+    ASSERT_NEAR(sp.r_speed, 1.0, 1e-9);
+    ASSERT_NEAR(sp.r_torque, 1.0, 1e-9);
 
     /* 控制分配：显式三通道权重 0.4/0.3/0.3 */
     cmd.alloc_w_pitch = 0.4; cmd.alloc_w_speed = 0.3; cmd.alloc_w_torque = 0.3;
     cmd.induction_seq = 2;
     fcr_bridge_core_set_command(core, &cmd);
     fcr_bridge_core_step(core, 1, 11.0, &sp);
-    ASSERT(sp.power_ratio < 1.0);
-    ASSERT(sp.speed_ref_ratio < 1.0);
-    ASSERT(sp.torque_limit_ratio < 1.0);
+    ASSERT(sp.r_pitch < 1.0);
+    ASSERT(sp.r_speed < 1.0);
+    ASSERT(sp.r_torque < 1.0);
     /* 分配守恒：总降载 = 0.4*dr_p + 0.3*dr_s + 0.3*dr_t（近似） */
 
     /* T2 = Mode2 Ct 前馈 */
@@ -123,8 +123,8 @@ static void test_step_modes(void) {
     fcr_bridge_core_set_meas(core, &meas);
     fcr_bridge_core_step(core, 2, 10.0, &sp);
     ASSERT(sp.induction_enable == 1);
-    /* Mode2 输出 min_pitch_rad（可能有值）且 power_ratio=1 */
-    ASSERT_NEAR(sp.power_ratio, 1.0, 1e-9);
+    /* Mode2 输出 min_pitch_ref_rad（可能有值）且 r_pitch=1 */
+    ASSERT_NEAR(sp.r_pitch, 1.0, 1e-9);
 
     fcr_bridge_core_destroy(core);
 }
@@ -143,8 +143,8 @@ static void test_step_mode0(void) {
     fcr_bridge_core_set_command(core, &cmd);
     fcr_bridge_core_step(core, 1, 5.0, &sp);
     ASSERT(sp.induction_enable == 0);
-    ASSERT_NEAR(sp.power_ratio, 1.0, 1e-9);
-    ASSERT_NEAR(sp.min_pitch_rad, 0.0, 1e-9);
+    ASSERT_NEAR(sp.r_pitch, 1.0, 1e-9);
+    ASSERT_NEAR(sp.min_pitch_ref_rad, 0.0, 1e-9);
     fcr_bridge_core_destroy(core);
 }
 

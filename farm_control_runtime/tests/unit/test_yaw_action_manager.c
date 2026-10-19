@@ -1,7 +1,14 @@
 /*
- * test_yaw_action_manager.c — 偏航动作监督测试（Phase 3）
- * 覆盖：0° +5° CW / 0° -5° / ±180° wrap / 重复 seq /
- *       induction 不影响 yaw / 执行中目标固定 / disabled 回退。
+ * test_yaw_action_manager.c — 偏航动作监督测试（ICD v1.5）
+ *
+ * ICD v1.5 语义变更（重要）：
+ *   - 命令侧**只有绝对目标** `yaw_target_heading_rad`(S0108)，`yaw_delta_rad` 已删除。
+ *     旧测试的 "+5° CW" 现在等价于直接下发绝对目标 -5°（CCW+ 约定）。
+ *   - CommandStore 不再做 delta→heading 计算与 wrap；目标原样锁存。
+ *   - 所有命令必须带 `control_enable = 1`(S0104)，否则 refresh 会走回退分支清空通道。
+ *
+ * 覆盖：绝对目标锁存 / 误差 wrap / 重复 seq / induction 不影响 yaw /
+ *       执行中目标固定 / TTL 到期回退。
  */
 #include "test_framework.h"
 #include "fcr_internal.h"
@@ -10,7 +17,22 @@
 #define PI 3.14159265358979323846
 #define D2R(d) ((d) * PI / 180.0)
 
-static void test_plus5_cw(void)
+/* 构造单机命令帧（绝对偏航目标 + 可选诱导） */
+static void mk_frame(FarmCommandFrame *fr, uint64_t frame_seq, uint64_t yaw_seq,
+                     double yaw_target_rad, double yaw_ttl_s)
+{
+    memset(fr, 0, sizeof(*fr));
+    fr->protocol_version = FCR_PROTOCOL_VERSION;
+    fr->command_frame_seq = frame_seq;      /* S0101 */
+    fr->n_turbines = 1;
+    fr->turbines[0].control_enable = 1;     /* S0104 */
+    fr->turbines[0].yaw_valid = 1;          /* S0110 */
+    fr->turbines[0].yaw_seq = yaw_seq;      /* S0109 */
+    fr->turbines[0].yaw_target_heading_rad = yaw_target_rad; /* S0108 绝对目标 */
+    fr->turbines[0].yaw_ttl_s = yaw_ttl_s;
+}
+
+static void test_absolute_target_negative(void)
 {
     FcrCommandStore *cs = fcr_command_store_create(1, 60.0, 1.0, 5.0, 1.0);
     FcrYawActionManager *mgr = fcr_yaw_manager_create(1, D2R(0.5));
@@ -18,20 +40,17 @@ static void test_plus5_cw(void)
     FcrYawActionState st;
     double heading = 0.0;
 
-    memset(&fr, 0, sizeof(fr));
-    fr.protocol_version = FCR_PROTOCOL_VERSION; fr.frame_seq = 1; fr.n_turbines = 1;
-    fr.turbines[0].yaw_valid = 1; fr.turbines[0].yaw_seq = 1;
-    fr.turbines[0].yaw_delta_rad = D2R(5.0); fr.turbines[0].yaw_ttl_s = 60.0;
+    /* 绝对目标 -5°（等价于旧协议的 "+5° CW"） */
+    mk_frame(&fr, 1, 1, D2R(-5.0), 60.0);
     ASSERT(fcr_command_store_accept_frame(cs, &fr) == 0);
 
-    /* 锁存：heading=0 + 5°CW → target=-5°（内部） */
     fcr_command_store_refresh(cs, 0.0, &heading, 1);
     fcr_yaw_manager_update(mgr, 1, fcr_command_store_turbine(cs, 1), heading, 0.0);
     fcr_yaw_manager_get(mgr, 1, &st);
     ASSERT(st.valid == 1);
     ASSERT(st.seq == 1);
-    ASSERT_NEAR(st.target_heading_rad, D2R(-5.0), 1e-12);
-    ASSERT(st.tracking == 1);  /* 0 → -5°，误差 -5° > deadband */
+    ASSERT_NEAR(st.target_heading_rad, D2R(-5.0), 1e-12);   /* 原样锁存，不取反 */
+    ASSERT(st.tracking == 1);                                /* 误差 -5° > deadband */
 
     /* 机舱转到 -5° → reached */
     heading = D2R(-5.0);
@@ -46,7 +65,7 @@ static void test_plus5_cw(void)
     fcr_command_store_destroy(cs);
 }
 
-static void test_minus5_cw(void)
+static void test_absolute_target_positive(void)
 {
     FcrCommandStore *cs = fcr_command_store_create(1, 60.0, 1.0, 5.0, 1.0);
     FcrYawActionManager *mgr = fcr_yaw_manager_create(1, D2R(0.5));
@@ -54,20 +73,20 @@ static void test_minus5_cw(void)
     FcrYawActionState st;
     double heading = 0.0;
 
-    memset(&fr, 0, sizeof(fr));
-    fr.protocol_version = FCR_PROTOCOL_VERSION; fr.frame_seq = 1; fr.n_turbines = 1;
-    fr.turbines[0].yaw_valid = 1; fr.turbines[0].yaw_seq = 1;
-    fr.turbines[0].yaw_delta_rad = D2R(-5.0); fr.turbines[0].yaw_ttl_s = 60.0;
+    mk_frame(&fr, 1, 1, D2R(5.0), 60.0);
     ASSERT(fcr_command_store_accept_frame(cs, &fr) == 0);
     fcr_command_store_refresh(cs, 0.0, &heading, 1);
     fcr_yaw_manager_update(mgr, 1, fcr_command_store_turbine(cs, 1), heading, 0.0);
     fcr_yaw_manager_get(mgr, 1, &st);
     ASSERT_NEAR(st.target_heading_rad, D2R(5.0), 1e-12);
+    ASSERT(st.tracking == 1);
+
     fcr_yaw_manager_destroy(mgr);
     fcr_command_store_destroy(cs);
 }
 
-static void test_wrap_180(void)
+/* 误差 wrap：目标 160°，机舱 -170° → 误差 330° → wrap 到 -30° */
+static void test_error_wrap_180(void)
 {
     FcrCommandStore *cs = fcr_command_store_create(1, 60.0, 1.0, 5.0, 1.0);
     FcrYawActionManager *mgr = fcr_yaw_manager_create(1, D2R(0.5));
@@ -75,30 +94,25 @@ static void test_wrap_180(void)
     FcrYawActionState st;
     double heading = D2R(170.0);
 
-    /* 机舱 170°，+30° CW → 140°（无 wrap） */
-    memset(&fr, 0, sizeof(fr));
-    fr.protocol_version = FCR_PROTOCOL_VERSION; fr.frame_seq = 1; fr.n_turbines = 1;
-    fr.turbines[0].yaw_valid = 1; fr.turbines[0].yaw_seq = 1;
-    fr.turbines[0].yaw_delta_rad = D2R(30.0); fr.turbines[0].yaw_ttl_s = 60.0;
+    /* 绝对目标 140°，机舱 170° → 误差 -30°（无 wrap 跨越） */
+    mk_frame(&fr, 1, 1, D2R(140.0), 60.0);
     ASSERT(fcr_command_store_accept_frame(cs, &fr) == 0);
     fcr_command_store_refresh(cs, 0.0, &heading, 1);
     fcr_yaw_manager_update(mgr, 1, fcr_command_store_turbine(cs, 1), heading, 0.0);
     fcr_yaw_manager_get(mgr, 1, &st);
     ASSERT_NEAR(st.target_heading_rad, D2R(140.0), 1e-9);
+    ASSERT_NEAR(st.error_rad, D2R(-30.0), 1e-9);
 
-    /* wrap：机舱 -170°，+30° CW → -200° → wrap → 160° */
+    /* wrap：绝对目标 160°，机舱 -170° → 160-(-170)=330 → wrap 到 -30° */
     heading = D2R(-170.0);
-    memset(&fr, 0, sizeof(fr));
-    fr.protocol_version = FCR_PROTOCOL_VERSION; fr.frame_seq = 2; fr.n_turbines = 1;
-    fr.turbines[0].yaw_valid = 1; fr.turbines[0].yaw_seq = 2;
-    fr.turbines[0].yaw_delta_rad = D2R(30.0); fr.turbines[0].yaw_ttl_s = 60.0;
+    mk_frame(&fr, 2, 2, D2R(160.0), 60.0);
     ASSERT(fcr_command_store_accept_frame(cs, &fr) == 0);
     fcr_command_store_refresh(cs, 0.0, &heading, 1);
     fcr_yaw_manager_update(mgr, 1, fcr_command_store_turbine(cs, 1), heading, 0.0);
     fcr_yaw_manager_get(mgr, 1, &st);
     ASSERT_NEAR(st.target_heading_rad, D2R(160.0), 1e-9);
-    /* 误差应为 wrap：160 - (-170) = 330 → -30° */
     ASSERT_NEAR(st.error_rad, D2R(-30.0), 1e-9);
+
     fcr_yaw_manager_destroy(mgr);
     fcr_command_store_destroy(cs);
 }
@@ -111,22 +125,23 @@ static void test_induction_does_not_affect_yaw(void)
     FcrYawActionState st;
     double heading = D2R(10.0);
 
-    /* yaw seq=1 + 20° CW，同时 induction（同帧，ind 通道） */
-    memset(&fr, 0, sizeof(fr));
-    fr.protocol_version = FCR_PROTOCOL_VERSION; fr.frame_seq = 1; fr.n_turbines = 1;
-    fr.turbines[0].yaw_valid = 1; fr.turbines[0].yaw_seq = 1;
-    fr.turbines[0].yaw_delta_rad = D2R(20.0); fr.turbines[0].yaw_ttl_s = 60.0;
-    fr.turbines[0].induction_valid = 1; fr.turbines[0].induction_seq = 1;
-    fr.turbines[0].induction_ref = 0.2; fr.turbines[0].induction_ttl_s = 1.0;
+    /* 绝对目标 -10° + 同帧 induction（独立通道） */
+    mk_frame(&fr, 1, 1, D2R(-10.0), 60.0);
+    fr.turbines[0].induction_valid = 1;
+    fr.turbines[0].induction_seq = 1;
+    fr.turbines[0].induction_ref = 0.2;
+    fr.turbines[0].induction_ttl_s = 1.0;
     ASSERT(fcr_command_store_accept_frame(cs, &fr) == 0);
     fcr_command_store_refresh(cs, 0.0, &heading, 1);
     fcr_yaw_manager_update(mgr, 1, fcr_command_store_turbine(cs, 1), heading, 0.0);
     fcr_yaw_manager_get(mgr, 1, &st);
-    ASSERT_NEAR(st.target_heading_rad, D2R(-10.0), 1e-12); /* 10 - 20 = -10 */
+    ASSERT_NEAR(st.target_heading_rad, D2R(-10.0), 1e-12);
 
     /* 只发 induction seq=2 —— yaw target 与 seq 均不变 */
     memset(&fr, 0, sizeof(fr));
-    fr.protocol_version = FCR_PROTOCOL_VERSION; fr.frame_seq = 2; fr.n_turbines = 1;
+    fr.protocol_version = FCR_PROTOCOL_VERSION;
+    fr.command_frame_seq = 2; fr.n_turbines = 1;
+    fr.turbines[0].control_enable = 1;
     fr.turbines[0].induction_valid = 1; fr.turbines[0].induction_seq = 2;
     fr.turbines[0].induction_ref = 0.3; fr.turbines[0].induction_ttl_s = 1.0;
     ASSERT(fcr_command_store_accept_frame(cs, &fr) == 0);
@@ -135,6 +150,7 @@ static void test_induction_does_not_affect_yaw(void)
     fcr_yaw_manager_get(mgr, 1, &st);
     ASSERT(st.seq == 1);
     ASSERT_NEAR(st.target_heading_rad, D2R(-10.0), 1e-12);
+
     fcr_yaw_manager_destroy(mgr);
     fcr_command_store_destroy(cs);
 }
@@ -146,16 +162,14 @@ static void test_target_fixed_during_execution(void)
     FarmCommandFrame fr;
     FcrYawActionState st;
     double heading = 0.0;
+    int step;
 
-    memset(&fr, 0, sizeof(fr));
-    fr.protocol_version = FCR_PROTOCOL_VERSION; fr.frame_seq = 1; fr.n_turbines = 1;
-    fr.turbines[0].yaw_valid = 1; fr.turbines[0].yaw_seq = 1;
-    fr.turbines[0].yaw_delta_rad = D2R(10.0); fr.turbines[0].yaw_ttl_s = 60.0;
+    mk_frame(&fr, 1, 1, D2R(-10.0), 60.0);
     fcr_command_store_accept_frame(cs, &fr);
     fcr_command_store_refresh(cs, 0.0, &heading, 1);
 
     /* 执行中机舱逐步接近，目标不变（seq 相同） */
-    for (int step = 1; step <= 10; ++step) {
+    for (step = 1; step <= 10; ++step) {
         heading = D2R(-1.0 * step);   /* 每次 -1° */
         fcr_command_store_refresh(cs, step * 0.1, &heading, 1);
         fcr_yaw_manager_update(mgr, 1, fcr_command_store_turbine(cs, 1), heading, step * 0.1);
@@ -166,11 +180,12 @@ static void test_target_fixed_during_execution(void)
     /* 最终到达 -10° → reached */
     fcr_yaw_manager_get(mgr, 1, &st);
     ASSERT(st.reached == 1);
+
     fcr_yaw_manager_destroy(mgr);
     fcr_command_store_destroy(cs);
 }
 
-static void test_disabled_rollback(void)
+static void test_ttl_expiry_rollback(void)
 {
     FcrCommandStore *cs = fcr_command_store_create(1, 60.0, 1.0, 5.0, 1.0);
     FcrYawActionManager *mgr = fcr_yaw_manager_create(1, D2R(0.5));
@@ -178,11 +193,7 @@ static void test_disabled_rollback(void)
     FcrYawActionState st;
     double heading = 0.0;
 
-    memset(&fr, 0, sizeof(fr));
-    fr.protocol_version = FCR_PROTOCOL_VERSION; fr.frame_seq = 1; fr.n_turbines = 1;
-    fr.turbines[0].yaw_valid = 1; fr.turbines[0].yaw_seq = 1;
-    fr.turbines[0].yaw_delta_rad = D2R(5.0);
-    fr.turbines[0].yaw_ttl_s = 0.5;   /* 短 TTL */
+    mk_frame(&fr, 1, 1, D2R(5.0), 0.5);   /* 短 TTL */
     fcr_command_store_accept_frame(cs, &fr);
     fcr_command_store_refresh(cs, 0.0, &heading, 1);
     fcr_yaw_manager_update(mgr, 1, fcr_command_store_turbine(cs, 1), heading, 0.0);
@@ -194,16 +205,20 @@ static void test_disabled_rollback(void)
     fcr_yaw_manager_update(mgr, 1, fcr_command_store_turbine(cs, 1), heading, 0.6);
     fcr_yaw_manager_get(mgr, 1, &st);
     ASSERT(st.valid == 0);
+    /* TTL 到期标志置位（S0108-S0110 回退语义） */
+    ASSERT((fcr_command_store_turbine(cs, 1)->command_status_flags &
+            FCR_CMD_FLAG_YAW_TTL_EXPIRED) != 0);
+
     fcr_yaw_manager_destroy(mgr);
     fcr_command_store_destroy(cs);
 }
 
 void test_yaw_action_manager_register(void)
 {
-    RUN_TEST("plus5_cw", test_plus5_cw);
-    RUN_TEST("minus5_cw", test_minus5_cw);
-    RUN_TEST("wrap_180", test_wrap_180);
+    RUN_TEST("absolute_target_negative", test_absolute_target_negative);
+    RUN_TEST("absolute_target_positive", test_absolute_target_positive);
+    RUN_TEST("error_wrap_180", test_error_wrap_180);
     RUN_TEST("induction_does_not_affect_yaw", test_induction_does_not_affect_yaw);
     RUN_TEST("target_fixed_during_execution", test_target_fixed_during_execution);
-    RUN_TEST("disabled_rollback", test_disabled_rollback);
+    RUN_TEST("ttl_expiry_rollback", test_ttl_expiry_rollback);
 }

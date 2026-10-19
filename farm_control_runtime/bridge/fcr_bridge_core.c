@@ -201,7 +201,7 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
         memset(&sp, 0, sizeof(sp));
         sp.farm_control_enable = 1;
         sp.valid = 1;
-        sp.yaw_enable = 0;
+        sp.external_yaw_enable = 0;
         sp.induction_enable = 0;
 
         if (!st->cmd_valid && !st->meas_valid) goto done;
@@ -227,7 +227,7 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
                 st->yaw_target_heading_rad = cmd->yaw_target_heading_rad;
                 st->yaw_seq_applied = cmd->yaw_seq;
             }
-            sp.yaw_enable = 1;
+            sp.external_yaw_enable = 1;
             sp.yaw_seq = st->yaw_seq_applied;
             sp.yaw_target_heading_rad = st->yaw_target_heading_rad;
         }
@@ -263,9 +263,9 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
                     if (pr > core->ind.power_cap) pr = core->ind.power_cap;
                     if (pr < 0.05) pr = 0.05;
                 }
-                st->power_ratio = pr;
-                st->speed_ref_ratio = pow(pr, 1.0 / 3.0);
-                st->torque_limit_ratio = pow(pr, 2.0 / 3.0);
+                st->r_pitch = pr;
+                st->r_speed = pow(pr, 1.0 / 3.0);
+                st->r_torque = pow(pr, 2.0 / 3.0);
                 st->induction_seq_applied = cmd->induction_seq;
                 sp.induction_enable = 1;
                 sp.induction_seq = cmd->induction_seq;
@@ -282,11 +282,11 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
                         w0 /= wsum; w1 /= wsum; w2 /= wsum;
                     }
                     /* r_pitch/r_speed/r_torque 按权重分配（0 权重=通道不输出） */
-                    sp.power_ratio = (w0 > 0.0) ? 1.0 + w0 * (pr - 1.0) : 1.0;
-                    sp.speed_ref_ratio = (w1 > 0.0) ? 1.0 + w1 * (st->speed_ref_ratio - 1.0) : 1.0;
-                    sp.torque_limit_ratio = (w2 > 0.0) ? 1.0 + w2 * (st->torque_limit_ratio - 1.0) : 1.0;
+                    sp.r_pitch = (w0 > 0.0) ? 1.0 + w0 * (pr - 1.0) : 1.0;
+                    sp.r_speed = (w1 > 0.0) ? 1.0 + w1 * (st->r_speed - 1.0) : 1.0;
+                    sp.r_torque = (w2 > 0.0) ? 1.0 + w2 * (st->r_torque - 1.0) : 1.0;
                     /* r_pitch 实际是 power_ratio 通道（FCR_ApplyReferences 用 power_ratio） */
-                    st->min_pitch_rad = 0.0; /* Mode1 不用最小桨距约束 */
+                    st->min_pitch_ref_rad = 0.0; /* Mode1 不用最小桨距约束 */
                 }
             } else if (mode == 3) {
                 /* WIN-15: Mode 3 显式不支持 — 反馈闭环接口，RT 阶段实现。
@@ -295,10 +295,10 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
                 st->fallback_active = 1;
                 sp.command_status_flags |= 0x4;   /* FALLBACK */
                 sp.command_status_flags |= 0x100;  /* UNSUPPORTED */
-                st->power_ratio = 1.0;
-                st->speed_ref_ratio = 1.0;
-                st->torque_limit_ratio = 1.0;
-                st->min_pitch_rad = 0.0;
+                st->r_pitch = 1.0;
+                st->r_speed = 1.0;
+                st->r_torque = 1.0;
+                st->min_pitch_ref_rad = 0.0;
                 sp.induction_enable = 0;  /* 不生效 */
             } else if (mode == 2) {
                 /* Mode 2：Ct 前馈 → 桨距（min_pitch_ref 或 PRC） */
@@ -315,9 +315,9 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
                     ct_ref = fcr_bridge_mode2_ct_ref(a) * core->ind.ct_coef;
                 }
                 st->ct_ref = ct_ref;
-                st->power_ratio = 1.0; /* Ct 前馈不直接改功率比例 */
-                st->speed_ref_ratio = 1.0;
-                st->torque_limit_ratio = 1.0;
+                st->r_pitch = 1.0; /* Ct 前馈不直接改功率比例 */
+                st->r_speed = 1.0;
+                st->r_torque = 1.0;
                 st->induction_seq_applied = cmd->induction_seq;
                 sp.induction_enable = 1;
                 sp.induction_seq = cmd->induction_seq;
@@ -330,15 +330,15 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
                     double bp = beta_deg * DEG2RAD;
                     if (bp < 0.0) bp = 0.0;
                     if (bp > core->ind.min_pitch_max_rad) bp = core->ind.min_pitch_max_rad;
-                    st->min_pitch_rad = bp;
-                    sp.min_pitch_rad = bp;
+                    st->min_pitch_ref_rad = bp;
+                    sp.min_pitch_ref_rad = bp;
                 } else {
-                    st->min_pitch_rad = 0.0;
-                    sp.min_pitch_rad = 0.0;
+                    st->min_pitch_ref_rad = 0.0;
+                    sp.min_pitch_ref_rad = 0.0;
                 }
-                sp.power_ratio = 1.0;
-                sp.speed_ref_ratio = 1.0;
-                sp.torque_limit_ratio = 1.0;
+                sp.r_pitch = 1.0;
+                sp.r_speed = 1.0;
+                sp.r_torque = 1.0;
                 /* Mode 3 桩：pitch_offset 留 0（未来闭环） */
             }
             if (st->induction_fallback) st->fallback_active = 1;
@@ -373,10 +373,12 @@ int fcr_bridge_core_step(FcrBridgeCore *core, int32_t turbine_id,
 
         /* ---- 汇总 setpoint ---- */
         sp.ct_ref = st->ct_ref;
-        sp.min_pitch_rad = st->min_pitch_rad;
-        sp.power_ratio = (sp.induction_enable && sp.power_ratio > 0.0) ? sp.power_ratio : 1.0;
-        sp.speed_ref_ratio = (sp.induction_enable && sp.speed_ref_ratio > 0.0) ? sp.speed_ref_ratio : 1.0;
-        sp.torque_limit_ratio = (sp.induction_enable && sp.torque_limit_ratio > 0.0) ? sp.torque_limit_ratio : 1.0;
+        sp.min_pitch_ref_rad = st->min_pitch_ref_rad;
+        sp.r_pitch = (sp.induction_enable && sp.r_pitch > 0.0) ? sp.r_pitch : 1.0;
+        sp.r_speed = (sp.induction_enable && sp.r_speed > 0.0) ? sp.r_speed : 1.0;
+        sp.r_torque = (sp.induction_enable && sp.r_torque > 0.0) ? sp.r_torque : 1.0;
+        /* S0807: 集体桨距修正量（本期 Mode1/2 不用，保留通道） */
+        sp.collective_pitch_offset_rad = 0.0;
         if (st->fallback_active) sp.command_status_flags |= 0x4;
 
     done:

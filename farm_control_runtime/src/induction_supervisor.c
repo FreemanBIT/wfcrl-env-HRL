@@ -1,32 +1,36 @@
 /*
- * induction_supervisor.c — 诱导因子动作监督与 ROSCO 参考映射（Phase 6）
+ * induction_supervisor.c — 诱导因子动作监督与 ROSCO 参考映射（ICD v1.5）
  *
  * induction_ref（无量纲轴向诱导 a）逐机映射为 ROSCO supervisory references：
- *   ct_ref             = ct_coef * 4a(1-a)                 （动量理论 + 标定系数）
- *   power_ratio        = [a(1-a)^2] / [a0(1-a0)^2]          （相对基线 a0=1/3 的功率提取比）
- *   speed_ref_ratio    = power_ratio^(1/3)
- *   torque_limit_ratio = power_ratio^(2/3)
- *   min_pitch_rad      = clamp(min_pitch_gain*(1-power_ratio), 0, min_pitch_max)
+ *   ct_ref                      = ct_coef * 4a(1-a)          （动量理论 + 标定系数）
+ *   r_pitch (S0803)             = [a(1-a)^2] / [a0(1-a0)^2]  （相对基线 a0=1/3 的功率提取比）
+ *   r_speed (S0804)             = r_pitch^(1/3)
+ *   r_torque (S0805)            = r_pitch^(2/3)
+ *   min_pitch_ref_rad (S0806)   = clamp(min_pitch_gain*(1-r_pitch), 0, min_pitch_max)
+ *   collective_pitch_offset (S0807) = 0 （当前实现不使用）
  *
- * 规则（对应 PROTOCOL_DECISIONS §3）：
+ * 规则（对应 ICD v1.5 S0705-S0709）：
  *   - 新 induction_seq 才重算并锁存；seq 之间 ZOH；
  *   - 越界 / NaN → fallback（安全默认）并置 FALLBACK 标志；
  *   - 通道失效（TTL 到期）→ 回退未使能（由 command_store 语义保证）。
- * V1：确定性标定映射；后续可替换为 Ct 闭环 / PI / 机型 map。
  */
 #include "fcr_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
+/* 默认配置。
+ * 注意：必须使用**指定初始化器**——v1.5 重构中本结构体字段顺序曾被调整，
+ * 位置初始化会把 power_cap/min_pitch_gain/min_pitch_max 装错，
+ * 导致 r_pitch 被错误地钳到 0.55（诱导通道被严重过度降载）。 */
 static const FcrInductionMapConfig default_cfg = {
-    0.3333333333333333,  /* a0 */
-    0.05,                /* a_min */
-    0.45,                /* a_max */
-    1.0,                 /* ct_coef */
-    0.55,                /* min_pitch_gain (rad)；region2 标定：8m/s 下 1rad≈-5%~-7% 功率 */
-    0.30,                /* min_pitch_max (rad) */
-    1.0                  /* power_cap */
+    .a0             = 0.3333333333333333,  /* 基线诱导 a0 = 1/3 */
+    .a_min          = 0.05,                /* 可实现最小诱导 */
+    .a_max          = 0.3333333333333333,  /* 可实现最大诱导 = a0 (WIN-12) */
+    .ct_coef        = 1.0,                 /* Ct 标定系数 */
+    .min_pitch_gain = 0.55,                /* 最小桨距增益 (rad) */
+    .min_pitch_max  = 0.30,                /* 最小桨距上限 (rad) */
+    .power_cap      = 1.0                  /* r_pitch 上限 */
 };
 
 FcrInductionSupervisor *fcr_induction_supervisor_create(uint32_t n_turbines,
@@ -55,10 +59,11 @@ static int map_ref(const FcrInductionSupervisor *s, double a, FcrInductionState 
         /* fallback：安全默认（额定语义）。
          * 注意：不得 memset 整个 out —— 上层已经写入 seq_applied/induction_ref。 */
         out->ct_ref = 4.0 * c->a0 * (1.0 - c->a0);
-        out->power_ratio = 1.0;
-        out->speed_ref_ratio = 1.0;
-        out->torque_limit_ratio = 1.0;
-        out->min_pitch_rad = 0.0;
+        out->r_pitch = 1.0;
+        out->r_speed = 1.0;
+        out->r_torque = 1.0;
+        out->min_pitch_ref_rad = 0.0;
+        out->collective_pitch_offset_rad = 0.0;
         out->fallback = 1;
         return 1;
     }
@@ -68,20 +73,21 @@ static int map_ref(const FcrInductionSupervisor *s, double a, FcrInductionState 
     pr = pe / pe0;
     if (pr > c->power_cap) pr = c->power_cap;
     if (pr < 0.05) pr = 0.05;
-    out->power_ratio = pr;
-    out->speed_ref_ratio = pow(pr, 1.0 / 3.0);
-    out->torque_limit_ratio = pow(pr, 2.0 / 3.0);
-    out->min_pitch_rad = c->min_pitch_gain * (1.0 - pr);
-    if (out->min_pitch_rad < 0.0) out->min_pitch_rad = 0.0;
-    if (out->min_pitch_rad > c->min_pitch_max) out->min_pitch_rad = c->min_pitch_max;
+    out->r_pitch = pr;
+    out->r_speed = pow(pr, 1.0 / 3.0);
+    out->r_torque = pow(pr, 2.0 / 3.0);
+    out->min_pitch_ref_rad = c->min_pitch_gain * (1.0 - pr);
+    if (out->min_pitch_ref_rad < 0.0) out->min_pitch_ref_rad = 0.0;
+    if (out->min_pitch_ref_rad > c->min_pitch_max) out->min_pitch_ref_rad = c->min_pitch_max;
+    out->collective_pitch_offset_rad = 0.0;
     out->fallback = 0;
     return 0;
 }
 
 /* 新 seq 计算并锁存；同 seq 幂等（ZOH）；通道失效清空 */
 void fcr_induction_supervisor_update(FcrInductionSupervisor *s, int32_t turbine_id,
-                                     const FcrTurbineCommandState *tc,
-                                     double sim_time_s)
+                                      const FcrTurbineCommandState *tc,
+                                      double sim_time_s)
 {
     FcrInductionState *st;
     if (!s || !tc) return;
@@ -119,16 +125,17 @@ void fcr_induction_supervisor_apply(const FcrInductionSupervisor *s, int32_t tur
     sp->induction_enable = 1;
     sp->induction_seq = st->seq_applied;
     sp->ct_ref = st->ct_ref;
-    sp->power_ratio = st->power_ratio;
-    sp->speed_ref_ratio = st->speed_ref_ratio;
-    sp->torque_limit_ratio = st->torque_limit_ratio;
-    sp->min_pitch_rad = st->min_pitch_rad;
+    sp->r_pitch = st->r_pitch;
+    sp->r_speed = st->r_speed;
+    sp->r_torque = st->r_torque;
+    sp->min_pitch_ref_rad = st->min_pitch_ref_rad;
+    sp->collective_pitch_offset_rad = st->collective_pitch_offset_rad;
     if (st->fallback) sp->command_status_flags |= FCR_CMD_FLAG_FALLBACK_ACTIVE;
     sp->command_status_flags |= FCR_CMD_FLAG_INDUCTION_VALID;
 }
 
 int fcr_induction_supervisor_get(const FcrInductionSupervisor *s, int32_t turbine_id,
-                                 FcrInductionState *out)
+                                  FcrInductionState *out)
 {
     if (!s || !out) return -1;
     if (turbine_id < 1 || turbine_id > (int32_t)s->n_turbines) return -2;

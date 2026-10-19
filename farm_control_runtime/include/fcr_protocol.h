@@ -1,5 +1,5 @@
 /*
- * fcr_protocol.h — farm_control_runtime 公共协议定义（Phase 1 冻结）
+ * fcr_protocol.h — farm_control_runtime 公共协议定义（ICD v1.5）
  *
  * 本文件是 Farm Controller ↔ runtime ↔ ROSCO/Provider 之间所有帧与标志的
  * 唯一权威定义。所有字段类型/名称/单位冻结后不得随意更改；
@@ -22,7 +22,10 @@ extern "C" {
 /* 版本与容量常量                                                     */
 /* ------------------------------------------------------------------ */
 
-#define FCR_PROTOCOL_VERSION       1u   /* 本协议版本（Phase 1 冻结）    */
+#define FCR_PROTOCOL_VERSION_V1    1u   /* 旧版本（兼容保留）            */
+#define FCR_PROTOCOL_VERSION_V2    2u   /* ICD v1.5 版本                 */
+#define FCR_PROTOCOL_VERSION       FCR_PROTOCOL_VERSION_V2  /* 当前版本 */
+
 #define FCR_MAX_TURBINES           64u  /* 最大机组数（与 RT 侧 NT_MAX 一致） */
 #define FCR_MAX_OBSERVATION_POINTS 64u  /* 最大 AWAE 观察点数            */
 #define FCR_MAX_LOAD_POINTS        16u  /* 最大可配置载荷测点数          */
@@ -42,6 +45,7 @@ extern "C" {
 #define FCR_CMD_FLAG_INDUCTION_TTL_EXPIRED (1u << 6) /* 诱导 TTL 到期  */
 #define FCR_CMD_FLAG_INVALID_SEQ        (1u << 7)  /* 检测到乱序 seq  */
 #define FCR_CMD_FLAG_FALLBACK_ACTIVE    (1u << 8)  /* 处于 fallback   */
+#define FCR_CMD_FLAG_CONTROL_DISABLED   (1u << 9)  /* control_enable=0 */
 
 /* ------------------------------------------------------------------ */
 /* controller_status_flags — ROSCO 上报的状态/饱和/降级标志            */

@@ -136,10 +136,11 @@ typedef struct {
     uint32_t      cmd_valid;
     uint32_t      meas_valid;
     /* 诱导映射结果 */
-    double        power_ratio;
-    double        speed_ref_ratio;
-    double        torque_limit_ratio;
-    double        min_pitch_rad;
+    double        r_pitch;            /* S0803 */
+    double        r_speed;            /* S0804 */
+    double        r_torque;           /* S0805 */
+    double        min_pitch_ref_rad;  /* S0806 */
+    double        collective_pitch_offset_rad; /* S0807 */
     double        ct_ref;
     uint32_t      induction_fallback;
     uint64_t      induction_seq_applied;

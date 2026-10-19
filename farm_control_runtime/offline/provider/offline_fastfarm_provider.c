@@ -103,7 +103,7 @@ int fcr_offline_provider_publish_fast(int32_t turbine_id, double sim_time_s,
 
     /* record 109 = LSSTipMxa/LSShftMxs（主轴扭矩，Nm）；110 = LSShftFxa（GL x 力，对风 ≈ 推力） */
     st.shaft_torque_nm = (double)avrSWAP[109 - 1];
-    st.rotor_thrust_n = (double)avrSWAP[110 - 1];
+    st.rotor_aero_thrust_n = (double)avrSWAP[110 - 1];
 
     /* 记录 hub 扰动风（1 s 流场快照用） */
     g_hub_wind[turbine_id - 1] = (double)avrSWAP[27 - 1];

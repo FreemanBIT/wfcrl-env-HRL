@@ -182,28 +182,30 @@ static int mb_poll_command(FcrTransport *self, FarmCommandFrame *cmd)
     cmd->protocol_version = FCR_PROTOCOL_VERSION;
     cmd->n_turbines = mt->n_turbines;
 
-    /* 从寄存器区读取命令（若 frame_seq 有更新） */
-    uint64_t fs = mb_get_u64(mt->regs, MB_CLK_FRAME_SEQ_SLOT);
-    if (fs == 0) return 0;   /* 无新命令（RCP 尚未写 frame_seq） */
+    /* 从寄存器区读取命令（若 command_frame_seq 有更新） */
+    uint64_t fs = mb_get_u64(mt->regs, MB_CLK_CMD_FRAME_SEQ_SLOT);
+    if (fs == 0) return 0;   /* 无新命令（RCP 尚未写 command_frame_seq） */
     if (fs == mt->last_frame_seq) return 0;   /* 幂等 */
 
     for (i = 0; i < mt->n_turbines && i < FCR_MAX_TURBINES; i++) {
         int b = MB_CMD_BASE + (int)i * MB_CMD_PER_TURBINE;
         FcrTurbineCommand *tc = &cmd->turbines[i];
-        tc->yaw_delta_rad = mb_get_double(mt->regs, b + MB_CMD_YAW_DELTA_RAD);
+        tc->yaw_target_heading_rad = mb_get_double(mt->regs, b + MB_CMD_YAW_TARGET_HEADING);
         tc->yaw_seq = mb_get_u64(mt->regs, b + MB_CMD_YAW_SEQ);
         tc->yaw_valid = mb_get_u16(mt->regs, b + MB_CMD_YAW_VALID);
-        tc->yaw_effective_low_step = mb_get_i64(mt->regs, b + MB_CMD_YAW_EFFECTIVE_LOW);
+        tc->requested_effective_sim_time_s =
+            mb_get_double(mt->regs, b + MB_CMD_REQ_EFFECTIVE_TIME);
         tc->yaw_ttl_s = mb_get_double(mt->regs, b + MB_CMD_YAW_TTL_S);
         tc->induction_ref = mb_get_double(mt->regs, b + MB_CMD_IND_REF);
         tc->induction_seq = mb_get_u64(mt->regs, b + MB_CMD_IND_SEQ);
         tc->induction_valid = mb_get_u16(mt->regs, b + MB_CMD_IND_VALID);
-        tc->induction_effective_low_step = mb_get_i64(mt->regs, b + MB_CMD_IND_EFFECTIVE_LOW);
+        tc->control_enable = mb_get_u16(mt->regs, b + MB_CMD_CONTROL_ENABLE);
+        tc->control_mode = mb_get_u16(mt->regs, b + MB_CMD_CONTROL_MODE);
         tc->induction_ttl_s = mb_get_double(mt->regs, b + MB_CMD_IND_TTL_S);
-        tc->source_time_s = mb_get_double(mt->regs, b + MB_CMD_SOURCE_TIME_S);
+        tc->command_basis_sim_time_s =
+            mb_get_double(mt->regs, b + MB_CMD_COMMAND_BASIS_TIME);
     }
-    cmd->frame_seq = fs;
-    cmd->commit_seq = mb_get_u64(mt->regs, MB_CLK_COMMIT_SEQ_SLOT);
+    cmd->command_frame_seq = fs;
     cmd->receive_time_s = 0.0;
     mt->last_frame_seq = fs;
     return 1;
@@ -213,7 +215,7 @@ static int mb_publish_state(FcrTransport *self, const FarmStateFrame *state)
 {
     struct FcrModbusTransport *mt = (struct FcrModbusTransport *)self->impl;
     uint32_t i;
-    mb_put_double(mt->regs, MB_CLK_SIM_TIME_S, state->sim_time_s);
+    mb_put_double(mt->regs, MB_CLK_STATE_SAMPLE_TIME, state->state_sample_sim_time_s);
     mb_put_u64(mt->regs, MB_CLK_FAST_STEP, state->fast_step);
     mb_put_u64(mt->regs, MB_CLK_LOW_STEP, state->low_step);
     mb_put_u16(mt->regs, MB_CLK_RT_HEALTH, (uint16_t)state->rt_health_flags);
@@ -226,9 +228,9 @@ static int mb_publish_state(FcrTransport *self, const FarmStateFrame *state)
         mb_put_double(mt->regs, b + MB_ST_GEN_POWER_W, ts->gen_power_w.instant);
         mb_put_double(mt->regs, b + MB_ST_GEN_POWER_MEAN, ts->gen_power_w.mean);
         mb_put_double(mt->regs, b + MB_ST_GEN_POWER_RMS, ts->gen_power_w.rms);
-        mb_put_double(mt->regs, b + MB_ST_ROTOR_THRUST_N, ts->rotor_thrust_n.instant);
+        mb_put_double(mt->regs, b + MB_ST_ROTOR_AERO_THRUST, ts->rotor_aero_thrust_n.instant);
         mb_put_double(mt->regs, b + MB_ST_SHAFT_TORQUE_NM, ts->tower_base_fa_moment_nm.instant);
-        mb_put_double(mt->regs, b + MB_ST_NACELLE_HEADING, ts->nacelle_heading_rad);
+        mb_put_double(mt->regs, b + MB_ST_NACELLE_HEADING, ts->nacelle_heading_actual_rad);
         mb_put_double(mt->regs, b + MB_ST_NACELLE_VANE, ts->nacelle_vane_rad);
         mb_put_double(mt->regs, b + MB_ST_HUB_WIND_MPS, ts->hub_wind_speed_mps);
         mb_put_double(mt->regs, b + MB_ST_ROTOR_SPEED, ts->rotor_speed_rad_s);
@@ -244,6 +246,12 @@ static int mb_publish_state(FcrTransport *self, const FarmStateFrame *state)
         mb_put_double(mt->regs, b + MB_ST_DISK_AMB_TI, ts->disk_ambient_ti);
         mb_put_double(mt->regs, b + MB_ST_FLOW_SOURCE_TIME, ts->flow_source_time_s);
         mb_put_u64(mt->regs, b + MB_ST_FLOW_SEQ, ts->flow_seq);
+        /* S1011/S1012/S1016/S1017/S1015（ICD v1.5 新增） */
+        mb_put_double(mt->regs, b + MB_ST_EST_WIND_MPS, ts->estimated_wind_mps);
+        mb_put_double(mt->regs, b + MB_ST_CT_HAT, ts->ct_hat);
+        mb_put_u16(mt->regs, b + MB_ST_WIND_SOURCE, (uint16_t)ts->wind_source);
+        mb_put_u16(mt->regs, b + MB_ST_WIND_QUALITY, (uint16_t)ts->wind_quality_flags);
+        mb_put_u16(mt->regs, b + MB_ST_TURBINE_STATUS, (uint16_t)ts->turbine_status_flags);
     }
     return 1;
 }

@@ -30,12 +30,12 @@ void fcr_bridge_adapter_cmd_from_state(const FcrTurbineCommandState *tc,
                                        uint32_t alloc_w_torque,
                                        FcrBridgeCmd *out);
 
-/* FcrRoscoFastState（ROSCO 快速状态）→ FcrBridgeMeas（bridge 测量输入） */
-void fcr_bridge_adapter_meas_from_fast(const FcrRoscoFastState *fast,
+/* FcrRoscoRawState（ROSCO 快速状态）→ FcrBridgeMeas（bridge 测量输入） */
+void fcr_bridge_adapter_meas_from_fast(const FcrRoscoRawState *fast,
                                        FcrBridgeMeas *out);
 
 /* WIN-11: full measurement synthesis from StateStore (fast + extra + flow) */
-void fcr_bridge_adapter_meas_from_state(const FcrRoscoFastState *fast,
+void fcr_bridge_adapter_meas_from_state(const FcrRoscoRawState *fast,
                                         const FcrTurbineExtraState *extra,
                                         const FcrFlowState *flow,
                                         int32_t turbine_id,

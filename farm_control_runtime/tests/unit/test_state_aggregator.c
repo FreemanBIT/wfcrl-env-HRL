@@ -11,7 +11,7 @@ static void test_aggregate_multi_rate(void)
     FcrStateStore *ss = fcr_state_store_create(2);
     FcrStateAggregator *a = fcr_state_aggregator_create(2, 1.0);
     FarmStateFrame fr;
-    FcrRoscoFastState f;
+    FcrRoscoRawState f;
     FcrTurbineExtraState e;
     FcrFlowState fl;
     double t;
@@ -32,7 +32,7 @@ static void test_aggregate_multi_rate(void)
     for (t = 0.0; t <= 1.0; t += 0.01) {
         memset(&e, 0, sizeof(e));
         e.turbine_id = 1; e.valid = 1; e.source_time_s = t;
-        e.rotor_thrust_n = 4.0e5;
+        e.rotor_aero_thrust_n = 4.0e5;   /* ICD v1.5 S0208 */
         fcr_state_store_set_extra(ss, &e);
         fcr_state_aggregator_feed_extra(a, &e);
     }
@@ -63,7 +63,7 @@ static void test_aggregate_multi_rate(void)
     ASSERT_NEAR(fr.turbines[0].gen_power_w.max, 4.1e6, 1e3);
     ASSERT(fr.turbines[0].gen_power_w.n_samples > 0);
     /* 推力统计 */
-    ASSERT_NEAR(fr.turbines[0].rotor_thrust_n.mean, 4.0e5, 1e3);
+    ASSERT_NEAR(fr.turbines[0].rotor_aero_thrust_n.mean, 4.0e5, 1e3);
     /* ZOH 流场 */
     ASSERT_NEAR(fr.turbines[0].disk_disturbed_wind_mps, 7.5, 1e-9);
     ASSERT_NEAR(fr.turbines[0].disk_ambient_wind_mps, 8.0, 1e-9);
@@ -81,7 +81,7 @@ static void test_aggregate_flow_zoh(void)
     FcrStateStore *ss = fcr_state_store_create(1);
     FcrStateAggregator *a = fcr_state_aggregator_create(1, 1.0);
     FarmStateFrame fr;
-    FcrRoscoFastState f;
+    FcrRoscoRawState f;
     FcrFlowState fl;
 
     memset(&f, 0, sizeof(f));
@@ -100,7 +100,7 @@ static void test_aggregate_flow_zoh(void)
     /* flow 是 5.0s 的快照：保留 source time（ZOH 语义），不伪造 5.5s */
     ASSERT_NEAR(fr.turbines[0].flow_source_time_s, 5.0, 1e-9);
     ASSERT_NEAR(fr.turbines[0].disk_disturbed_wind_mps, 7.9, 1e-9);
-    ASSERT_NEAR(fr.sim_time_s, 5.5, 1e-9);
+    ASSERT_NEAR(fr.state_sample_sim_time_s, 5.5, 1e-9);   /* ICD v1.5 S1002 */
     ASSERT_NEAR(fr.turbines[0].source_time_s, 5.5, 1e-9);
 
     fcr_state_aggregator_destroy(a);

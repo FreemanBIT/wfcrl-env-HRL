@@ -18,55 +18,52 @@ extern "C" {
 /* angle_convention.c                                                  */
 /* ------------------------------------------------------------------ */
 
-/* 把角度 wrap 到 (-PI, PI]                                           */
 double fcr_wrap_pm_pi(double a);
-/* 把角度 wrap 到 [0, 2*PI)                                           */
 double fcr_wrap_0_2pi(double a);
-/* 度 → 弧度 / 弧度 → 度                                              */
 double fcr_deg2rad(double d);
 double fcr_rad2deg(double r);
-/* 罗盘顺时针增量 → OpenFAST 内部增量（CCW+）：取反                   */
 double fcr_cw_delta_to_internal(double delta_cw_rad);
-/* 由当前机舱方位（内部约定）与 CW+ 增量计算锁存目标                   */
 double fcr_compute_yaw_target(double heading_now_rad, double delta_cw_rad);
-/* NaN/Inf 检查（1 = 非有限，0 = 有限）                               */
 int fcr_is_finite(double x);
 
 /* ------------------------------------------------------------------ */
-/* command_store.c                                                    */
+/* command_store.c (ICD v1.5 S0101-S0112)                              */
 /* ------------------------------------------------------------------ */
 
-/* WIN-09: 通道状态机 */
 typedef enum {
-    FCR_CH_IDLE = 0,        /* 无有效命令                     */
-    FCR_CH_ACCEPTED,        /* 新 seq 已接收，等待 effective_low_step */
-    FCR_CH_SCHEDULED,       /* 已到生效步，等待 TTL 起算       */
-    FCR_CH_ACTIVE,          /* 生效中                          */
-    FCR_CH_EXPIRED          /* TTL 到期/失效                   */
+    FCR_CH_IDLE = 0,
+    FCR_CH_ACCEPTED,
+    FCR_CH_SCHEDULED,
+    FCR_CH_ACTIVE,
+    FCR_CH_EXPIRED
 } FcrChannelState;
 
 typedef struct FcrTurbineCommandState {
-    /* ---- yaw 通道 ---- */
-    uint64_t yaw_seq_rx;              /* 最近收到（成功校验）的 seq       */
-    uint64_t yaw_seq_applied;         /* 已生效 seq                       */
-    double   yaw_delta_rad;           /* 最新有效 delta（CW+）            */
-    uint32_t yaw_valid;               /* 通道有效标志                     */
-    uint32_t yaw_target_latched;      /* 绝对目标已锁存                   */
-    double   yaw_target_heading;      /* 锁存绝对目标（内部约定）         */
-    int64_t  yaw_effective_low_step;  /* 生效低速步号                     */
-    double   yaw_ttl_s;               /* 生效 TTL（0 = 无限）             */
-    double   yaw_issue_time_s;        /* 生效时刻（sim_time）             */
-    FcrChannelState yaw_state;        /* WIN-09: 通道状态机              */
-    /* ---- induction 通道 ---- */
+    /* ---- yaw 通道 (S0108-S0110) ---- */
+    uint64_t yaw_seq_rx;
+    uint64_t yaw_seq_applied;
+    double   yaw_target_heading_rad;    /* S0108: 绝对目标（内部约定） */
+    uint32_t yaw_valid;                 /* S0110: 偏航目标有效标记 */
+    uint32_t yaw_target_latched;
+    double   yaw_ttl_s;
+    double   yaw_issue_time_s;
+    FcrChannelState yaw_state;
+    
+    /* ---- induction 通道 (S0105-S0107) ---- */
     uint64_t ind_seq_rx;
     uint64_t ind_seq_applied;
-    double   induction_ref;           /* 最新有效 ref（无量纲）           */
-    uint32_t ind_valid;
-    int64_t  ind_effective_low_step;
+    double   induction_ref;             /* S0105: 目标轴向诱导因子 */
+    uint32_t ind_valid;                 /* S0107: 诱导目标有效标记 */
     double   ind_ttl_s;
     double   ind_issue_time_s;
-    FcrChannelState ind_state;        /* WIN-09: 通道状态机              */
-    double   source_time_s;           /* 命令发出时间（控制器侧）         */
+    FcrChannelState ind_state;
+    
+    /* ---- 通用字段 (S0102, S0104, S0111, S0112) ---- */
+    double   command_basis_sim_time_s;  /* S0102: 命令依据的仿真时刻 */
+    uint32_t control_enable;            /* S0104: 1=允许外部场控 */
+    uint16_t control_mode;              /* S0111: 0=基线,1=PRC,2=Ct,3=闭环 */
+    double   requested_effective_sim_time_s; /* S0112: 期望生效仿真时刻 */
+    
     /* ---- 诊断 ---- */
     uint32_t command_status_flags;
 } FcrTurbineCommandState;
@@ -86,41 +83,28 @@ FcrCommandStore *fcr_command_store_create(uint32_t n_turbines,
                                           double stale_threshold_s,
                                           double dt_low_s);
 void fcr_command_store_destroy(FcrCommandStore *cs);
-
-/* 接收一帧命令（按通道独立处理；返回 0 成功）                         */
 int fcr_command_store_accept_frame(FcrCommandStore *cs, const FarmCommandFrame *frame);
-
-/* 在高速步调用：对每台机检查 TTL/stale，并（若需要）用最新机舱方位    *
- * 锁存 yaw 目标；其结果反映在 setpoint 中                              */
 void fcr_command_store_refresh(FcrCommandStore *cs, double sim_time_s,
-                               const double *heading_now_rad, /* [n_turbines] 或 NULL */
+                               const double *heading_now_rad,
                                uint64_t low_step);
-
-/* 单机版（DLL 内每台机进程/线程调用；heading 为 NULL 时等待方位就绪） */
 void fcr_command_store_refresh_one(FcrCommandStore *cs, int32_t turbine_id,
                                    double sim_time_s, double heading_now_rad,
                                    uint64_t low_step);
-
-/* 生成当前生效 setpoint（每机）                                       */
 void fcr_command_store_get_setpoint(const FcrCommandStore *cs, int32_t turbine_id,
                                     FcrRoscoExternalSetpoint *sp);
-
-/* 供测试使用：通道状态直接访问                                        */
 FcrTurbineCommandState *fcr_command_store_turbine(FcrCommandStore *cs, int32_t turbine_id);
-
-/* WIN-09 debug: acceptance counters */
 void fcr_command_store_debug_counters(uint32_t *yaw_accept, uint32_t *ind_accept,
                                       uint32_t *yaw_latch, uint32_t *ind_latch);
 
 /* ------------------------------------------------------------------ */
-/* state_store.c                                                      */
+/* state_store.c (ICD v1.5 S0201-S0210, S0301-S0303)                   */
 /* ------------------------------------------------------------------ */
 
 struct FcrStateStore {
     uint32_t n_turbines;
-    FcrRoscoFastState      fast[FCR_MAX_TURBINES];   /* ROSCO 10 ms 槽    */
-    FcrTurbineExtraState   extra[FCR_MAX_TURBINES];  /* OF 额外 10 ms 槽  */
-    FcrFlowState           flow;                     /* AWAE 1 s ZOH 槽   */
+    FcrRoscoRawState       fast[FCR_MAX_TURBINES];     /* ROSCO 10 ms 槽 */
+    FcrTurbineExtraState   extra[FCR_MAX_TURBINES];    /* OF 额外 10 ms 槽 */
+    FcrFlowState           flow;                       /* AWAE 1 s ZOH 槽 */
     double   sim_time_s;
     uint64_t fast_step;
     uint64_t low_step;
@@ -129,25 +113,21 @@ struct FcrStateStore {
 
 FcrStateStore *fcr_state_store_create(uint32_t n_turbines);
 void fcr_state_store_destroy(FcrStateStore *ss);
-
-/* Provider push 实现（也供 Offline/RT Provider 使用）                 */
 int fcr_state_store_set_clock(FcrStateStore *ss, double sim_time_s,
                               uint64_t fast_step, uint64_t low_step,
                               uint32_t rt_health_flags);
 int fcr_state_store_set_fast(FcrStateStore *ss, int32_t turbine_id,
-                             const FcrRoscoFastState *st);
+                             const FcrRoscoRawState *st);
 int fcr_state_store_set_extra(FcrStateStore *ss, const FcrTurbineExtraState *st);
 int fcr_state_store_set_flow(FcrStateStore *ss, const FcrFlowState *flow);
-
-/* 读取最新快照（供聚合/测试）                                         */
 int fcr_state_store_get_fast(const FcrStateStore *ss, int32_t turbine_id,
-                             FcrRoscoFastState *out);
+                             FcrRoscoRawState *out);
 const FcrFlowState *fcr_state_store_get_flow(const FcrStateStore *ss);
 int fcr_state_store_get_extra(const FcrStateStore *ss, int32_t turbine_id,
                               FcrTurbineExtraState *out);
 
 /* ------------------------------------------------------------------ */
-/* signal_statistics.c + state_aggregator.c (Phase 5)                 */
+/* signal_statistics.c + state_aggregator.c                            */
 /* ------------------------------------------------------------------ */
 
 FcrSignalStatistics *fcr_signal_stat_create(double window_s, uint32_t capacity);
@@ -156,44 +136,42 @@ void fcr_signal_stat_reset(FcrSignalStatistics *s);
 int  fcr_signal_stat_update(FcrSignalStatistics *s, double sim_time_s, double x);
 int  fcr_signal_stat_get(const FcrSignalStatistics *s, FcrSignalStats *out);
 
-struct FcrStateAggregator;   /* 定义见 state_aggregator.c */
+struct FcrStateAggregator;
 
 FcrStateAggregator *fcr_state_aggregator_create(uint32_t n_turbines, double window_s);
 void fcr_state_aggregator_destroy(FcrStateAggregator *a);
 void fcr_state_aggregator_feed_fast(FcrStateAggregator *a, int32_t turbine_id,
-                                    const FcrRoscoFastState *st);
+                                    const FcrRoscoRawState *st);
 void fcr_state_aggregator_feed_extra(FcrStateAggregator *a, const FcrTurbineExtraState *st);
-void fcr_runtime_feed_fast(FcrRuntime *rt, int32_t turbine_id, const FcrRoscoFastState *st);
+void fcr_runtime_feed_fast(FcrRuntime *rt, int32_t turbine_id, const FcrRoscoRawState *st);
 void fcr_runtime_feed_extra_stats(FcrRuntime *rt, const FcrTurbineExtraState *st);
 void fcr_state_aggregator_build_frame(FcrStateAggregator *a, const FcrStateStore *ss,
                                       FarmStateFrame *out);
 
 /* ------------------------------------------------------------------ */
-/* yaw_action_manager.c                                               */
+/* yaw_action_manager.c                                                */
 /* ------------------------------------------------------------------ */
 
-/* 偏航动作执行状态（每机）                                            */
 typedef struct {
     int32_t  turbine_id;
-    uint32_t valid;                   /* 状态有效                          */
-    uint64_t seq;                     /* 已应用 seq                        */
-    double   target_heading_rad;      /* 锁存绝对目标（内部约定）          */
-    double   heading_now_rad;         /* 最近一次机舱方位                  */
-    double   error_rad;               /* wrap_pm_pi(target - heading)      */
-    uint32_t tracking;                /* 正在执行（|err| > deadband）      */
-    uint32_t reached;                 /* 已到达（|err| <= deadband）       */
+    uint32_t valid;
+    uint64_t seq;
+    double   target_heading_rad;
+    double   heading_now_rad;
+    double   error_rad;
+    uint32_t tracking;
+    uint32_t reached;
     double   last_update_time_s;
 } FcrYawActionState;
 
 struct FcrYawActionManager {
     uint32_t n_turbines;
-    double   deadband_rad;            /* 到达判定死区                      */
+    double   deadband_rad;
     FcrYawActionState t[FCR_MAX_TURBINES];
 };
 
 FcrYawActionManager *fcr_yaw_manager_create(uint32_t n_turbines, double deadband_rad);
 void fcr_yaw_manager_destroy(FcrYawActionManager *mgr);
-/* 每高速步更新单机状态：读取 CommandStore 通道状态 + 最新机舱方位      */
 void fcr_yaw_manager_update(FcrYawActionManager *mgr, int32_t turbine_id,
                             const FcrTurbineCommandState *tc,
                             double heading_now_rad, double sim_time_s);
@@ -201,32 +179,7 @@ int  fcr_yaw_manager_get(const FcrYawActionManager *mgr, int32_t turbine_id,
                          FcrYawActionState *out);
 
 /* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/* induction_supervisor.c (Phase 6)                                    */
-/* ------------------------------------------------------------------ */
-
-typedef struct {
-    double a0;              /* 基线轴向诱导（默认 1/3） */
-    double a_min;           /* 最小允许诱导 */
-    double a_max;           /* 最大允许诱导 */
-    double ct_coef;         /* Ct 标定系数（动量理论修正） */
-    double min_pitch_gain;  /* 最小桨距增益（rad/功率缺额） */
-    double min_pitch_max;   /* 最小桨距上限（rad） */
-    double power_cap;       /* power_ratio 上限 */
-} FcrInductionMapConfig;
-
-typedef struct {
-    uint64_t seq_applied;
-    uint32_t valid;         /* 映射生效（非 fallback） */
-    uint32_t fallback;      /* 越界/NaN fallback 触发 */
-    double   induction_ref;
-    double   ct_ref;
-    double   power_ratio;
-    double   speed_ref_ratio;
-    double   torque_limit_ratio;
-    double   min_pitch_rad;
-    double   last_update_time_s;
-} FcrInductionState;
+/* FcrInductionMapConfig and FcrInductionState defined in fcr_state_types.h */
 
 struct FcrInductionSupervisor {
     uint32_t n_turbines;
@@ -245,7 +198,8 @@ int  fcr_induction_supervisor_get(const FcrInductionSupervisor *s, int32_t turbi
                                   FcrInductionState *out);
 const FcrInductionMapConfig *fcr_induction_supervisor_cfg(const FcrInductionSupervisor *s);
 
-/* watchdog.c                                                         */
+/* ------------------------------------------------------------------ */
+/* watchdog.c                                                          */
 /* ------------------------------------------------------------------ */
 
 struct FcrWatchdog {
@@ -259,14 +213,13 @@ struct FcrWatchdog {
 
 FcrWatchdog *fcr_watchdog_create(double flow_stale_threshold_s);
 void fcr_watchdog_destroy(FcrWatchdog *wd);
-/* 更新健康标志：输入最新 sim_time、state store 与 command store       */
 void fcr_watchdog_update(FcrWatchdog *wd, double sim_time_s,
                          const FcrStateStore *ss,
                          const FcrCommandStore *cs);
 uint32_t fcr_watchdog_health(const FcrWatchdog *wd);
 
 /* ------------------------------------------------------------------ */
-/* runtime.c (internal helpers)                                       */
+/* runtime.c (internal helpers)                                        */
 /* ------------------------------------------------------------------ */
 
 struct FcrRuntime {
@@ -274,19 +227,17 @@ struct FcrRuntime {
     FcrCommandStore *cs;
     FcrStateStore   *ss;
     FcrWatchdog     *wd;
-    /* 后续 Phase 挂载：aggregator / yaw_manager / induction_supervisor /
-     * signal_statistics / rosco_api 在此扩展                                */
-    void *aggregator;         /* Phase 5 */
-    void *yaw_manager;        /* Phase 3 */
-    void *induction_supervisor; /* Phase 6 */
-    void *signal_statistics;  /* Phase 5 */
-    void *rosco_api;          /* Phase 2 */
-    void *bridge_core;        /* DR-3 Bridge 核心（可选，bridge_enable=1 时创建）*/
-    FcrRoscoExternalSetpoint setpoint[FCR_MAX_TURBINES]; /* 各机当前生效 setpoint */
+    void *aggregator;
+    void *yaw_manager;
+    void *induction_supervisor;
+    void *signal_statistics;
+    void *rosco_api;
+    void *bridge_core;
+    FcrRoscoExternalSetpoint setpoint[FCR_MAX_TURBINES];
     double last_low_step_time_s;
+    uint64_t state_frame_seq;   /* ICD v1.5 S1001 */
 };
 
-/* runtime 内部：更新每台机 setpoint（供 step_high 使用）              */
 void fcr_runtime_update_setpoints(FcrRuntime *rt, double sim_time_s, uint64_t low_step);
 void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id);
 

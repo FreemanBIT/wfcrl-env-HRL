@@ -1,9 +1,9 @@
 /*
- * state_store.c — 多速率状态存储（Phase 1）
+ * state_store.c — 多速率状态存储（ICD v1.5）
  *
  * 保存各来源的最新完整快照（latest-complete-snapshot 语义）：
- *   - ROSCO fast state     ~10 ms（每机槽位）
- *   - OF extra state       优选 ~10 ms（每机槽位）
+ *   - ROSCO raw state      ~10 ms（每机槽位，S0301-S0303 + 扩展）
+ *   - OF extra state       优选 ~10 ms（每机槽位，S0208-S0210 + 扩展）
  *   - AWAE flow state      ~1 s（ZOH 到下一次快照）
  *   - rt clock             sim_time / fast_step / low_step / health
  *
@@ -43,7 +43,7 @@ int fcr_state_store_set_clock(FcrStateStore *ss, double sim_time_s,
 }
 
 int fcr_state_store_set_fast(FcrStateStore *ss, int32_t turbine_id,
-                             const FcrRoscoFastState *st)
+                             const FcrRoscoRawState *st)
 {
     if (!ss || !st) return -1;
     if (turbine_id < 1 || turbine_id > (int32_t)ss->n_turbines) return -2;
@@ -67,7 +67,7 @@ int fcr_state_store_set_flow(FcrStateStore *ss, const FcrFlowState *flow)
 }
 
 int fcr_state_store_get_fast(const FcrStateStore *ss, int32_t turbine_id,
-                             FcrRoscoFastState *out)
+                             FcrRoscoRawState *out)
 {
     if (!ss || !out) return -1;
     if (turbine_id < 1 || turbine_id > (int32_t)ss->n_turbines) return -2;

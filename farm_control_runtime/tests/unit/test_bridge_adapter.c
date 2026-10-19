@@ -17,7 +17,7 @@ static void test_cmd_from_state(void) {
     tc.induction_ref = 0.20;
     tc.ind_seq_rx = 7;
     tc.ind_ttl_s = 5.0;
-    tc.source_time_s = 12.0;
+    tc.command_basis_sim_time_s = 12.0;   /* ICD v1.5 S0102 */
     fcr_bridge_adapter_cmd_from_state(&tc, 1, 400, 300, 300, &cmd);
     ASSERT(cmd.induction_valid == 1);
     ASSERT_NEAR(cmd.induction_ref, 0.20, 1e-9);
@@ -36,7 +36,7 @@ static void test_cmd_from_state(void) {
 
 /* ---- fast 状态 → bridge 测量 ---- */
 static void test_meas_from_fast(void) {
-    FcrRoscoFastState fast;
+    FcrRoscoRawState fast;
     FcrBridgeMeas meas;
     memset(&fast, 0, sizeof(fast));
     fast.valid = 1;
@@ -65,10 +65,10 @@ static void test_adapter_apply(void) {
     memset(&base, 0, sizeof(base));
     base.valid = 1;
     base.farm_control_enable = 1;
-    base.yaw_enable = 1;
+    base.external_yaw_enable = 1;              /* ICD v1.5 S0801 */
     base.yaw_seq = 3;
     base.yaw_target_heading_rad = 0.5;
-    base.power_ratio = 1.0;
+    base.r_pitch = 1.0;                        /* ICD v1.5 S0803 */
     /* 诱导命令 a=0.2（Mode 1） */
     memset(&cmd, 0, sizeof(cmd));
     cmd.turbine_id = 1; cmd.valid = 1;
@@ -85,13 +85,13 @@ static void test_adapter_apply(void) {
     int rc = fcr_bridge_adapter_apply(core, 1, 10.0, &cmd, &meas, &merged);
     ASSERT(rc == 0);
     /* yaw 保留 */
-    ASSERT(merged.yaw_enable == 1);
+    ASSERT(merged.external_yaw_enable == 1);
     ASSERT(merged.yaw_seq == 3);
     ASSERT_NEAR(merged.yaw_target_heading_rad, 0.5, 1e-9);
-    /* 诱导被 bridge 覆盖（a=0.2 → power_ratio < 1） */
+    /* 诱导被 bridge 覆盖（a=0.2 → r_pitch < 1） */
     ASSERT(merged.induction_enable == 1);
-    ASSERT(merged.power_ratio < 1.0);
-    ASSERT_NEAR(merged.power_ratio, fcr_bridge_mode1_power_ratio(0.2, 1.0/3.0), 1e-9);
+    ASSERT(merged.r_pitch < 1.0);
+    ASSERT_NEAR(merged.r_pitch, fcr_bridge_mode1_power_ratio(0.2, 1.0/3.0), 1e-9);
     fcr_bridge_core_destroy(core);
 }
 
