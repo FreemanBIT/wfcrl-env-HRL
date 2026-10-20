@@ -11,6 +11,7 @@ class FakeEngine:
     """记录下发命令的假引擎（不启动 FAST.Farm）。"""
     def __init__(self, state=None):
         self.yaw_calls = []
+        self.yaw_target_calls = []
         self.ind_calls = []
         self.state = state or self._state2()
 
@@ -26,6 +27,9 @@ class FakeEngine:
 
     def send_yaw_delta(self, tid, delta_rad, seq=None, ttl_s=60.0):
         self.yaw_calls.append((tid, delta_rad, seq))
+
+    def send_yaw_target(self, tid, target_rad, seq=None, ttl_s=60.0):
+        self.yaw_target_calls.append((tid, target_rad, seq))
 
     def send_induction(self, tid, ref, seq=None, ttl_s=5.0):
         self.ind_calls.append((tid, ref, seq))
@@ -51,14 +55,26 @@ def test_yaw_delta_direct_passthrough():
     assert abs(delta_rad - math.radians(10.0)) < 1e-12
 
 
-def test_yaw_deg_converted_to_delta():
+def test_yaw_deg_absolute_target_direct():
+    """yaw_deg（绝对目标）→ send_yaw_target 直传（ICD v1.5 S0108 正式通道）。
+
+    旧实现把绝对目标换算成增量再经 send_yaw_delta 回传；清理后直接走绝对目标，
+    不再依赖机舱方位缓存做增量往返。
+    """
     eng = FakeEngine()
     br = ZmqFarmBridge(eng, 2)
-    br.get_state()   # 与真实流程一致：先收状态帧（更新机舱方位）再下发
     br.write(1, {1: Cmd(turbine_id=1, yaw_deg=math.degrees(1.0 - 0.05))})
-    assert len(eng.yaw_calls) == 1
-    tid, delta_rad, seq = eng.yaw_calls[0]
-    assert abs(delta_rad + 0.05) < 1e-9
+    assert len(eng.yaw_target_calls) == 1
+    tid, target_rad, seq = eng.yaw_target_calls[0]
+    assert tid == 1 and seq == 1
+    # 绝对目标直传：target = 1.0 - 0.05 rad（无增量往返）
+    assert abs(target_rad - (1.0 - 0.05)) < 1e-9
+    # 增量路径仍走 send_yaw_delta（CW+ 动作语义，客户端内换算）
+    eng2 = FakeEngine()
+    br2 = ZmqFarmBridge(eng2, 2)
+    br2.write(1, {1: Cmd(turbine_id=1, yaw_delta_deg=10.0)})
+    assert len(eng2.yaw_calls) == 1
+    assert abs(eng2.yaw_calls[0][1] - math.radians(10.0)) < 1e-12
 
 
 def test_induction_direct():

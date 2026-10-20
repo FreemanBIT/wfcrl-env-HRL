@@ -213,6 +213,75 @@ static void test_wind_estimate(void) {
     ASSERT(fcr_bridge_adapter_meas_apply_wind_estimate(&meas, NULL, 0.0, 1.0) == -1);
 }
 
+/* ---- T-20 / G-3：Upstream_Signal_ID 跨两跳追溯 ----
+ * 同业务值沿 ICD v1.5 单跳链连续传递：
+ *   induction: S0105(命令帧 induction_ref) → S0705(FcrBridgeInput) → S0803(r_pitch)
+ *   yaw:       S0108(命令帧 yaw_target_heading_rad) → S0707(FcrBridgeInput) → S0802(r_pitch 侧 yaw_target)
+ * 断言每一跳的值与上一跳一致（跨两跳可追），且最终经 bridge Mode1 映射为 r_pitch。
+ */
+static void test_trace_upstream_signal_id(void) {
+    FcrTurbineCommandState tc;      /* S01（RCP → Scheduler 命令帧） */
+    FcrBridgeInput in;              /* S07（Scheduler → Bridge） */
+    FcrBridgeCmd cmd;               /* bridge 命令（含 S0705/S0707 业务值） */
+    FcrBridgeMeas meas;
+    FcrRoscoExternalSetpoint base, merged;
+
+    /* ---- 第一跳：S0105/S0108 → S0705/S0707 ---- */
+    memset(&tc, 0, sizeof(tc));
+    tc.control_enable = 1;
+    tc.control_mode = FCR_CONTROL_MODE_PRC;
+    tc.command_basis_sim_time_s = 12.5;          /* S0102 */
+    tc.ind_valid = 1; tc.ind_seq_rx = 7;
+    tc.induction_ref = 0.20;                     /* S0105 */
+    tc.ind_ttl_s = 5.0;
+    tc.yaw_valid = 1; tc.yaw_seq_rx = 3;
+    tc.yaw_target_heading_rad = -0.2;            /* S0108 */
+    tc.yaw_ttl_s = 60.0;
+
+    fcr_bridge_adapter_input_from_state(&tc, 2, 30.0, &in);
+    /* S0705 = S0105（同业务值，跨跳可追） */
+    ASSERT_NEAR(in.induction_ref, 0.20, 1e-12);
+    ASSERT(in.induction_seq == 7);               /* S0706 = S0106 */
+    /* S0707 = S0108（同业务值，跨跳可追） */
+    ASSERT_NEAR(in.yaw_target_heading_rad, -0.2, 1e-12);
+    ASSERT(in.yaw_seq == 3);                     /* S0708 = S0109 */
+    ASSERT_NEAR(in.command_basis_sim_time_s, 12.5, 1e-12);   /* S0710 = S0102 */
+
+    /* ---- 第二跳：S0705/S0707 → bridge 命令（默认纯 pitch 分配，r_pitch 精确 = Mode1(a)）---- */
+    fcr_bridge_adapter_cmd_from_input(&in, 1, 1000, 0, 0, 5.0, 60.0, &cmd);
+    ASSERT(cmd.induction_valid == 1);
+    ASSERT_NEAR(cmd.induction_ref, 0.20, 1e-12); /* S0705 → bridge 命令 */
+    ASSERT(cmd.induction_seq == 7);
+    ASSERT(cmd.yaw_valid == 1);
+    ASSERT_NEAR(cmd.yaw_target_heading_rad, -0.2, 1e-12);  /* S0707 → bridge 命令 */
+    ASSERT(cmd.yaw_seq == 3);
+
+    /* ---- 第三跳：bridge Mode1 → S0803 r_pitch（S0105 的物理映射）---- */
+    FcrBridgeCore *core = fcr_bridge_core_create(2, NULL, NULL, NULL);  /* 2 台机（S0703=2） */
+    ASSERT(core != NULL);
+    memset(&meas, 0, sizeof(meas));
+    meas.turbine_id = 2; meas.valid = 1;
+    meas.rotor_speed_rad_s = 1.2; meas.gen_power_w = 2e6;
+    meas.ambient_upstream_wind_mps = 8.0; meas.disk_wind_speed_mps = 8.0;
+    meas.rotor_thrust_n = 4e5;
+    memset(&base, 0, sizeof(base));
+    base.valid = 1; base.farm_control_enable = 1;
+    base.external_yaw_enable = 1; base.yaw_seq = 3;
+    base.yaw_target_heading_rad = -0.2;
+    base.r_pitch = 1.0; base.r_speed = 1.0; base.r_torque = 1.0;
+    merged = base;
+    int rc = fcr_bridge_adapter_apply(core, 2, 10.0, &cmd, &meas, &merged);
+    ASSERT(rc == 0);
+    /* S0803 = Mode1(a=S0105)（同业务值经映射可追） */
+    ASSERT(merged.induction_enable == 1);
+    ASSERT_NEAR(merged.r_pitch, fcr_bridge_mode1_power_ratio(0.20, 1.0/3.0), 1e-9);
+    /* S0802：yaw 目标跨两跳保持（S0108 → S0707 → S0802） */
+    ASSERT(merged.external_yaw_enable == 1);
+    ASSERT(merged.yaw_seq == 3);
+    ASSERT_NEAR(merged.yaw_target_heading_rad, -0.2, 1e-9);
+    fcr_bridge_core_destroy(core);
+}
+
 void test_bridge_adapter_register(void)
 {
     RUN_TEST("cmd_from_state", test_cmd_from_state);
@@ -222,4 +291,5 @@ void test_bridge_adapter_register(void)
     RUN_TEST("input_from_state", test_input_from_state);
     RUN_TEST("cmd_from_input", test_cmd_from_input);
     RUN_TEST("wind_estimate", test_wind_estimate);
+    RUN_TEST("trace_upstream_signal_id", test_trace_upstream_signal_id);
 }

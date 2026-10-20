@@ -373,6 +373,102 @@ def test_zmq_client_awae_accessors():
     assert c.get_awae_catalog(timeout_s=0.05) is None
 
 
+def test_command_frame_cross_language_roundtrip():
+    """T-05：命令帧 Python→C→回读 全链路（S0101-S0112）
+
+    Python 构造命令帧并序列化 → 编译运行一个 C 探针（fcr_state_types.h 权威
+    布局）逐字段解析 → 打印回读值 → Python 断言与下发值完全一致。
+    这是"Python→C→回读"的**跨语言**契约：证明 Python ctypes 镜像不仅尺寸/偏移
+    一致（check_abi），而且字段级解析语义与 C 完全一致。
+    """
+    import subprocess
+    import tempfile
+    import textwrap
+
+    inc = REPO_ROOT / "farm_control_runtime" / "include"
+    prog = textwrap.dedent("""\
+    #include <stdio.h>
+    #include <string.h>
+    #include "fcr_state_types.h"
+    /* 从 stdin 读入 5664 B 命令帧原始字节，回读关键字段（S0101-S0112） */
+    int main(void) {
+        FarmCommandFrame fr;
+        if (fread(&fr, 1, sizeof(fr), stdin) != sizeof(fr)) return 2;
+        const FcrTurbineCommand *t = &fr.turbines[0];
+        printf("seq=%llu\\n", (unsigned long long)fr.command_frame_seq);
+        printf("n=%u\\n", fr.n_turbines);
+        printf("yaw_target=%.12g\\n", t->yaw_target_heading_rad);
+        printf("yaw_seq=%llu\\n", (unsigned long long)t->yaw_seq);
+        printf("yaw_valid=%u\\n", t->yaw_valid);
+        printf("ind_ref=%.12g\\n", t->induction_ref);
+        printf("ind_seq=%llu\\n", (unsigned long long)t->induction_seq);
+        printf("ind_valid=%u\\n", t->induction_valid);
+        printf("ctrl_enable=%u\\n", t->control_enable);
+        printf("ctrl_mode=%u\\n", t->control_mode);
+        printf("req_eff=%.12g\\n", t->requested_effective_sim_time_s);
+        printf("basis=%.12g\\n", t->command_basis_sim_time_s);
+        printf("yaw_ttl=%.12g\\n", t->yaw_ttl_s);
+        printf("ind_ttl=%.12g\\n", t->induction_ttl_s);
+        return 0;
+    }
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".c", delete=False, encoding="utf-8") as tf:
+        tf.write(prog)
+        cfile = tf.name
+    exe = tempfile.NamedTemporaryFile(suffix=".exe", delete=False).name
+    try:
+        r = subprocess.run(["gcc", "-std=c11", f"-I{inc}", "-o", exe, cfile],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise AssertionError(f"C probe compile failed: {r.stderr}")
+
+        # Python 侧构造命令帧（S0101-S0112 全字段）
+        fr = fp.new_command_frame(3, 424242, receive_time_s=1.5)
+        t = fr.turbines[0]
+        t.control_enable = 1
+        t.control_mode = fp.FCR_CONTROL_MODE_CT_FEED          # 2
+        t.requested_effective_sim_time_s = 12.75
+        t.command_basis_sim_time_s = 9.5
+        t.yaw_valid = 1
+        t.yaw_seq = 777
+        t.yaw_target_heading_rad = -0.17453292519943295       # -10°
+        t.yaw_ttl_s = 60.0
+        t.induction_valid = 1
+        t.induction_seq = 555
+        t.induction_ref = 0.2
+        t.induction_ttl_s = 5.0
+        raw = fp.frame_to_bytes(fr)
+        assert len(raw) == fp.FCR_COMMAND_FRAME_SIZE == 5664
+
+        # C 探针解析回读（二进制 stdin；stdout 解码）
+        p = subprocess.run([exe], input=raw, capture_output=True)
+        assert p.returncode == 0, p.stderr
+        out_text = p.stdout.decode("utf-8", errors="replace")
+        vals = {}
+        for line in out_text.strip().splitlines():
+            k, _, v = line.partition("=")
+            vals[k] = v
+
+        # Python 断言 C 回读值与下发值一致（跨语言往返）
+        assert int(vals["seq"]) == 424242, vals["seq"]
+        assert int(vals["n"]) == 3
+        assert abs(float(vals["yaw_target"]) - (-0.17453292519943295)) < 1e-12
+        assert int(vals["yaw_seq"]) == 777
+        assert int(vals["yaw_valid"]) == 1
+        assert abs(float(vals["ind_ref"]) - 0.2) < 1e-12
+        assert int(vals["ind_seq"]) == 555
+        assert int(vals["ind_valid"]) == 1
+        assert int(vals["ctrl_enable"]) == 1
+        assert int(vals["ctrl_mode"]) == 2
+        assert abs(float(vals["req_eff"]) - 12.75) < 1e-12
+        assert abs(float(vals["basis"]) - 9.5) < 1e-12
+        assert abs(float(vals["yaw_ttl"]) - 60.0) < 1e-12
+        assert abs(float(vals["ind_ttl"]) - 5.0) < 1e-12
+    finally:
+        pathlib.Path(cfile).unlink(missing_ok=True)
+        pathlib.Path(exe).unlink(missing_ok=True)
+
+
 def _main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

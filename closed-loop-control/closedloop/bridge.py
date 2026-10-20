@@ -3,26 +3,11 @@
 """
 import math
 import time
-import warnings as _warnings
 from typing import Optional
 
 from .types import TurbineMeas, Cmd
 from .induction import power_to_induction, A_GREEDY
 from .runner import ZmqPlant
-
-
-
-
-def _wrap_pi_rad(x: float) -> float:
-    while x > math.pi:
-        x -= 2.0 * math.pi
-    while x < -math.pi:
-        x += 2.0 * math.pi
-    return x
-
-
-def _norm180_deg(x: float) -> float:
-    return math.degrees(_wrap_pi_rad(math.radians(x)))
 
 
 class ZmqFarmBridge:
@@ -32,15 +17,10 @@ class ZmqFarmBridge:
         self.wind_direction = float(wind_direction)
         self._yaw_seq = [0] * self.n
         self._ind_seq = [0] * self.n
-        self._last_state = None
-        self._heading_cache = {}   # tid -> 上次有效机舱方位（deg）
-        self._warned = set()
 
     # -- 状态读取 -------------------------------------------------------------
     def get_state(self, timeout_s: float = 15.0):
         st = self.engine.get_state(timeout_s=timeout_s)
-        if st is not None:
-            self._last_state = st
         return st
 
     def read(self, step: int) -> dict:
@@ -83,8 +63,6 @@ class ZmqFarmBridge:
     def reset(self) -> None:
         self._yaw_seq = [0] * self.n
         self._ind_seq = [0] * self.n
-        self._warned = set()
-        self._heading_cache = {}
 
     # -- 命令下发 -------------------------------------------------------------
     def write(self, step: int, cmds: dict) -> None:
@@ -115,35 +93,16 @@ class ZmqFarmBridge:
         self.engine.send_induction(tid, float(a), seq=self._ind_seq[i], ttl_s=30.0)
 
     def _send_yaw(self, tid: int, i: int, target_deg: float) -> None:
-        hdg = self._heading_deg(tid)
-        if hdg is None:
-            self._warn_once(tid, 'nohdg',
-                            '尚无状态帧提供 T%d 机舱方位，本次 yaw 命令未发送' % tid)
-            return
-        delta_deg = _norm180_deg(target_deg - hdg)
-        self._yaw_seq[i] += 1
-        self.engine.send_yaw_delta(tid, math.radians(delta_deg),
-                                   seq=self._yaw_seq[i], ttl_s=60.0)
+        """偏航绝对目标直通（ICD v1.5 S0108 正式通道，CCW+）。
 
-    def _warn_once(self, tid: int, key: str, msg: str) -> None:
-        k = (tid, key)
-        if k not in self._warned:
-            _warnings.warn(msg, UserWarning, stacklevel=3)
-            self._warned.add(k)
+        持有绝对机舱方位时走 send_yaw_target，不再做"绝对→增量→再换算绝对"
+        的往返（旧实现经 send_yaw_delta 由客户端换算）。
+        """
+        self._yaw_seq[i] += 1
+        self.engine.send_yaw_target(tid, math.radians(target_deg),
+                                    seq=self._yaw_seq[i], ttl_s=60.0)
 
     # -- 状态转换 -------------------------------------------------------------
-    def _heading_deg(self, tid: int):
-        st = self._last_state
-        if st is not None and tid <= len(st.get('turbines', [])):
-            t = st['turbines'][tid - 1] or {}
-            if t.get('valid'):
-                h = t.get('nacelle_heading_rad', float('nan'))
-                if h == h and abs(h) <= 2.0 * math.pi:  # 合理性防御（含合并帧瞬时垃圾）
-                    deg = math.degrees(h)
-                    self._heading_cache[tid] = deg
-                    return deg
-        # 当前帧无效时回退到上次有效方位（合并帧瞬时缺失容忍）
-        return self._heading_cache.get(tid)
 
     @staticmethod
     def meas_from_state(state: dict, n_turbines: int) -> dict:

@@ -207,6 +207,17 @@ class FastFarmZmqEngine:
             raise RuntimeError("not started")
         self._client.send_yaw_delta(turbine_id, delta_rad, seq=seq, ttl_s=ttl_s)
 
+    def send_yaw_target(self, turbine_id: int, target_heading_rad: float,
+                        seq: Optional[int] = None, ttl_s: float = 60.0) -> None:
+        """下发单机偏航**绝对目标**（CCW+，ICD v1.5 S0108 正式通道）。
+
+        与 send_yaw_delta（CW+ 动作增量，客户端内换算）等价但显式走绝对目标，
+        供 RCP/研究脚本在持有绝对机舱方位时直接使用，避免增量→绝对往返。
+        """
+        if self._client is None:
+            raise RuntimeError("not started")
+        self._client.send_yaw_target(turbine_id, target_heading_rad, seq=seq, ttl_s=ttl_s)
+
     def send_induction(self, turbine_id: int, induction_ref: float,
                        seq: Optional[int] = None, ttl_s: float = 5.0) -> None:
         if self._client is None:

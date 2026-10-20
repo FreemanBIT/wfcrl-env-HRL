@@ -107,8 +107,83 @@ static void test_aggregate_flow_zoh(void)
     fcr_state_store_destroy(ss);
 }
 
+/* ---- T-19：S10 状态帧新增字段（S1011-S1017）----
+ * 断言 estimated_wind_mps / wind_source / wind_quality_flags / ct_hat /
+ * yaw_seq_applied / induction_seq_applied / turbine_status_flags 从输入源正确填充。
+ */
+static void test_aggregate_s10_new_fields(void)
+{
+    FcrStateStore *ss = fcr_state_store_create(1);
+    FcrStateAggregator *a = fcr_state_aggregator_create(1, 1.0);
+    FarmStateFrame fr;
+    FcrRoscoRawState f;
+    FcrTurbineExtraState e;
+    FcrFlowState fl;
+    double t;
+
+    ASSERT(ss && a);
+
+    /* 10 ms fast：heading/转速/功率 + seq 回读 + 风估计来源 */
+    for (t = 0.0; t <= 1.0; t += 0.01) {
+        memset(&f, 0, sizeof(f));
+        f.turbine_id = 1; f.valid = 1; f.source_time_s = t;
+        f.gen_power_w = 4.0e6;
+        f.nacelle_heading_rad = -0.1745;        /* S1009 */
+        f.rotor_speed_rad_s = 1.2;
+        f.hub_wind_speed_mps = 8.0;             /* OpenFAST hub 风 → S1011 */
+        f.rosco_controller_status_flags = 0x0005;
+        f.yaw_seq_applied = 3;                  /* S1013 ← S0902 */
+        f.induction_seq_applied = 7;            /* S1014 ← S0901 */
+        fcr_state_store_set_fast(ss, 1, &f);
+        fcr_state_aggregator_feed_fast(a, 1, &f);
+    }
+    /* 10 ms extra：真实 rotor_ct → S1012 */
+    for (t = 0.0; t <= 1.0; t += 0.01) {
+        memset(&e, 0, sizeof(e));
+        e.turbine_id = 1; e.valid = 1; e.source_time_s = t;
+        e.rotor_ct = 0.78;                      /* 有效 Ct（0..2）→ ct_hat */
+        e.rotor_cp = 0.45;
+        fcr_state_store_set_extra(ss, &e);
+        fcr_state_aggregator_feed_extra(a, &e);
+    }
+    fcr_state_store_set_clock(ss, 1.0, 100, 1, FCR_RT_HEALTH_OK);
+    memset(&fl, 0, sizeof(fl));
+    fl.valid = 1; fl.flow_source_time_s = 1.0; fl.flow_seq = 7; fl.n_turbines = 1;
+    fl.disk_disturbed_wind_mps[0] = 7.5;
+    fcr_state_store_set_flow(ss, &fl);
+
+    fcr_state_aggregator_build_frame(a, ss, &fr);
+    const FcrFarmTurbineState *ts = &fr.turbines[0];
+    ASSERT(ts->valid == 1);
+    ASSERT_NEAR(ts->nacelle_heading_actual_rad, -0.1745, 1e-9);     /* S1009 */
+    /* S1011/S1016/S1017：风估计来源如实标 OPENFAST + 低置信（W-06，不谎称 ROSCO_WE） */
+    ASSERT_NEAR(ts->estimated_wind_mps, 8.0, 1e-9);
+    ASSERT(ts->wind_source == FCR_WIND_SOURCE_OPENFAST);
+    ASSERT((ts->wind_quality_flags & FCR_WIND_QUALITY_LOW_CONFIDENCE) != 0);
+    /* S1012：真实有限 Ct → ct_hat */
+    ASSERT_NEAR(ts->ct_hat, 0.78, 1e-9);
+    ASSERT_NEAR(ts->rotor_ct, 0.78, 1e-9);
+    /* S1013/S1014：seq 回读透传 */
+    ASSERT(ts->yaw_seq_applied == 3);
+    ASSERT(ts->induction_seq_applied == 7);
+    /* S1015：turbine_status_flags 综合状态透传 */
+    ASSERT(ts->turbine_status_flags == 0x0005);
+
+    /* 无效 Ct（0/NaN/越界）→ 显式 0，不冒充真实值（W-06） */
+    memset(&e, 0, sizeof(e));
+    e.turbine_id = 1; e.valid = 1; e.source_time_s = 2.0;
+    e.rotor_ct = 5.0;   /* 越界（>2）→ 视为无估计 */
+    fcr_state_store_set_extra(ss, &e);
+    fcr_state_aggregator_build_frame(a, ss, &fr);
+    ASSERT(fr.turbines[0].ct_hat == 0.0);
+
+    fcr_state_aggregator_destroy(a);
+    fcr_state_store_destroy(ss);
+}
+
 void test_state_aggregator_register(void)
 {
     RUN_TEST("aggregate_multi_rate", test_aggregate_multi_rate);
     RUN_TEST("aggregate_flow_zoh", test_aggregate_flow_zoh);
+    RUN_TEST("aggregate_s10_new_fields", test_aggregate_s10_new_fields);
 }

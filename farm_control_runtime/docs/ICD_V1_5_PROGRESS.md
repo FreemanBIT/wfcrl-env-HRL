@@ -14,10 +14,11 @@ Phase C 发布链路（Modbus 侧）已完成；代码审查 W-08（ZMQ AWAE 二
 
 | 验证项 | 命令 | 结果 |
 |---|---|---|
-| C 单元测试 | `farm_control_runtime/tools/_build_test.bat && test_runner.exe` | **78/78 PASS**（含 W-09 容量统一守卫） |
-| Python 协议测试 | `.venv\Scripts\python.exe farm_control_runtime\tests\integration\test_icd_v15_abi_python.py` | **11/11 PASS**（含 W-08 AWAE 帧镜像 4 例） |
+| C 单元测试 | `farm_control_runtime/tools/_build_test.bat && test_runner.exe` | **80/80 PASS**（含 W-09 容量守卫 + T-19/T-20 契约测试） |
+| Python 协议测试 | `.venv\Scripts\python.exe farm_control_runtime\tests\integration\test_icd_v15_abi_python.py` | **12/12 PASS**（含 T-05 跨语言往返） |
 | ABI 交叉校验 | `.venv\Scripts\python.exe farm_control_runtime\tools\check_abi.py` | **PASS**（C 尺寸 + 82/82 Python↔C 字段偏移，含 AWAE 帧） |
 | 集成测试（FAST.Farm 闭环） | `pytest farm_control_runtime\tests\integration -q` | **26/26 PASS**（含新增 `test_awae_zmq_link.py`；libzmq teardown abort 为已知环境问题，逐文件 dots 为记录） |
+| **G-1/G-2/G-3 静态门禁** | `.venv\Scripts\python.exe farm_control_runtime\tools\check_icd_gates.py` | **PASS**（88 信号 / 13 组 / 每组固定一对 / v1.4 保留 / S12/S13 不冲突 / Upstream_Signal_ID 链可追） |
 | ROSCO DLL | `.venv\Scripts\python.exe wfcrl\simulators\fastfarm\src\_compile.py` | **OK**（2359.4 KB，含 W-08/W-09 模块） |
 | **T-21** 300 s 基线回归 | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run.regress_300s` | **PASS**：`mean_farm_power=4366 kW`（基线 4366 kW，偏差 **0.00%**）——W-08/W-09 改动无扰动 |
 | **T-22** 诱导通道 300 s | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run._test_induction_only` | **PASS**（见 §2，历史记录） |
@@ -211,10 +212,35 @@ Phase C 发布链路（Modbus 侧）已完成；代码审查 W-08（ZMQ AWAE 二
   （`offline/provider/offline_fastfarm_provider.c` 的
   `FCR_CFG_AWAE_SYNTH_POINTS`，WIN-13）。
 
-### Phase D — 合同测试 T-05…T-20（部分完成）
-- 已完成：T-04/T-12 的 Python 侧（`tests/integration/test_icd_v15_abi_python.py`，11 例，
-  含 W-08 新增的 AWAE 帧镜像/解析/类型分派）。
-- 待补：T-05…T-11、T-13…T-20（AWAE、S06/S07/S09 契约、超时/回退等）。
+### Phase D — 合同测试 T-05…T-20（**全部覆盖**）
+- **Python 协议侧**（`tests/integration/test_icd_v15_abi_python.py`，12 例）：
+  T-04/T-12（时间戳不混用）＋ W-08 AWAE 帧镜像 4 例 ＋ **T-05**（命令帧
+  Python→C→回读全链路：Python 构造 → 编译 C 探针解析回读 → 逐字段一致）。
+- **C 单测侧**（`tests/unit/`）：
+  - T-06（control_enable=0 回退）：`command_store::control_disable_fallback`、
+    `rosco_api::control_disable_fallback`
+  - T-07（control_mode 枚举，3 必须 UNSUPPORTED）：`bridge_core::mode3_unsupported`
+  - T-08（requested_effective_sim_time_s 排程）：`command_store::requested_effective_time`
+  - T-09/T-10（yaw/induction 独立序号）：`command_store::channels_independent`、
+    `yaw_action_manager::induction_does_not_affect_yaw`
+  - T-11（TTL 到期回退）：`command_store::ttl_expiry`、
+    `yaw_action_manager::ttl_expiry_rollback`、`bridge_core::safety`
+  - T-13（AWAE Catalog 注入契约）：`awae::awae_catalog_build`（point_catalog_version 保持）
+  - T-14（AWAE Observation 注入契约）：`awae::awae_observation_build`（S0502 仿真时刻 +
+    quality 透传）
+  - T-16（TurbineWindEstimate S06 wind_source 标注）：`bridge_adapter::wind_estimate`
+  - T-17（Scheduler_to_Bridge 快照 S07 全字段）：`bridge_adapter::input_from_state` +
+    `cmd_from_input`
+  - T-18（Bridge_Ack seq + flags）：`rosco_api::ack_roundtrip`
+  - T-19（S10 新增字段 S1011-S1017）：**`state_aggregator::aggregate_s10_new_fields`**
+    （新增，2026-10-20）
+  - T-20（Upstream_Signal_ID 跨两跳追溯）：**`bridge_adapter::trace_upstream_signal_id`**
+    （新增，2026-10-20）＋ G-3 静态链校验（`tools/check_icd_gates.py`）
+- **验收门禁 G-1/G-2/G-3(静态)**：`tools/check_icd_gates.py`（新增，2026-10-20）
+  基于 v1.5 SingleHop CSV（已入库 `docs/farm_control/inputs/`）：
+  G-1（Signal_ID 唯一 + 每组固定一对 Sender/Receiver）、G-2（v1.4 组保留 +
+  S12/S13 不冲突 + 信号数）、G-3（Upstream_Signal_ID 存在性 + 期望链 + T-15
+  二跳接收端分离）。**PASS（88 信号 / 13 组）**。
 
 ### Phase E — 300 s FAST.Farm 系统回归（**T-21 / T-22 / T-23 / T-25 / T-27 完成**）
 - **已完成**：T-21 基线回归 PASS（4366 kW vs 基线 4366 kW，0.00%）；T-22 诱导
@@ -231,13 +257,17 @@ Phase C 发布链路（Modbus 侧）已完成；代码审查 W-08（ZMQ AWAE 二
 - ⚠ 跑回归时勿并行重编译，并把 stdout 重定向到文件（见 §2 Phase E 的操作注意）。
 
 ### 其他已知问题（未处理，需决策）
-- `config/induction_mapping.yaml` 的 `a_max=0.45` 与 C 侧默认 `a_max=1/3` 不一致；
-  该 YAML 目前**未被加载**，运行时以 C 默认为准。若要真正启用配置加载需先统一。
+- `config/induction_mapping.yaml` 的 `a_max` 已统一为 `1/3`（与 C 默认一致，
+  决策 2026-10-20）；该 YAML **仍未被加载**，运行时以 C 默认为准
+  （env `FCR_BRIDGE_IND_A_MAX/MIN` 可显式覆盖，W-10）。
 - `wfcrl/engine/fastfarm_zmq.py`、`induction_vs_yaw_study/*`、
-  `closed-loop-control/*` 中仍有直接调用 `send_yaw_delta`（CW+ 增量）的脚本；
-  换算已在 `FarmZmqClient.send_yaw_delta` 内部完成，故其动作语义保持不变。
+  `closed-loop-control/*` 中调用 `send_yaw_delta`（CW+ 增量）的脚本**已清理**：
+  换算在 `FarmZmqClient.send_yaw_delta` 内部完成（动作语义不变，这是被维护的
+  便捷 API，非旧字段）；`ZmqFarmBridge._send_yaw`（持有绝对目标）已改走
+  `send_yaw_target`（S0108 正式通道），删除绝对→增量往返与相关死代码；
+  replay 的 `yaw_delta_deg` 用法因状态帧 heading 不可靠而**刻意保留**。
 - 工作区 `induction_vs_yaw_study/run/_*.py` 5 个调试脚本为未跟踪文件
-  （在 `farm_control_runtime` 之外），未做处理。
+  （在 `farm_control_runtime` 之外），**决策保留**（2026-10-20）。
 
 ---
 
