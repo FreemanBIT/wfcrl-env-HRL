@@ -105,6 +105,14 @@ int fcr_rosco_api_init(uint32_t n_turbines_max, double dt_high_s)
             cfg.bridge_alloc_w_speed = s;
             cfg.bridge_alloc_w_torque = t;
         }
+        /* W-10: 诱导映射参数经 env 显式注入（YAML 未加载；C 权威，env 覆盖） */
+        {
+            const char *am = getenv("FCR_BRIDGE_IND_A_MAX");
+            const char *an = getenv("FCR_BRIDGE_IND_A_MIN");
+            double v;
+            if (am && (v = atof(am)) > 0.0 && v < 1.0) cfg.bridge_ind_a_max = v;
+            if (an && (v = atof(an)) >= 0.0 && v < 1.0) cfg.bridge_ind_a_min = v;
+        }
     }
     FCR_LOCK_INIT();
     FCR_LOCK();

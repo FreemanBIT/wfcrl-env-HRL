@@ -52,6 +52,10 @@ typedef struct {
     uint32_t  bridge_alloc_w_pitch;    /* Mode1 控制分配权重（0..1000 千分比，和=1000） */
     uint32_t  bridge_alloc_w_speed;
     uint32_t  bridge_alloc_w_torque;
+    /* W-10: 诱导映射参数 env 显式覆盖（0 = 用 core 默认 a_max=1/3, a_min=0.05）。
+     * YAML 未加载，C 权威；此处提供可追溯的显式配置入口。 */
+    double    bridge_ind_a_max;
+    double    bridge_ind_a_min;
 } FcrRuntimeConfig;
 
 /* ------------------------------------------------------------------ */

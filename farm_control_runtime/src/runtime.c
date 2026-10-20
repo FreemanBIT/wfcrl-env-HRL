@@ -49,9 +49,32 @@ FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
     }
     /* DR-3/DR-4：bridge core（bridge_enable=1 时作为 setpoint 生成源） */
     if (rt->cfg.bridge_enable) {
-        rt->bridge_core = fcr_bridge_core_create(rt->cfg.n_turbines, NULL, NULL, NULL);
+        /* W-10: 诱导映射配置——env 显式覆盖（0 = core 默认 a_max=1/3, a_min=0.05）。
+         * 必须用完整默认值填充再覆盖，避免零值字段破坏映射。 */
+        FcrBridgeIndConfig bind;
+        const FcrBridgeIndConfig *pind = NULL;
+        if (rt->cfg.bridge_ind_a_max > 0.0 || rt->cfg.bridge_ind_a_min > 0.0) {
+            bind.a0 = 0.3333333333333333;
+            bind.a_min = 0.05;
+            bind.a_max = 0.3333333333333333;
+            bind.ct_coef = 1.0;
+            bind.power_cap = 1.0;
+            bind.min_pitch_max_rad = 0.30;
+            if (rt->cfg.bridge_ind_a_max > 0.0) bind.a_max = rt->cfg.bridge_ind_a_max;
+            if (rt->cfg.bridge_ind_a_min >= 0.0 && rt->cfg.bridge_ind_a_max > 0.0)
+                bind.a_min = rt->cfg.bridge_ind_a_min;
+            pind = &bind;
+        }
+        rt->bridge_core = fcr_bridge_core_create(rt->cfg.n_turbines, pind, NULL, NULL);
         if (!rt->bridge_core) { fcr_runtime_destroy(rt); return NULL; }
     }
+    /* W-10: 启动日志——打印生效的 control allocation 与诱导映射参数，
+     * 明确 legacy / bridge 权威入口。 */
+    fprintf(stderr,
+            "[fcr] control allocation: bridge_enable=%u mode=%u a_max=%.3f a_min=%.3f\n",
+            rt->cfg.bridge_enable, rt->cfg.bridge_induction_mode,
+            (rt->cfg.bridge_ind_a_max > 0.0) ? rt->cfg.bridge_ind_a_max : 0.3333333333333333,
+            (rt->cfg.bridge_ind_a_max > 0.0) ? rt->cfg.bridge_ind_a_min : 0.05);
     rt->last_low_step_time_s = -1.0;
     return rt;
 }
