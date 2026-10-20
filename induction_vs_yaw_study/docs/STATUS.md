@@ -161,7 +161,7 @@
 1. ✅ **U8 Induction 标定 map 全量重跑**（gate 9，已完成）：新 map `induction_operating_map_icd15.csv`（6 点，a 0.10→1029…0.33→1622 kW）；**a=0.10 Region1 崩溃已消除**（旧 7.5kW 停机 → 新 1029 kW），可用域扩展 [0.10, 0.33]；rpm 7.2-8.8 不再钉 MinOMSpd
 2. ✅ **1200s 全时长重验**（已完成）：yaw=30 全程锁定 −29.99° 至 1202s，**无顺桨/无 stall**（旧 DLL t≈524 异常消失）；诱导深降载 stall 风险（交付 §7）在湍流阵风场景仍需 pilot 观察
 3. ✅ **P2 确定性复验**（已完成）：新 DLL 下 OMP=1 双跑逐位一致（4366.1165×2，100/100）
-4. 🟡 **Identity/符号测试重跑**：交付团队 v2.10.6 已重验 identity（zero_yaw −0.078%、induction_r1 PASS）；yaw sign（WD×yaw）在新 DLL 基线下的重跑待做（幅度可能整体迁移）
+4. ✅ **Identity/符号测试重跑**（已完成）：identity 交付 v2.10.6 PASS（zero_yaw −0.078%、induction_r1）；**yaw sign 新 DLL 重跑 PASS**（2026-10-20，WD=+10°：yaw −20→4534.7 / 0→4626.4 / +20→**4632.9 kW** farm，+20 最优与旧 DLL 一致（旧 4635），符号/排序未变；T1 降功率但 T2/T3 尾流偏转收益主导）
 5. 🟢 **FLORIS 校准衔接**：新标定 map → Phase 4 a_cmd 直优（改用 `induction_operating_map_icd15.csv`；a_min_eff(U8)≈0.10 重新测定为 0.10）
 6. ✅ **DEL 载荷通道**：新 DLL 下注入有效（31 通道实测）——无需改动
 7. ⚪ **Pilot DOE**：前置全齐（U8 18/18 + 新 map + 确定性 + 全链 PASS）；待 TI15_s3 决策 + 启动
