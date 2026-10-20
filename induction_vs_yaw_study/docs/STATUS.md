@@ -1,4 +1,4 @@
-# STATUS — 诱导 vs 偏航研究：开发进度与问题（快照 2026-09-21 17:10）
+# STATUS — 诱导 vs 偏航研究：开发进度与问题（快照 2026-10-20 18:00）
 
 > 本文档为阶段性状态快照（进度 / 验证结论 / 开放问题）。gate 逐项跟踪见 `EXECUTION_LOG.md`，
 > 方案见 `../DEVELOPMENT_PLAN_ZMQ.md`。
@@ -127,3 +127,53 @@
 - **72 盒真实需求 ≈ 55–60 GB**（U6@1950s ~1.0GB/盒、U8@1800s 0.69GB/盒、U10@1700s 0.65GB、U12@1650s 0.63GB；此前 "~103GB" 高估）
 - 结论：**单盘可行但紧**——72 盒（~58GB）后 D: 剩 ~40GB；DOE results 增长（2592 case × timeseries.csv ~15-25MB ≈ 40-65GB）会溢出
 - 建议：①先只生成 pilot 所需 U8 18/18（+5 盒 ~3GB）；②timeseries.csv 仅保留统计 summary，raw 时序跑完即清（或只留代表 case）；③U6/10/12 按需分批生成；④dbg2 诊断文件纳入 .gitignore/定期清理
+
+---
+
+## 六、ICD v1.5 场控接口升级 —— 影响评估与复验（2026-10-20）
+
+> 工程在 2026-10 升级了场控接口至 **ICD v1.5**（交付 `farm_control_runtime_delivery_20261020`，
+> 基线 `f920ceb`；新 DLL `DISCON_WT1.dll` 2359.4KB，含 S1101 保留接口 + AWAE 二跳 + Mode0/1/2/3
+> 控制模式 + per-turbine control_mode authority）。**本段记录接口变更对研究侧测试的影响与复验结果。**
+
+### 6.1 接口关键变化（影响研究侧）
+1. **命令帧重定义**：`FarmCommandFrame`（per-turbine 槽位；`command_frame_seq` S0101、`command_basis_sim_time_s` S0102——基于仿真时刻，墙钟命令被拒 WIN-05；无状态帧前发的命令被拒）
+2. **yaw_delta→绝对目标换算移入客户端**：`wfcrl/transport/farm_zmq_client.py` 的 `send_yaw_delta` 内部调 `yaw_delta_cw_to_absolute_ccw`（wrap_pm_pi(heading_now−delta)）；引擎 `send_yaw_delta` 签名兼容（研究侧 `_send_cmds` 无需改）
+3. **控制模式 Mode0/1/2/3**：per-turbine control_mode 权威；研究侧 `_send_cmds` 走 yaw_delta/induction 通道（对应模式由 runtime 默认桥接），功能测试（同场对比）确认 induction/yaw 通道独立生效、无串扰
+4. **状态帧扩展/改名**：S1002 sim_time、S1009 `nacelle_heading_actual_rad`、S1010 `rotor_aero_thrust_n`、S1011 estimated_wind、S1012 ct_hat、S1015-1017 turbine_status/wind_source/wind_quality；引擎 `_parse_state_frame` 保留旧键兼容研究侧（`nacelle_heading_rad`/`rotor_thrust_n` 均可用）✓
+5. **诱导执行语义变化（W-01/W-02）**：r_pitch 纯桨距（不再隐式 VS_RtPwr 降载）+ PRC/PS/VS 配置全量 save-restore → **转速不再钉 VS_MinOMSpd**（实测 rpm 7.53→8.39-8.78 @a=0.2/0.3）→ **缓解旧 Region1 深降载崩溃风险**
+6. **AWAE 二跳**（S04/S05→S12/S13）与 **6T 布局**（LayoutRegistry "6T" 2×3）新增；研究侧新增 `run/six_turbine_interface_test.py` 专门验证
+7. **方法论**：交付文档强调 FAST.Farm 湍流混沌 → **同场对比**（baseline 与 test 同 run 同 BTS 同时刻差）；研究侧 OMP=1 已实现逐位确定性 → 跨 run 对比依然有效（P2 修复的价值更凸显）
+
+### 6.2 复验结果（2026-10-20，新 DLL + OMP=1）
+| 测试 | 旧 DLL 结果 | 新 ICD v1.5 DLL | 状态 |
+|---|---|---|---|
+| 300s 门禁（regress_300s） | 4232 kW | **4366 kW**（T-21 交叉印证 4364-4366） | ✅ PASS，基线 +3% |
+| P1 yaw 保持（180s yaw=30） | −30.1°/T1 1135 kW | **−29.99°（seq=1 保持）/T1 1152 kW** | ✅ PASS |
+| **P1 yaw 保持（1200s 全时长）** | −30.1° 保持至 1202s（旧 t≈524 曾顺桨） | **−29.99° 全程锁定至 1202s，无顺桨/无 stall** | ✅ PASS（旧异常消除） |
+| **U8 Induction 标定（全 6 点重跑）** | a=0.10→7.5kW(停机)/0.20→1232/0.33→1568 | **a=0.10→1029（崩溃消除）/0.20→1389/0.33→1622 kW**；rpm 7.2-8.8（不再钉 MinOMSpd） | ✅ PASS（**a=0.10 Region1 崩溃已消除**，可用域扩展 [0.10,0.33]） |
+| **P2 确定性（300s 双跑）** | 4232.2834×2 逐位一致 | **4366.1165×2 逐位一致（100/100）** | ✅ PASS（新 DLL 下 OMP=1 确定性保持） |
+| 6T yaw 阶跃（T3/T4 +10°@200s） | —（旧无 6T） | T3 −9.99°/T4 −10.00°；P −12%/−3.8%；4 机零串扰 | ✅ PASS |
+| 6T induction 阶跃（T3/T4 a=0.2@200s） | — | T3 −22.5%/T4 −16.1%；seq=1；零串扰 | ✅ PASS |
+| identity（交付 v2.10.6） | — | zero_yaw −0.078%、induction_r1 PASS | ✅ PASS（交付团队已重验） |
+
+### 6.3 需要调整/重新测试的项目（优先级排序）—— 2026-10-20 复验后状态
+1. ✅ **U8 Induction 标定 map 全量重跑**（gate 9，已完成）：新 map `induction_operating_map_icd15.csv`（6 点，a 0.10→1029…0.33→1622 kW）；**a=0.10 Region1 崩溃已消除**（旧 7.5kW 停机 → 新 1029 kW），可用域扩展 [0.10, 0.33]；rpm 7.2-8.8 不再钉 MinOMSpd
+2. ✅ **1200s 全时长重验**（已完成）：yaw=30 全程锁定 −29.99° 至 1202s，**无顺桨/无 stall**（旧 DLL t≈524 异常消失）；诱导深降载 stall 风险（交付 §7）在湍流阵风场景仍需 pilot 观察
+3. ✅ **P2 确定性复验**（已完成）：新 DLL 下 OMP=1 双跑逐位一致（4366.1165×2，100/100）
+4. 🟡 **Identity/符号测试重跑**：交付团队 v2.10.6 已重验 identity（zero_yaw −0.078%、induction_r1 PASS）；yaw sign（WD×yaw）在新 DLL 基线下的重跑待做（幅度可能整体迁移）
+5. 🟢 **FLORIS 校准衔接**：新标定 map → Phase 4 a_cmd 直优（改用 `induction_operating_map_icd15.csv`；a_min_eff(U8)≈0.10 重新测定为 0.10）
+6. ✅ **DEL 载荷通道**：新 DLL 下注入有效（31 通道实测）——无需改动
+7. ⚪ **Pilot DOE**：前置全齐（U8 18/18 + 新 map + 确定性 + 全链 PASS）；待 TI15_s3 决策 + 启动
+
+### 6.4 执行中的约束
+- **不修改** `farm_control_runtime/`、`wfcrl/transport/`、`wfcrl/engine/`、`closed-loop-control/` 等一切场控接口相关代码（用户指令）——只从 `induction_vs_yaw_study/` 研究侧操作
+- 每次代码改动后先跑 300s 门禁（用户规则）
+- 内存规则：仿真与盒生成错峰；当前无 TurbSim，内存 3.9GB 可跑单仿真
+
+### 6.5 调整后的下一步（ICD v1.5 口径）
+1. TI15_seed03 决策（重造 or 放行 or pilot 用 5 seed）
+2. yaw sign（WD×yaw）在新 DLL 基线重跑（确认符号/幅度）
+3. Phase 4：用新标定 map（`induction_operating_map_icd15.csv`）重建 FLORIS a_cmd LUT + 直优框架
+4. Pilot 486 启动（新 DLL 口径，OMP=1，顺桨过滤已备；注意 §7 诱导 stall 风险在湍流场景的观察）
+5. U6/10/12 盒生成（磁盘已核可行）→ 其余风速标定 → Full DOE

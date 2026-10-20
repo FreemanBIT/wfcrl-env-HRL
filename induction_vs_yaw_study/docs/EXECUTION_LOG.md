@@ -10,13 +10,13 @@
 | 6 | greedy/sentinel induction identity | ✅ | induction_r1 -0.44% |
 | 7 | yaw sign verified | ✅ | wd+10: +20 最优 4635kW 与 FLORIS(+15°) sign 一致；wd-10: ±20 对称；wd0: 0 最优 |
 | 8 | WD mirror sanity | 🟡 单 seed 已跑 | P(+10,+20)=4635 vs P(-10,-20)=4147；多 seed 平均待 pilot |
-| 9 | induction operating map（1T） | 🟡 U8 六点完成 | a 0.10→1456…0.33→1588kW（单调）；Ct/Cp 运行时字段为 0（待验证）；U6/10/12 待盒 |
+| 9 | induction operating map（1T） | 🟡 U8 重跑完成（ICD v1.5 新 DLL） | **新 map（2026-10-20, TI10_s1, OMP=1, settle 120s）**：a 0.10→1029 / 0.15→1210 / 0.20→1389 / 0.25→1527 / 0.30→1610 / 0.33→1622 kW；Ct 0.552-0.864、Cp 0.298-0.474；**a=0.10 Region1 崩溃已消除**（旧 DLL 7.5kW 停机），可用域 [0.10,0.33]；U6/10/12 待盒 |
 | 10 | FLORIS induction LUT 存 calibrated a_cmd | ⬜ | Phase 4（LUT 现含 ratio/power_target；a_cmd 主链待接） |
 | 11 | 显式窗口 + 时长派生 | ✅ | metrics.py + Case 派生计数（P0-5） |
 | 12 | worker 清理 PID-scope | ✅ | run/_proc_utils（age+PID） |
 | 13 | manifest 并发安全 | ✅ | 批跑器增量 append+锁；resume 重试 failed |
 | 14 | BTS 共享引用 | ✅ | engine 只引用源盒 |
-| 15 | pilot DOE 通过 | ⬜ | 缺 U8 盒（5/18）+ 全精度 LUT 可跑（quick LUT 已有） |
+| 15 | pilot DOE 通过 | 🟡 前置齐 | U8 盒 18/18 完成（2026-09-24，QA 17/18，TI15_s3 待决策）；全精度 LUT 可跑（quick 已有）；ICD v1.5 新 DLL 复验全 PASS（2026-10-20）；待 TI15_s3 决策 + pilot 启动 |
 
 
 ## DEL 多机 .outb 通道（2026-09-16 定位解决）
