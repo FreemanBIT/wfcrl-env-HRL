@@ -31,7 +31,7 @@ gcc -std=c11 -Wall -Wextra -O2 -Iinclude -Isrc -Ibridge -Iawae -Ioffline/harness
     src/angle_convention.c src/command_store.c src/state_store.c src/watchdog.c src/runtime.c `
     src/rosco_api.c src/signal_statistics.c src/state_aggregator.c src/induction_supervisor.c src/yaw_action_manager.c `
     bridge/fcr_bridge_core.c bridge/yaw_adapter.c bridge/rt_snapshot.c src/bridge_runtime_adapter.c `
-    awae/observation_manager.c awae/wind_mapper.c `
+    awae/observation_manager.c awae/wind_mapper.c awae/awae_frame_builder.c `
     offline/harness/shm_command_source.c offline/provider/offline_fastfarm_provider.c `
     transport/modbus/modbus_transport.c `
     tests/unit/test_framework.c tests/unit/test_main.c tests/unit/test_angle_convention.c `

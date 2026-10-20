@@ -27,13 +27,22 @@ set(FCR_SRC
     src/bridge_runtime_adapter.c
     awae/observation_manager.c
     awae/wind_mapper.c
+    awae/awae_frame_builder.c
     offline/harness/shm_command_source.c
     offline/provider/offline_fastfarm_provider.c
     transport/modbus/modbus_transport.c
 )
 
 add_library(farm_control_runtime STATIC ${FCR_SRC})
-target_include_directories(farm_control_runtime PUBLIC ${FCR_INCLUDE_DIR})
+# W-07: 库自身需要 src/bridge/awae/offline/transport 等子目录头文件
+target_include_directories(farm_control_runtime PUBLIC
+    ${FCR_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/bridge
+    ${CMAKE_CURRENT_SOURCE_DIR}/awae
+    ${CMAKE_CURRENT_SOURCE_DIR}/offline/harness
+    ${CMAKE_CURRENT_SOURCE_DIR}/offline/provider
+    ${CMAKE_CURRENT_SOURCE_DIR}/transport/modbus)
 target_compile_features(farm_control_runtime PUBLIC c_std_11)
 set_target_properties(farm_control_runtime PROPERTIES
     POSITION_INDEPENDENT_CODE ON
