@@ -38,7 +38,7 @@ TYPE_EXPECT = {
     "FcrBridgeInput": 72,
     "FcrBridgeOutput": 56,
     "FcrBridgeAck": 32,
-    "FcrRoscoExternalSetpoint": 104,
+    "FcrRoscoExternalSetpoint": 112,
     "FcrRoscoAck": 32,
     # ---- 状态帧 (S10) ----
     "FcrFarmTurbineState": 400,

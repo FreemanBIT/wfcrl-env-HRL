@@ -44,7 +44,7 @@ static void test_abi_sizes(void)
     CHECK_ABI(FcrBridgeAck, 32);
 
     /* ---- ROSCO setpoint/ack (S08/S09) ---- */
-    CHECK_ABI(FcrRoscoExternalSetpoint, 104);   /* S0807 新增 → 96 → 104 */
+    CHECK_ABI(FcrRoscoExternalSetpoint, 112);   /* S0807 新增 → 104；S1101 保留接口 → 112 */
     CHECK_ABI(FcrRoscoAck, 32);
 
     /* ---- 状态帧 (S10) ---- */
@@ -98,6 +98,8 @@ static void test_abi_offsets(void)
     ASSERT(offsetof(FcrRoscoExternalSetpoint, yaw_target_heading_rad) == 24);
     ASSERT(offsetof(FcrRoscoExternalSetpoint, r_pitch) == 56);
     ASSERT(offsetof(FcrRoscoExternalSetpoint, collective_pitch_offset_rad) == 88);
+    /* S1101 保留接口：追加在末尾，既有字段偏移不变 */
+    ASSERT(offsetof(FcrRoscoExternalSetpoint, ct_tracking_error) == 104);
 
     /* FarmStateFrame — S1001/S1002 改名后偏移不变 */
     ASSERT(offsetof(FarmStateFrame, state_frame_seq) == 8);

@@ -19,6 +19,7 @@ Phase C 发布链路（Modbus 侧）已完成；代码审查 W-08（ZMQ AWAE 二
 | ABI 交叉校验 | `.venv\Scripts\python.exe farm_control_runtime\tools\check_abi.py` | **PASS**（C 尺寸 + 82/82 Python↔C 字段偏移，含 AWAE 帧） |
 | 集成测试（FAST.Farm 闭环） | `pytest farm_control_runtime\tests\integration -q` | **26/26 PASS**（含新增 `test_awae_zmq_link.py`；libzmq teardown abort 为已知环境问题，逐文件 dots 为记录） |
 | **G-1/G-2/G-3 静态门禁** | `.venv\Scripts\python.exe farm_control_runtime\tools\check_icd_gates.py` | **PASS**（88 信号 / 13 组 / 每组固定一对 / v1.4 保留 / S12/S13 不冲突 / Upstream_Signal_ID 链可追） |
+| **信号一致性审计** | `.venv\Scripts\python.exe farm_control_runtime\tools\audit_signals.py` | **PASS（88/88）**：CSV 全信号 ↔ C 结构字段/类型/承载一致；S1101 `ct_tracking_error` 已补为保留接口；2 条 turbine_id 符号性 NOTE（uint32 vs int32_t，ABI 足迹相同） |
 | ROSCO DLL | `.venv\Scripts\python.exe wfcrl\simulators\fastfarm\src\_compile.py` | **OK**（2359.4 KB，含 W-08/W-09 模块） |
 | **T-21** 300 s 基线回归 | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run.regress_300s` | **PASS**：`mean_farm_power=4366 kW`（基线 4366 kW，偏差 **0.00%**）——W-08/W-09 改动无扰动 |
 | **T-22** 诱导通道 300 s | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run._test_induction_only` | **PASS**（见 §2，历史记录） |
@@ -241,6 +242,18 @@ Phase C 发布链路（Modbus 侧）已完成；代码审查 W-08（ZMQ AWAE 二
   G-1（Signal_ID 唯一 + 每组固定一对 Sender/Receiver）、G-2（v1.4 组保留 +
   S12/S13 不冲突 + 信号数）、G-3（Upstream_Signal_ID 存在性 + 期望链 + T-15
   二跳接收端分离）。**PASS（88 信号 / 13 组）**。
+
+### 信号一致性审计 + S1101（2026-10-20）
+- 新增 `tools/audit_signals.py`：对照 v1.5 SingleHop CSV 的 88 信号逐一映射到
+  C 结构字段，核对类型/方向/承载。**PASS（88/88）**。
+- **S1101 `ct_tracking_error`（Future_CT_Feedback）**：作为**保留接口**加入
+  `FcrRoscoExternalSetpoint`（末尾追加，`double`，本期恒 0，RT 阶段实现闭环）。
+  结构尺寸 104 → 112；同步更新 `FarmControlCBindings.f90` FcrSetpointC 镜像、
+  `test_abi.c`（CHECK_ABI + offset 104）、`check_abi.py`（TYPE_EXPECT）、
+  `verify_bridge_modes.py` ctypes 镜像（并修正其 FcrBridgeMeas 缺尾字段、
+  补 collective_pitch_offset_rad、修复 Mode2 测试 meas turbine_id 不匹配 bug）。
+- 2 条 NOTE：`S0201/S1003 turbine_id` CSV=uint32 vs C=int32_t（ABI 足迹相同 4B，
+  值恒 ≥1，仅符号解释差异，无实际影响）。
 
 ### Phase E — 300 s FAST.Farm 系统回归（**T-21 / T-22 / T-23 / T-25 / T-27 完成**）
 - **已完成**：T-21 基线回归 PASS（4366 kW vs 基线 4366 kW，0.00%）；T-22 诱导

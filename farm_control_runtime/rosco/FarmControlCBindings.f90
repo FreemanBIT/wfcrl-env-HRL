@@ -10,7 +10,7 @@ MODULE FarmControlCBindings
    IMPLICIT NONE
 
    ! C 结构镜像（字段顺序/类型与 fcr_rosco_api.h 完全一致；ABI 尺寸有测试锁定）
-   ! FcrRoscoExternalSetpoint (ICD v1.5 S0801-S0807)
+   ! FcrRoscoExternalSetpoint (ICD v1.5 S0801-S0807 + S1101 保留接口)
    TYPE, BIND(C) :: FcrSetpointC
       INTEGER(C_INT32_T)   :: valid
       INTEGER(C_INT32_T)   :: farm_control_enable         ! S0104/S0704
@@ -26,6 +26,7 @@ MODULE FarmControlCBindings
       REAL(C_DOUBLE)       :: min_pitch_ref_rad            ! S0806
       REAL(C_DOUBLE)       :: collective_pitch_offset_rad  ! S0807
       INTEGER(C_INT32_T)   :: command_status_flags
+      REAL(C_DOUBLE)       :: ct_tracking_error            ! S1101（仅保留接口）
    END TYPE FcrSetpointC
 
    ! FcrRoscoRawState (ICD v1.5 S0301-S0303 + 扩展)

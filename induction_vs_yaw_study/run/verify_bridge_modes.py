@@ -60,14 +60,17 @@ class FcrBridgeCmd(C.Structure):
     ]
 
 class FcrRoscoExternalSetpoint(C.Structure):
+    """与 fcr_rosco_api.h FcrRoscoExternalSetpoint 逐字段对齐（S0801-S0807 + S1101 保留）。"""
     _fields_ = [
         ("valid", C.c_uint32), ("farm_control_enable", C.c_uint32),
-        ("yaw_enable", C.c_uint32), ("yaw_seq", C.c_uint64),
+        ("external_yaw_enable", C.c_uint32), ("yaw_seq", C.c_uint64),
         ("yaw_target_heading_rad", C.c_double),
         ("induction_enable", C.c_uint32), ("induction_seq", C.c_uint64),
-        ("ct_ref", C.c_double), ("power_ratio", C.c_double),
-        ("speed_ref_ratio", C.c_double), ("torque_limit_ratio", C.c_double),
-        ("min_pitch_rad", C.c_double), ("command_status_flags", C.c_uint32),
+        ("ct_ref", C.c_double), ("r_pitch", C.c_double),
+        ("r_speed", C.c_double), ("r_torque", C.c_double),
+        ("min_pitch_ref_rad", C.c_double), ("collective_pitch_offset_rad", C.c_double),
+        ("command_status_flags", C.c_uint32),
+        ("ct_tracking_error", C.c_double),   # S1101 保留接口（追加在末尾）
     ]
 
 
@@ -129,8 +132,8 @@ def main():
     dll.fcr_bridge_core_set_command(core, C.byref(cmd))
     dll.fcr_bridge_core_set_meas(core, C.byref(new_meas()))
     rc = dll.fcr_bridge_core_step(core, 1, 5.0, C.byref(sp))
-    if rc != 0 or sp.induction_enable != 0 or abs(sp.power_ratio - 1.0) > 1e-9:
-        fails.append(f"Mode0 旁路失败: enable={sp.induction_enable} pr={sp.power_ratio}")
+    if rc != 0 or sp.induction_enable != 0 or abs(sp.r_pitch - 1.0) > 1e-9:
+        fails.append(f"Mode0 旁路失败: enable={sp.induction_enable} pr={sp.r_pitch}")
 
     # ---- 2. Mode 1：R_power 单调 + 默认纯 r_pitch ----
     prs = [dll.fcr_bridge_mode1_power_ratio(a, 1 / 3) for a in (0.10, 0.20, 0.25, 1 / 3)]
@@ -142,9 +145,9 @@ def main():
     dll.fcr_bridge_core_set_meas(core, C.byref(new_meas()))
     dll.fcr_bridge_core_step(core, 1, 5.0, C.byref(sp))
     expect_pr = dll.fcr_bridge_mode1_power_ratio(0.2, 1 / 3)
-    if not (sp.induction_enable == 1 and abs(sp.power_ratio - expect_pr) < 1e-9
-            and abs(sp.speed_ref_ratio - 1.0) < 1e-9 and abs(sp.torque_limit_ratio - 1.0) < 1e-9):
-        fails.append(f"Mode1 默认分配失败: pr={sp.power_ratio} spd={sp.speed_ref_ratio} tq={sp.torque_limit_ratio}")
+    if not (sp.induction_enable == 1 and abs(sp.r_pitch - expect_pr) < 1e-9
+            and abs(sp.r_speed - 1.0) < 1e-9 and abs(sp.r_torque - 1.0) < 1e-9):
+        fails.append(f"Mode1 默认分配失败: pr={sp.r_pitch} spd={sp.r_speed} tq={sp.r_torque}")
 
     # ---- 3. Mode 1：控制分配守恒（三通道按权）----
     cmd = new_cmd(mode=1, a=0.2, seq=2)
@@ -153,8 +156,8 @@ def main():
     dll.fcr_bridge_core_set_command(core, C.byref(cmd))
     dll.fcr_bridge_core_step(core, 1, 6.0, C.byref(sp))
     # 校验三通道都被降载（<1）且无未分配叠加
-    if not (sp.power_ratio < 1.0 and sp.speed_ref_ratio < 1.0 and sp.torque_limit_ratio < 1.0):
-        fails.append(f"Mode1 分配未生效: pr={sp.power_ratio} spd={sp.speed_ref_ratio} tq={sp.torque_limit_ratio}")
+    if not (sp.r_pitch < 1.0 and sp.r_speed < 1.0 and sp.r_torque < 1.0):
+        fails.append(f"Mode1 分配未生效: pr={sp.r_pitch} spd={sp.r_speed} tq={sp.r_torque}")
 
     # ---- 4. Mode 2：Ct 前馈 → min_pitch（a 越小 Ct_ref 越小 → beta 越大）----
     cmd2 = new_cmd(mode=2, a=0.3)
@@ -170,15 +173,15 @@ def main():
             # 简单模型：Ct 随 beta 增、随 lam 减
             cmd2.aero_ct_small[i * 9 + j] = 0.95 - 0.03 * b - 0.04 * (lam - 4.0)
     sp = FcrRoscoExternalSetpoint()
-    m2 = new_meas(om=6.0 * 63.0 / 8.0, v_up=8.0)  # lam = om*R/V = (6*63/8)*63/8 ≈ 37.2 → 最近行 lam=8
-    # 修正：让 lam 落在表内（lam ≈ 6-8）：用 om 使 lam = om*R/V 在 6-8 之间
-    # lam=7 → om = 7*8/63 ≈ 0.889 rad/s
-    m2 = new_meas(om=7.0 * 8.0 / 63.0, v_up=8.0)
+    # 命令/step 用 turbine_id=2 → meas 必须同机（tid=2），否则 meas_valid=0、
+    # lam=0 → W-05 缺风判定 (-5 NO_WIND) → 不采纳。
+    m2 = new_meas(tid=2, om=6.0 * 63.0 / 8.0, v_up=8.0)
+    m2 = new_meas(tid=2, om=7.0 * 8.0 / 63.0, v_up=8.0)  # lam = om*R/V = 7
     dll.fcr_bridge_core_set_command(core, C.byref(cmd2))
     dll.fcr_bridge_core_set_meas(core, C.byref(m2))
     dll.fcr_bridge_core_step(core, 2, 5.0, C.byref(sp))
     if sp.induction_enable != 1:
-        fails.append(f"Mode2 未使能 (pr={sp.power_ratio} mp={sp.min_pitch_rad})")
+        fails.append(f"Mode2 未使能 (pr={sp.r_pitch} mp={sp.min_pitch_ref_rad})")
     # 用更小的 a → Ct_ref 更小 → 需要更大 beta（min_pitch 更大）
     cmd2b = new_cmd(mode=2, a=0.15, seq=2)
     cmd2b.turbine_id = 2
@@ -194,8 +197,8 @@ def main():
     dll.fcr_bridge_core_set_meas(core, C.byref(m2))
     dll.fcr_bridge_core_step(core, 2, 6.0, C.byref(sp2))
     # a=0.15 的 Ct_ref 小于 a=0.30 的 Ct_ref → 需要更大 beta → min_pitch 更大
-    if not (sp2.min_pitch_rad > sp.min_pitch_rad):
-        fails.append(f"Mode2 反解方向错: a=0.3→{sp.min_pitch_rad:.4f} a=0.15→{sp2.min_pitch_rad:.4f}")
+    if not (sp2.min_pitch_ref_rad > sp.min_pitch_ref_rad):
+        fails.append(f"Mode2 反解方向错: a=0.3→{sp.min_pitch_ref_rad:.4f} a=0.15→{sp2.min_pitch_ref_rad:.4f}")
 
     # ---- 5. Ct 估计 DR-7：上游参考风优先 ----
     cmd0 = new_cmd(mode=0)  # 只喂测量，Ct 估计仍计算

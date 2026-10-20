@@ -45,6 +45,11 @@ typedef struct {
     double    collective_pitch_offset_rad; /* S0807: 集体桨距修正量 */
 
     uint32_t  command_status_flags;        /* FCR_CMD_FLAG_* */
+
+    /* S1101: Future_CT_Feedback —— 仅保留接口（本期不实现闭环，恒为 0）。
+     * 追加在末尾：既有字段偏移不变（ABI 尺寸 104 → 112，check_abi/test_abi
+     * 同步锁定）；供 RT 侧将来闭环 Ct 跟踪误差回传。 */
+    double    ct_tracking_error;
 } FcrRoscoExternalSetpoint;
 
 /* ------------------------------------------------------------------ */
