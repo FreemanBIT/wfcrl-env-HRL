@@ -3,17 +3,53 @@
   "rtt_s": 0.0005,
   "net_mbps": 100,
   "n30": {
-    "stateB": 7689,
-    "cmdB": 137,
-    "cycle_ms": 1.626,
-    "maxHz": 615,
+    "n_turbines": 30,
+    "sizes": {
+      "state_regs": 3840,
+      "state_bytes": 7689,
+      "cmd_bytes": 137
+    },
+    "one_cycle_latency_s": 0.00162608,
+    "max_poll_rate_hz": 614.9758929449965,
+    "crc16_us_per_frame": 8725.440700000036,
     "awae_points_supported": 127
   },
   "n100": {
-    "stateB": 25609,
-    "cmdB": 137,
-    "cycle_ms": 3.06,
-    "maxHz": 326.8,
+    "n_turbines": 100,
+    "sizes": {
+      "state_regs": 12800,
+      "state_bytes": 25609,
+      "cmd_bytes": 137
+    },
+    "one_cycle_latency_s": 0.00305968,
+    "max_poll_rate_hz": 326.8315640851331,
+    "crc16_us_per_frame": 34015.92740000342,
     "awae_points_supported": 127
-  }
+  },
+  "results": [
+    {
+      "n_turbines": 30,
+      "sizes": {
+        "state_regs": 3840,
+        "state_bytes": 7689,
+        "cmd_bytes": 137
+      },
+      "one_cycle_latency_s": 0.00162608,
+      "max_poll_rate_hz": 614.9758929449965,
+      "crc16_us_per_frame": 8725.440700000036,
+      "awae_points_supported": 127
+    },
+    {
+      "n_turbines": 100,
+      "sizes": {
+        "state_regs": 12800,
+        "state_bytes": 25609,
+        "cmd_bytes": 137
+      },
+      "one_cycle_latency_s": 0.00305968,
+      "max_poll_rate_hz": 326.8315640851331,
+      "crc16_us_per_frame": 34015.92740000342,
+      "awae_points_supported": 127
+    }
+  ]
 }

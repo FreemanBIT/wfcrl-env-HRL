@@ -27,6 +27,7 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 FCR_PROTOCOL_VERSION = 2  # ICD v1.5
 FCR_MAX_TURBINES = 64
+FCR_MAX_OBSERVATION_POINTS = 64  # W-09: 容量统一（与 C 侧 fcr_protocol.h 一致）
 
 # control_mode (S0111)
 FCR_CONTROL_MODE_BASELINE = 0
@@ -153,6 +154,60 @@ class FarmStateFrame(ctypes.Structure):
 
 
 # ---------------------------------------------------------------------------
+# AWAE 帧（W-08：ICD v1.5 GG-04/05 二跳发布 S12/S13 镜像）
+# ---------------------------------------------------------------------------
+# 与 C 侧 fcr_awae_types.h 逐字节一致；尺寸由 check_abi.py + test_abi.c 冻结。
+
+class FcrAWAECatalogEntry(ctypes.Structure):
+    """AWAE_Catalog 单点（S0401-S0403）"""
+    _fields_ = [
+        ("point_id", ctypes.c_uint32),                    # S0401
+        ("point_position_xyz_m", ctypes.c_double * 3),    # S0402
+        ("point_catalog_version", ctypes.c_uint32),       # S0403
+    ]
+
+
+class FcrAWAECatalogFrame(ctypes.Structure):
+    """AWAE_Catalog 帧（GG-13：S1301-S1303）"""
+    _fields_ = [
+        ("protocol_version", ctypes.c_uint32),
+        ("frame_seq", ctypes.c_uint64),
+        ("n_points", ctypes.c_uint32),
+        ("entries", FcrAWAECatalogEntry * FCR_MAX_OBSERVATION_POINTS),
+    ]
+
+
+class FcrAWAEObservation(ctypes.Structure):
+    """AWAE_Observation 单点（S0501-S0507）"""
+    _fields_ = [
+        ("observation_frame_seq", ctypes.c_uint64),        # S0501
+        ("observation_sample_sim_time_s", ctypes.c_double),# S0502
+        ("observation_point_count", ctypes.c_uint32),      # S0503
+        ("point_id", ctypes.c_uint32),                     # S0504
+        ("wind_uvw_mps", ctypes.c_float * 3),              # S0505
+        ("observation_quality_flags", ctypes.c_uint16),    # S0506
+        ("turbulence_intensity", ctypes.c_float),          # S0507
+    ]
+
+
+class FcrAWAEObservationFrame(ctypes.Structure):
+    """AWAE_Observation 帧（GG-12：S1201-S1207）"""
+    _fields_ = [
+        ("protocol_version", ctypes.c_uint32),
+        ("frame_seq", ctypes.c_uint64),
+        ("n_observations", ctypes.c_uint32),
+        ("observations", FcrAWAEObservation * FCR_MAX_OBSERVATION_POINTS),
+    ]
+
+
+# AWAE 质量位（与 fcr_awae_types.h 一致）
+FCR_AWAE_QUALITY_OK = 1 << 0
+FCR_AWAE_QUALITY_STALE = 1 << 1
+FCR_AWAE_QUALITY_SIMULATED = 1 << 2
+FCR_AWAE_QUALITY_LOW_CONF = 1 << 3
+
+
+# ---------------------------------------------------------------------------
 # ABI 冻结断言（必须与 tests/unit/test_abi.c 一致）
 # ---------------------------------------------------------------------------
 # FcrTurbineCommand: 8+8+4(+4pad)+8+8+4+4+2(+6pad)+8+8+8+8 = 88
@@ -162,6 +217,12 @@ assert ctypes.sizeof(FarmCommandFrame) == 5664, ctypes.sizeof(FarmCommandFrame)
 assert ctypes.sizeof(FcrSignalStats) == 48, ctypes.sizeof(FcrSignalStats)
 assert ctypes.sizeof(FcrFarmTurbineState) == 400, ctypes.sizeof(FcrFarmTurbineState)
 assert ctypes.sizeof(FarmStateFrame) == 25664, ctypes.sizeof(FarmStateFrame)
+
+# AWAE 帧（W-08）：与 C 侧 fcr_awae_types.h 冻结尺寸一致
+assert ctypes.sizeof(FcrAWAECatalogEntry) == 40, ctypes.sizeof(FcrAWAECatalogEntry)
+assert ctypes.sizeof(FcrAWAECatalogFrame) == 2584, ctypes.sizeof(FcrAWAECatalogFrame)
+assert ctypes.sizeof(FcrAWAEObservation) == 48, ctypes.sizeof(FcrAWAEObservation)
+assert ctypes.sizeof(FcrAWAEObservationFrame) == 3096, ctypes.sizeof(FcrAWAEObservationFrame)
 
 # 关键偏移（任何漂移都会让 Python 解析错位）
 assert FarmCommandFrame.turbines.offset == 32, FarmCommandFrame.turbines.offset
@@ -180,6 +241,9 @@ FCR_COMMAND_FRAME_SIZE = ctypes.sizeof(FarmCommandFrame)
 FCR_STATE_FRAME_SIZE = ctypes.sizeof(FarmStateFrame)
 FCR_STATE_FRAME_HEADER_SIZE = FarmStateFrame.turbines.offset
 FCR_TURBINE_STATE_SIZE = ctypes.sizeof(FcrFarmTurbineState)
+# AWAE 帧尺寸（W-08）：用于 ZMQ 接收端按冻结尺寸区分帧类型
+FCR_AWAE_CATALOG_FRAME_SIZE = ctypes.sizeof(FcrAWAECatalogFrame)        # 2584
+FCR_AWAE_OBSERVATION_FRAME_SIZE = ctypes.sizeof(FcrAWAEObservationFrame)  # 3096
 
 
 # ---------------------------------------------------------------------------
@@ -318,3 +382,57 @@ def turbine_state_from_slot(slot: bytes) -> FcrFarmTurbineState:
         raise ValueError(
             f"turbine slot size mismatch: got {len(slot)}, expected {FCR_TURBINE_STATE_SIZE}")
     return FcrFarmTurbineState.from_buffer_copy(slot)
+
+
+# ---------------------------------------------------------------------------
+# AWAE 帧解析（W-08：GG-12/GG-13 二跳）
+# ---------------------------------------------------------------------------
+def awae_catalog_frame_from_bytes(data: bytes) -> FcrAWAECatalogFrame:
+    """把 ZMQ AWAE 目录帧原始字节解析为 FcrAWAECatalogFrame（GG-13）。
+
+    必须做**尺寸校验**——尺寸不符说明 C/Python ABI 不一致或帧类型误判。
+    """
+    if len(data) != FCR_AWAE_CATALOG_FRAME_SIZE:
+        raise ValueError(
+            f"awae catalog frame size mismatch: got {len(data)}, "
+            f"expected {FCR_AWAE_CATALOG_FRAME_SIZE}")
+    return FcrAWAECatalogFrame.from_buffer_copy(data)
+
+
+def awae_catalog_frame_from_bytes_lenient(data: bytes) -> Optional[FcrAWAECatalogFrame]:
+    """尺寸不符时返回 None（接收循环用，避免抛异常打断线程）。"""
+    if len(data) != FCR_AWAE_CATALOG_FRAME_SIZE:
+        return None
+    return FcrAWAECatalogFrame.from_buffer_copy(data)
+
+
+def awae_observation_frame_from_bytes(data: bytes) -> FcrAWAEObservationFrame:
+    """把 ZMQ AWAE 观测帧原始字节解析为 FcrAWAEObservationFrame（GG-12）。"""
+    if len(data) != FCR_AWAE_OBSERVATION_FRAME_SIZE:
+        raise ValueError(
+            f"awae observation frame size mismatch: got {len(data)}, "
+            f"expected {FCR_AWAE_OBSERVATION_FRAME_SIZE}")
+    return FcrAWAEObservationFrame.from_buffer_copy(data)
+
+
+def awae_observation_frame_from_bytes_lenient(data: bytes) -> Optional[FcrAWAEObservationFrame]:
+    """尺寸不符时返回 None（接收循环用）。"""
+    if len(data) != FCR_AWAE_OBSERVATION_FRAME_SIZE:
+        return None
+    return FcrAWAEObservationFrame.from_buffer_copy(data)
+
+
+def awae_frame_type(data: bytes) -> str:
+    """按冻结尺寸判定 ZMQ 消息帧类型（W-08）。
+
+    返回 'state' / 'awae_observation' / 'awae_catalog' / 'unknown'。
+    ZMQ 消息 = 一整帧；帧类型由尺寸区分（各尺寸在 import 时由 assert 冻结）。
+    """
+    n = len(data)
+    if n == FCR_STATE_FRAME_SIZE:
+        return "state"
+    if n == FCR_AWAE_OBSERVATION_FRAME_SIZE:
+        return "awae_observation"
+    if n == FCR_AWAE_CATALOG_FRAME_SIZE:
+        return "awae_catalog"
+    return "unknown"

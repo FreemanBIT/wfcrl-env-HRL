@@ -14,13 +14,13 @@
 
 /* ---- Observation Manager：注册/环形缓冲/age ---- */
 static void test_om_register_and_ring(void) {
-    FcrObservationManager *m = fcr_observation_manager_create(4, 1024);
+    FcrObservationManager *m = fcr_observation_manager_create(4, FCR_MAX_OBSERVATION_POINTS);
     FcrAwaePoint pt;
     FcrAwaePointFrame fr, out;
     int i;
     ASSERT(m != NULL);
-    /* 注册 256 点（配置驱动） */
-    for (i = 0; i < 256; ++i) {
+    /* 注册满容量点（配置驱动；W-09 统一到 FCR_MAX_OBSERVATION_POINTS） */
+    for (i = 0; i < (int)FCR_MAX_OBSERVATION_POINTS; ++i) {
         memset(&pt, 0, sizeof(pt));
         pt.point_id = (uint32_t)i + 1;
         pt.x = 0.0; pt.y = 0.0; pt.z = 90.0;
@@ -28,13 +28,15 @@ static void test_om_register_and_ring(void) {
         pt.valid = 1;
         ASSERT(fcr_observation_manager_register_point(m, &pt) == 0);
     }
-    ASSERT(fcr_observation_manager_count(m) == 256);
+    ASSERT(fcr_observation_manager_count(m) == FCR_MAX_OBSERVATION_POINTS);
+    /* 超容量注册被拒（容量与线协议一致，W-09） */
+    ASSERT(fcr_observation_manager_register_point(m, &pt) == -2);
     /* 喂 6 帧（capacity=4 → 环形覆盖） */
     for (i = 0; i < 6; ++i) {
         memset(&fr, 0, sizeof(fr));
         fr.frame_seq = (uint32_t)i + 1;
         fr.source_time_s = (double)(i + 1);
-        fr.n_points = 256;
+        fr.n_points = FCR_MAX_OBSERVATION_POINTS;
         ASSERT(fcr_observation_manager_push_frame(m, &fr) == 0);
     }
     /* 最新帧应为第 6 帧 */
@@ -46,8 +48,8 @@ static void test_om_register_and_ring(void) {
     fcr_observation_manager_destroy(m);
 }
 
-/* ---- Wind Mapper：256 点盘面等效风 + DR-7 上游参考 ---- */
-static void test_wind_mapper_256(void) {
+/* ---- Wind Mapper：盘面等效风 + DR-7 上游参考（满容量点） ---- */
+static void test_wind_mapper_full_capacity(void) {
     FcrWindMapperConfig cfg;
     FcrWindMapper *m;
     FcrAwaePointFrame fr;
@@ -64,9 +66,9 @@ static void test_wind_mapper_256(void) {
 
     memset(&fr, 0, sizeof(fr));
     fr.frame_seq = 1; fr.source_time_s = 1.0;
-    /* 256 点：200 点在盘面内（dist<=63，风速 8），56 点上游参考（风速 10，x=-600）*/
-    fr.n_points = 256;
-    for (i = 0; i < 256; ++i) {
+    /* 满容量点：56 点上游参考（风速 10，x=-600），其余盘面内（dist<=63，风速 8） */
+    fr.n_points = FCR_MAX_OBSERVATION_POINTS;
+    for (i = 0; i < (int)FCR_MAX_OBSERVATION_POINTS; ++i) {
         FcrAwaePoint *p = &fr.points[i];
         p->point_id = (uint32_t)i + 1;
         if (i < 56) {
@@ -74,7 +76,7 @@ static void test_wind_mapper_256(void) {
             p->turbulence_intensity = 0.05;
         } else {
             /* 盘面内：沿 y 均匀分布在半径 63 内 */
-            double yy = -60.0 + (i - 56) * (120.0 / 199.0);
+            double yy = -60.0 + (i - 56) * (120.0 / 7.0);
             p->x = 0.0; p->y = yy; p->z = 90.0; p->wind_speed = 8.0;
             p->turbulence_intensity = 0.10;
         }
@@ -88,8 +90,8 @@ static void test_wind_mapper_256(void) {
     fcr_wind_mapper_destroy(m);
 }
 
-/* ---- Wind Mapper：1000 点容量 ---- */
-static void test_wind_mapper_1000(void) {
+/* ---- Wind Mapper：满容量守卫（W-09：与线协议 64 点一致） ---- */
+static void test_wind_mapper_capacity_guard(void) {
     FcrWindMapperConfig cfg;
     FcrWindMapper *m;
     FcrAwaePointFrame fr;
@@ -103,16 +105,18 @@ static void test_wind_mapper_1000(void) {
     ASSERT(m != NULL);
     memset(&fr, 0, sizeof(fr));
     fr.frame_seq = 1; fr.source_time_s = 1.0;
-    fr.n_points = 1000;  /* 1000 点容量（DR-7） */
-    for (i = 0; i < 1000; ++i) {
+    fr.n_points = FCR_MAX_OBSERVATION_POINTS;  /* 满容量（W-09：与线协议一致） */
+    for (i = 0; i < (int)FCR_MAX_OBSERVATION_POINTS; ++i) {
         FcrAwaePoint *p = &fr.points[i];
         p->point_id = (uint32_t)i + 1;
-        p->x = 0.0; p->y = -62.0 + (i % 200) * (124.0 / 199.0);
+        p->x = 0.0; p->y = -62.0 + (i % 8) * (124.0 / 7.0);
         p->z = 90.0; p->wind_speed = 8.0; p->turbulence_intensity = 0.10;
         p->valid = 1;
     }
     ASSERT(fcr_wind_mapper_map(m, 1, &fr, &out) == 0);
     ASSERT_NEAR(out.disk_disturbed_wind_mps, 8.0, 1e-6);
+    /* 帧结构容量 = FCR_AWAE_MAX_POINTS = FCR_MAX_OBSERVATION_POINTS（W-09 断言） */
+    ASSERT(FCR_AWAE_MAX_POINTS == FCR_MAX_OBSERVATION_POINTS);
     fcr_wind_mapper_destroy(m);
 }
 
@@ -225,8 +229,8 @@ static void test_awae_observation_build(void) {
 void test_awae_register(void)
 {
     RUN_TEST("om_register_and_ring", test_om_register_and_ring);
-    RUN_TEST("wind_mapper_256", test_wind_mapper_256);
-    RUN_TEST("wind_mapper_1000", test_wind_mapper_1000);
+    RUN_TEST("wind_mapper_full_capacity", test_wind_mapper_full_capacity);
+    RUN_TEST("wind_mapper_capacity_guard", test_wind_mapper_capacity_guard);
     RUN_TEST("wind_mapper_lambda", test_wind_mapper_lambda);
     RUN_TEST("awae_catalog_build", test_awae_catalog_build);
     RUN_TEST("awae_observation_build", test_awae_observation_build);

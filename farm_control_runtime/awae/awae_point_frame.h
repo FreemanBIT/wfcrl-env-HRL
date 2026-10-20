@@ -14,13 +14,16 @@
 #ifndef FCR_AWAE_POINT_FRAME_H
 #define FCR_AWAE_POINT_FRAME_H
 
+#include "fcr_protocol.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define FCR_AWAE_MAX_POINTS 1024   /* 初期 256 验证、1000 容量（DR-7） */
+/* W-09：容量统一到线协议常量（原 1024 与 FcrFlowState 64 点不一致；
+ * 本 legacy v1.1 帧承载的观察点数不得超过 FCR_MAX_OBSERVATION_POINTS）。 */
+#define FCR_AWAE_MAX_POINTS FCR_MAX_OBSERVATION_POINTS
 #define FCR_AWAE_POINT_NAME_MAX 32
 
 typedef struct {

@@ -62,6 +62,11 @@ MIRRORED_TYPES = [
     "FcrSignalStats",
     "FcrFarmTurbineState",
     "FarmStateFrame",
+    # W-08: AWAE 二跳帧（GG-12/GG-13）镜像
+    "FcrAWAECatalogEntry",
+    "FcrAWAECatalogFrame",
+    "FcrAWAEObservation",
+    "FcrAWAEObservationFrame",
 ]
 
 # 逐字段偏移校验清单：(C 类型名, 字段名)
@@ -100,6 +105,25 @@ FIELD_OFFSETS = [
         "protocol_version", "state_frame_seq", "state_sample_sim_time_s",
         "fast_step", "low_step", "rt_health_flags", "n_turbines",
         "flow_source_time_s", "flow_seq", "turbines",
+    )
+] + [
+    # W-08: AWAE 二跳帧字段偏移（GG-12/GG-13）
+    ("FcrAWAECatalogEntry", f) for f in (
+        "point_id", "point_position_xyz_m", "point_catalog_version",
+    )
+] + [
+    ("FcrAWAECatalogFrame", f) for f in (
+        "protocol_version", "frame_seq", "n_points", "entries",
+    )
+] + [
+    ("FcrAWAEObservation", f) for f in (
+        "observation_frame_seq", "observation_sample_sim_time_s",
+        "observation_point_count", "point_id", "wind_uvw_mps",
+        "observation_quality_flags", "turbulence_intensity",
+    )
+] + [
+    ("FcrAWAEObservationFrame", f) for f in (
+        "protocol_version", "frame_seq", "n_observations", "observations",
     )
 ]
 

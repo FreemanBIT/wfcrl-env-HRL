@@ -260,6 +260,119 @@ def test_command_basis_is_sim_time_not_wall_clock():
     assert fr5.turbines[0].command_basis_sim_time_s == 0.0
 
 
+def test_awae_catalog_frame_roundtrip():
+    """GG-13 S1301-S1303 AWAE 目录帧：构造→序列化→解析一致（W-08）"""
+    assert fp.FCR_AWAE_CATALOG_FRAME_SIZE == 2584
+    cat = fp.FcrAWAECatalogFrame()
+    cat.protocol_version = fp.FCR_PROTOCOL_VERSION
+    cat.frame_seq = 21
+    cat.n_points = 3
+    cat.entries[0].point_id = 101
+    cat.entries[0].point_position_xyz_m[0] = 1.5
+    cat.entries[0].point_position_xyz_m[1] = -2.5
+    cat.entries[0].point_position_xyz_m[2] = 90.0
+    cat.entries[0].point_catalog_version = 42
+    cat.entries[1].point_id = 102
+    cat.entries[2].point_id = 103
+
+    raw = bytes(cat)
+    assert len(raw) == fp.FCR_AWAE_CATALOG_FRAME_SIZE == 2584
+
+    back = fp.awae_catalog_frame_from_bytes(raw)
+    assert back.frame_seq == 21
+    assert back.n_points == 3
+    assert back.entries[0].point_id == 101
+    assert abs(back.entries[0].point_position_xyz_m[0] - 1.5) < 1e-12
+    assert abs(back.entries[0].point_position_xyz_m[1] - (-2.5)) < 1e-12
+    assert abs(back.entries[0].point_position_xyz_m[2] - 90.0) < 1e-12
+    assert back.entries[0].point_catalog_version == 42
+    assert back.entries[2].point_id == 103
+
+    # 尺寸不符必须显式报错（不得按错误偏移解析）
+    try:
+        fp.awae_catalog_frame_from_bytes(raw[:-1])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("size mismatch must raise ValueError")
+    assert fp.awae_catalog_frame_from_bytes_lenient(raw[:-1]) is None
+
+
+def test_awae_observation_frame_roundtrip():
+    """GG-12 S1201-S1207 AWAE 观测帧：构造→序列化→解析一致（W-08）"""
+    assert fp.FCR_AWAE_OBSERVATION_FRAME_SIZE == 3096
+    obs = fp.FcrAWAEObservationFrame()
+    obs.protocol_version = fp.FCR_PROTOCOL_VERSION
+    obs.frame_seq = 33
+    obs.n_observations = 2
+    o0 = obs.observations[0]
+    o0.observation_frame_seq = 33
+    o0.observation_sample_sim_time_s = 12.5
+    o0.observation_point_count = 2
+    o0.point_id = 501
+    o0.wind_uvw_mps[0] = 8.0
+    o0.wind_uvw_mps[1] = 0.5
+    o0.wind_uvw_mps[2] = -0.25
+    o0.observation_quality_flags = fp.FCR_AWAE_QUALITY_OK | fp.FCR_AWAE_QUALITY_SIMULATED
+    o0.turbulence_intensity = 0.08
+    obs.observations[1].point_id = 502
+    obs.observations[1].turbulence_intensity = 0.12
+
+    raw = bytes(obs)
+    assert len(raw) == fp.FCR_AWAE_OBSERVATION_FRAME_SIZE == 3096
+
+    back = fp.awae_observation_frame_from_bytes(raw)
+    assert back.frame_seq == 33
+    assert back.n_observations == 2
+    b0 = back.observations[0]
+    assert b0.observation_frame_seq == 33
+    assert abs(b0.observation_sample_sim_time_s - 12.5) < 1e-12
+    assert b0.observation_point_count == 2
+    assert b0.point_id == 501
+    assert abs(b0.wind_uvw_mps[0] - 8.0) < 1e-5
+    assert abs(b0.wind_uvw_mps[1] - 0.5) < 1e-5
+    assert abs(b0.wind_uvw_mps[2] - (-0.25)) < 1e-5
+    assert b0.observation_quality_flags & fp.FCR_AWAE_QUALITY_OK
+    assert b0.observation_quality_flags & fp.FCR_AWAE_QUALITY_SIMULATED
+    assert abs(b0.turbulence_intensity - 0.08) < 1e-5
+    assert back.observations[1].point_id == 502
+    assert abs(back.observations[1].turbulence_intensity - 0.12) < 1e-5
+
+    # 尺寸不符必须显式报错
+    try:
+        fp.awae_observation_frame_from_bytes(raw[:-1])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("size mismatch must raise ValueError")
+    assert fp.awae_observation_frame_from_bytes_lenient(raw[:-1]) is None
+
+
+def test_awae_frame_type_dispatch():
+    """W-08：ZMQ 接收端按冻结尺寸区分帧类型"""
+    assert fp.awae_frame_type(b"\x00" * fp.FCR_STATE_FRAME_SIZE) == "state"
+    assert fp.awae_frame_type(b"\x00" * fp.FCR_AWAE_OBSERVATION_FRAME_SIZE) == "awae_observation"
+    assert fp.awae_frame_type(b"\x00" * fp.FCR_AWAE_CATALOG_FRAME_SIZE) == "awae_catalog"
+    assert fp.awae_frame_type(b"\x00" * 100) == "unknown"
+
+
+def test_zmq_client_awae_accessors():
+    """W-08：FarmZmqClient 收到 AWAE 帧后经 get_awae_* 返回，尺寸与镜像一致"""
+    from wfcrl.transport.farm_zmq_client import FarmZmqClient
+    # 常量从镜像派生（不得硬编码）
+    assert FarmZmqClient._FRAME_SIZE == 25664 == fp.FCR_STATE_FRAME_SIZE
+    # AWAE 帧尺寸常量与镜像一致
+    assert fp.FCR_AWAE_CATALOG_FRAME_SIZE == ctypes.sizeof(fp.FcrAWAECatalogFrame)
+    assert fp.FCR_AWAE_OBSERVATION_FRAME_SIZE == ctypes.sizeof(fp.FcrAWAEObservationFrame)
+    # get_awae_* 在未收到帧时返回 None（不抛异常）
+    c = FarmZmqClient.__new__(FarmZmqClient)
+    c._state_lock = __import__("threading").Lock()
+    c._latest_awae_obs = None
+    c._latest_awae_catalog = None
+    assert c.get_awae_observation(timeout_s=0.05) is None
+    assert c.get_awae_catalog(timeout_s=0.05) is None
+
+
 def _main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

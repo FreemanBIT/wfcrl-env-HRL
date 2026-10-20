@@ -191,7 +191,30 @@ static int zmq_publish_state(FcrTransport *self, const FarmStateFrame *state)
     return 1;
 }
 
-static const FcrTransportOps g_ops = { zmq_poll_command, zmq_publish_state };
+/* W-08：AWAE 二跳发布（GG-12/GG-13，Scheduler → RCP）。
+ * 与状态帧共用 state_pub socket；帧类型由**冻结尺寸**区分：
+ *   25664 = FarmStateFrame；3096 = FcrAWAEObservationFrame；
+ *   2584 = FcrAWAECatalogFrame（见 test_abi.c / check_abi.py / farm_protocol.py）。
+ * 发送失败返回 -1；socket 未就绪返回 0。 */
+static int zmq_publish_awae(FcrTransport *self,
+                            const FcrAWAEObservationFrame *obs,
+                            const FcrAWAECatalogFrame *catalog)
+{
+    ZmqTransportImpl *t = (ZmqTransportImpl *)self->impl;
+    if (!t->state_pub) return 0;
+    std::lock_guard<std::mutex> lk(t->pub_lock);
+    if (obs) {
+        int rc = g_zmq.send(t->state_pub, obs, sizeof(FcrAWAEObservationFrame), ZMQ_DONTWAIT);
+        if (rc < 0) return -1;
+    }
+    if (catalog) {
+        int rc = g_zmq.send(t->state_pub, catalog, sizeof(FcrAWAECatalogFrame), ZMQ_DONTWAIT);
+        if (rc < 0) return -1;
+    }
+    return 1;
+}
+
+static const FcrTransportOps g_ops = { zmq_poll_command, zmq_publish_state, zmq_publish_awae };
 
 FcrTransport *zmq_transport_create(int cmd_port, int state_port)
 {

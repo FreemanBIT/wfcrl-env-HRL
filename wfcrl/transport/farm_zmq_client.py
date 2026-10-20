@@ -25,10 +25,14 @@ from .farm_protocol import (
     FCR_STATE_FRAME_SIZE,
     FCR_STATE_FRAME_HEADER_SIZE,
     FCR_TURBINE_STATE_SIZE,
+    FCR_AWAE_CATALOG_FRAME_SIZE,
+    FCR_AWAE_OBSERVATION_FRAME_SIZE,
     frame_to_bytes,
     new_command_frame,
     set_yaw_cmd,
     set_induction_cmd,
+    awae_catalog_frame_from_bytes_lenient,
+    awae_observation_frame_from_bytes_lenient,
     yaw_delta_cw_to_absolute_ccw,
 )
 
@@ -50,6 +54,9 @@ class FarmZmqClient:
         self._turbine_slots: dict = {}
         self._last_heading: dict = {}      # tid -> 最新实际机舱方位 (rad, CCW+)
         self._last_state_sim_time = 0.0    # S1002: 最近状态帧采样仿真时刻（供 S0102）
+        # W-08: AWAE 二跳（GG-12/GG-13）最近观测/目录帧（原始字节）
+        self._latest_awae_obs: Optional[bytes] = None
+        self._latest_awae_catalog: Optional[bytes] = None
         self._frame_header: Optional[bytes] = None
         self._state_lock = threading.Lock()
         self._frame_seq = 0
@@ -105,7 +112,17 @@ class FarmZmqClient:
             if msg is None or len(msg) == 0:
                 continue
             raw = bytes(msg)
-            if len(raw) != self._FRAME_SIZE:
+            n = len(raw)
+            # W-08: AWAE 二跳帧（GG-12/GG-13）按冻结尺寸区分，先于状态帧判断
+            if n == FCR_AWAE_OBSERVATION_FRAME_SIZE:
+                with self._state_lock:
+                    self._latest_awae_obs = raw
+                continue
+            if n == FCR_AWAE_CATALOG_FRAME_SIZE:
+                with self._state_lock:
+                    self._latest_awae_catalog = raw
+                continue
+            if n != self._FRAME_SIZE:
                 continue
             with self._state_lock:
                 self._latest_state = raw
@@ -182,6 +199,35 @@ class FarmZmqClient:
             time.sleep(0.02)
         with self._state_lock:
             return self._merged_frame()
+
+    # ---------------- AWAE 二跳（W-08：GG-12/GG-13） ----------------
+    def get_awae_observation(self, timeout_s: Optional[float] = None) -> Optional[bytes]:
+        """等待并返回最近一帧 AWAE 观测原始字节（GG-12：S1201-S1207）。
+
+        None 表示超时未收到。字节可直接交给
+        farm_protocol.awae_observation_frame_from_bytes() 解析。
+        """
+        t0 = time.time()
+        timeout = timeout_s if timeout_s is not None else self._timeout_s
+        while timeout is None or time.time() - t0 < timeout:
+            with self._state_lock:
+                if self._latest_awae_obs is not None:
+                    return self._latest_awae_obs
+            time.sleep(0.02)
+        with self._state_lock:
+            return self._latest_awae_obs
+
+    def get_awae_catalog(self, timeout_s: Optional[float] = None) -> Optional[bytes]:
+        """等待并返回最近一帧 AWAE 目录原始字节（GG-13：S1301-S1303）。"""
+        t0 = time.time()
+        timeout = timeout_s if timeout_s is not None else self._timeout_s
+        while timeout is None or time.time() - t0 < timeout:
+            with self._state_lock:
+                if self._latest_awae_catalog is not None:
+                    return self._latest_awae_catalog
+            time.sleep(0.02)
+        with self._state_lock:
+            return self._latest_awae_catalog
 
     # ---------------- 命令 ----------------
     def _fill_command_basis(self, frame: FarmCommandFrame) -> None:

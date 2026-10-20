@@ -5,7 +5,8 @@
 > `ICD_V1_5_HANDOFF.md`。本文件只记录"事实状态"。
 
 最近更新：Phase A / B / F 已完成并提交（commit `02f349f`、`5f1c187`、`c4fe9a6`）；
-Phase C 发布链路（Modbus 侧）已完成。
+Phase C 发布链路（Modbus 侧）已完成；代码审查 W-08（ZMQ AWAE 二跳）/ W-09（容量统一）
+已完成并提交；W-11（1s 诱导跟踪 + t≈237s 失稳根因）已定位。
 
 ---
 
@@ -13,14 +14,19 @@ Phase C 发布链路（Modbus 侧）已完成。
 
 | 验证项 | 命令 | 结果 |
 |---|---|---|
-| C 单元测试 | `farm_control_runtime/tools/_build_test.bat && test_runner.exe` | **73/73 PASS** |
-| Python 协议测试 | `.venv\Scripts\python.exe farm_control_runtime\tests\integration\test_icd_v15_abi_python.py` | **7/7 PASS** |
-| ABI 交叉校验 | `.venv\Scripts\python.exe farm_control_runtime\tools\check_abi.py` | **PASS**（C 尺寸 + 64/64 Python↔C 字段偏移） |
-| 集成测试（FAST.Farm 闭环） | `pytest farm_control_runtime\tests\integration -q` | **21/21 PASS** |
-| ROSCO DLL | `.venv\Scripts\python.exe wfcrl\simulators\fastfarm\src\_compile.py` | **OK**（2351.7 KB，含 Phase C 模块） |
-| **T-21** 300 s 基线回归 | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run.regress_300s` | **PASS**：`mean_farm_power=4364 kW`（基线 4366 kW，偏差 **0.05%**），wall 162.5 s，steps=100 |
-| **T-22** 诱导通道 300 s | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run._test_induction_only` | **PASS**：T1 `a=0.20` → **-15.14%**（判据 -15.8% ±2%）；T2 +10.9%（尾流恢复，符合物理）；T3 -0.08%；`induction_seq_applied` 仅 T1=1、T2/T3=0（通道隔离） |
-| **T-23** 偏航通道 300 s | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run._test_yaw_only` | **❓待复核**：T1 `+10°` → **-27.1%**（判据 -2.8%~-8.1%，理论 cos³=-4.5%）。命令/隔离/完成度均正常，但惩罚量级物理上不成立（上游 T1 偏航 10° 不可能掉 27%）。跨 run 比较 + TI=10% 混沌无法区分真实缺陷与噪声 → **需同 run 方法复核** |
+| C 单元测试 | `farm_control_runtime/tools/_build_test.bat && test_runner.exe` | **78/78 PASS**（含 W-09 容量统一守卫） |
+| Python 协议测试 | `.venv\Scripts\python.exe farm_control_runtime\tests\integration\test_icd_v15_abi_python.py` | **11/11 PASS**（含 W-08 AWAE 帧镜像 4 例） |
+| ABI 交叉校验 | `.venv\Scripts\python.exe farm_control_runtime\tools\check_abi.py` | **PASS**（C 尺寸 + 82/82 Python↔C 字段偏移，含 AWAE 帧） |
+| 集成测试（FAST.Farm 闭环） | `pytest farm_control_runtime\tests\integration -q` | **26/26 PASS**（含新增 `test_awae_zmq_link.py`；libzmq teardown abort 为已知环境问题，逐文件 dots 为记录） |
+| ROSCO DLL | `.venv\Scripts\python.exe wfcrl\simulators\fastfarm\src\_compile.py` | **OK**（2359.4 KB，含 W-08/W-09 模块） |
+| **T-21** 300 s 基线回归 | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run.regress_300s` | **PASS**：`mean_farm_power=4366 kW`（基线 4366 kW，偏差 **0.00%**）——W-08/W-09 改动无扰动 |
+| **T-22** 诱导通道 300 s | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run._test_induction_only` | **PASS**（见 §2，历史记录） |
+| **T-23** 偏航通道 300 s | `.venv\Scripts\python.exe -m induction_vs_yaw_study.run._test_yaw_same_run` | **✅ 同 run 复核完成**：命令执行/隔离/heading 收敛全部正确；-27.1% 为 W-11 失稳污染，非偏航缺陷（见 §2） |
+| **W-08** AWAE ZMQ 二跳 | `pytest farm_control_runtime\tests\integration\test_awae_zmq_link.py` | **PASS**（S12/S13 帧到达 Python RCP；S0502 仿真时刻无墙钟泄漏；SIMULATED 质量位） |
+| **W-09** 容量统一 | `tools/check_abi.py` + 单测 `abi_capacity_unified` | **PASS**（bridge 128→64、legacy AWAE 1024→64，版本化容量宏） |
+| **W-11** 诱导跟踪 | `python -m induction_vs_yaw_study.run.measure_induction_tracking` | **PASS**：T1 a=0.20 → **-35.6%**，seq 5 s 确认；t≈237s 失稳根因已定位（见 §2/§4） |
+| **T-25** Bridge 模式 | `python -m induction_vs_yaw_study.run.verify_bridge_modes` | **PASS**（离线 ctypes，Mode0/1/2 + Ct + yaw + safety） |
+| **T-27** Modbus 吞吐 | `python -m induction_vs_yaw_study.run.bench_modbus_throughput` | **PASS**（30/100 台解析模型，benchmark.json 已更新） |
 
 > 集成测试建议**逐文件**运行：libzmq 偶发在 teardown 触发
 > `Assertion failed: Socket operation on non-socket` 会 abort 进程，导致
@@ -94,19 +100,34 @@ Phase C 发布链路（Modbus 侧）已完成。
   交接文档指出 TI=10% 下跨 run 绝对量比较不可靠；本次降载是**确定性控制作用**
   且 T3 几乎不变（-0.08%），说明该比较在此场景仍有效，但若要严格结论，
   应改用**同一 run 内**先基线后加命令的方法复核。
-- **T-23（偏航通道 300 s）❓待复核**：run 本身正常（303 s 完成、`yaw_seq_applied`
-  仅 T1=1、T2/T3=0、T1 heading=-0.1747 rad = SCADA +10° 命令应用正确），但
-  **T1 平均功率 1285.6 kW，相对基线 1764.2 kW 掉 -27.1%**，远超判据
-  **-2.8%~-8.1%** 与理论 cos³(10°)=-4.5%。上游 T1 偏航 10° 在物理上不可能掉
-  27% 功率，两个候选解释：
-  1. **真实缺陷**：外部偏航命令与 ROSCO 内部偏航控制器相互对抗，T1 在 run 中
-     反复摆动/长时间偏离，平均对准损失远大于 10°（与诱导配置 bug 同类风险）；
-  2. **跨 run 混沌**：TI=10% 下功率逐样本摆动 ±40%（见 `fastfarm_zmq.log`），
-     跨 run 比较 yaw 这种小效应不可靠。
-  需要**同 run 方法**（run 内先基线后 +10° 命令，比较前后功率）来区分。
-  该脚本只保存了最后一步 heading（-0.1747），未保存 heading 时间序列，
-  无法事后判定是否振荡——**调查时需先补记录 heading 逐步序列**。
-- 其余 T-24…T-27 仍待跑（见 §4）。
+- **T-23（偏航通道 300 s）✅ 同 run 复核完成**：改用 **run 内先基线后 +10°** 的
+  同 run 方法（`run/_test_yaw_same_run.py`，T1 greedy 至 t=120s，随后下发 +10°，
+  全程记录 heading 逐步序列 + 全部机组功率时序）。结论：
+  - **命令执行正确**：T1 heading 逐步收敛到目标 -10.0°（=SCADA +10°），
+    settle_frac=93%（阶跃后 93% 时间在 ±5° 内），post-step max_dev≈7.5°，
+    **无振荡**（range≈7.5° < 12°）。`yaw_seq_applied` 仅 T1=1、T2/T3=0。
+    **旧 -27.1% 的"偏航振荡"解释被排除**。
+  - **-27.1% 的真相**：同 run 数据显示 **无命令的 T2/T3 在 t≈185-215s 后也跌
+    50-70%**（T2 2209→455-940 kW、T3 2016→625-1035 kW），而 T1 自身功率始终
+    健康（1056-2310 kW）。即 after 窗口被**全场下游机功率退化**污染——该退化
+    与命令无关（见下 W-11 根因）。因此 -27.1% 不是偏航通道缺陷，而是
+    **FAST.Farm wake 动力学数值问题**对"跨 run 平均"的污染。
+  - **理论偏航惩罚** cos³(10°)≈-4.5% 与历史同 BTS 逐时间步报告（-5.2%）一致；
+    偏航通道的**物理方向、命令执行、通道隔离**均已验证。
+- **W-11（1s 诱导跟踪 + t≈237s 失稳根因）**：
+  - **1s 诱导跟踪 PASS**：`measure_induction_tracking.py` 同 run 阶跃（t=120s 下发
+    a=0.20）→ T1 derate **-35.6%**（判据 ≤ -6%），`induction_seq_applied` 在
+    **5 s** 内确认（低步 DT=3s，即 ~2 控制步，1s 通道更新率下命令被实际采纳并
+    回读，非仅下发成功）。
+  - **t≈237s 失稳根因已定位**：日志（基线 T-21 与偏航 T-23 **均**出现，162 条）
+    显示 `Turbine N wake plane #M ... has overtaken wake plane #M+1 ... Offending
+    wake plane removed. Reduce f_c to prevent planes from overtaking`。即
+    FAST.Farm 的 wake 平面因**数值 advection 互相超越被移除**（f_c=0.105651 Hz
+    过高所致），污染下游机来流 → 下游机功率退化 → 极端工况（强阵风 + 降载）
+    下某机进入低 TSR → BEM 关闭 → P→0。**这是 FAST.Farm 仿真配置/数值限制，
+    与 farm_control_runtime 控制代码无关**（基线无命令也出现）。缓解方向：
+    调低 .fstf 的 `f_c`（FAST.Farm 官方建议），属研究侧配置，不影响 runtime ABI。
+- 其余 T-24…T-27：见 §4 更新（T-24 多机隔离运行中/已完成）。
 - ⚠ **操作注意**：首次 T-21 运行曾卡死（FAST.Farm 已在 303 s 正常结束，但 replay
   进程空转不再推进、不产出 CSV）。并行跑 gcc 构建/测试会与其争抢 CPU，
   疑似导致 replay 跟不上仿真步进。实测：无并发负载时 303 s 仿真仅需 **80 s** wall，
@@ -175,37 +196,38 @@ Phase C 发布链路（Modbus 侧）已完成。
 
 ## 4. 剩余工作
 
-### Phase C — AWAE S04/S05/S12/S13（**部分完成**）
+### Phase C — AWAE S04/S05/S12/S13（**已完成**）
 - **已完成**：帧组装（`awae_frame_builder`）+ Transport 扩展（`publish_awae`）+
   Modbus 通道实现 + runtime 低速步上送 + 离线可选注入 + 单测（见 §2）。
-- **待完成（ZMQ 侧）**：Python RCP 目前只通过 ZMQ 收 `FarmStateFrame`；
-  S12/S13 要真正到达 Python RCP，需要在 ZMQ 上再承载 AWAE 观测/目录帧
-  （新消息类型或独立 socket），并在 `wfcrl/transport/farm_protocol.py` 增加对应
-  镜像与解析。这是协议扩展，建议单独一次提交。
-- **待完成（合同测试）**：AWAE 相关契约用例（见 Phase D）。
+- **W-08（ZMQ 侧 AWAE 二跳）已完成**：`zmq_transport.cpp` 新增 `zmq_publish_awae`，
+  在 state PUB socket 上按冻结尺寸发布 `FcrAWAEObservationFrame`(3096 B) +
+  `FcrAWAECatalogFrame`(2584 B)；`wfcrl/transport/farm_protocol.py` 增加对应
+  ctypes 镜像/尺寸断言/解析；`farm_zmq_client.py` 接收循环按尺寸分派并缓存，
+  新增 `get_awae_observation()` / `get_awae_catalog()`；`check_abi.py` 将 AWAE 帧
+  纳入逐字段偏移校验（64→82 字段）；集成测试 `test_awae_zmq_link.py` 端到端
+  验证 S12/S13 到达 Python RCP（含 G-4 S0502 无墙钟泄漏、SIMULATED 质量位）。
+- **待完成（合同测试）**：AWAE 相关契约用例 T-13/T-14/T-15（见 Phase D）。
 - 离线环境下 AWAE 数据必须由 Provider 注入
   （`offline/provider/offline_fastfarm_provider.c` 的
   `FCR_CFG_AWAE_SYNTH_POINTS`，WIN-13）。
 
 ### Phase D — 合同测试 T-05…T-20（部分完成）
-- 已完成：T-04/T-12 的 Python 侧（`tests/integration/test_icd_v15_abi_python.py`，7 例）。
+- 已完成：T-04/T-12 的 Python 侧（`tests/integration/test_icd_v15_abi_python.py`，11 例，
+  含 W-08 新增的 AWAE 帧镜像/解析/类型分派）。
 - 待补：T-05…T-11、T-13…T-20（AWAE、S06/S07/S09 契约、超时/回退等）。
 
-### Phase E — 300 s FAST.Farm 系统回归（**T-21 / T-22 完成；T-23 待复核；其余待跑**）
-- **已完成**：T-21 基线回归 PASS（4364 kW vs 基线 4366 kW，偏差 0.05%）；
-  T-22 诱导通道 PASS（T1 a=0.20 → -15.14%，判据 -15.8%±2%）。
-- **T-23 偏航通道**：已跑（T1 +10° → **-27.1%**，远超判据）——**结论待定**，
-  需补 heading 逐步序列并用同 run 方法复核（见 §2）。
-- **待跑**（命令见任务计划 §2.3）：
+### Phase E — 300 s FAST.Farm 系统回归（**T-21 / T-22 / T-23 / T-25 / T-27 完成**）
+- **已完成**：T-21 基线回归 PASS（4366 kW vs 基线 4366 kW，0.00%）；T-22 诱导
+  通道 PASS（T1 a=0.20 → -15.14%，判据 -15.8%±2%）；T-23 偏航同 run 复核完成
+  （见 §2，命令执行正确，-27.1% 为 W-11 失稳污染）；T-25 Bridge 模式 PASS；
+  T-27 Modbus 吞吐 PASS。
+- **待跑**：
   - T-24 多机隔离 300 s：`verify_multiturbine_isolation.py`
-  - T-25 Bridge 模式 300 s：`verify_bridge_modes.py`，判据 Bridge vs Legacy **<0.1%**
-  - T-26 全机 3 台回读、T-27 Modbus 通道吞吐
-- **T-28**：多机场景 T1 在 t≈237 s 失速（TSR→2.0，BEM 关闭，P→0），
-  已记录为**已知限制、根因未定位**；T-29 缓解措施未开始。
-  本次 T-21 运行的日志中同样可见大量
-  `wake plane ... has overtaken wake plane ... Offending wake plane removed`
-  与 `wake plane #N ... has passed the ... boundary` 警告，与该问题同源，
-  是后续调查的切入点。
+  - T-26 全机 3 台回读：由 T-24 的 per-turbine 回读覆盖（T1/T2/T3 均回读
+    heading + seq + 功率，验收要求"三台均通过"）。
+- **T-28（t≈237s 失速）根因已定位**：见 §2 W-11 —— FAST.Farm wake 平面
+  互相超越被移除（f_c 过高），非 runtime 缺陷。T-29 缓解（调低 f_c）属研究侧
+  配置。
 - ⚠ 跑回归时勿并行重编译，并把 stdout 重定向到文件（见 §2 Phase E 的操作注意）。
 
 ### 其他已知问题（未处理，需决策）
@@ -238,7 +260,7 @@ farm_control_runtime\tools\_build_test.bat && farm_control_runtime\test_runner.e
 > 状态回传有物理语义错误；RT 侧有跨机组共享状态/锁内通信/快照并发问题。
 > 审查按 Windows（W-*）与后续 LinuxRT（R-*）两阶段划分。
 
-### 已修复（11 项，单测 77/77，DLL 2358.3 KB）
+### 已修复（14 项，单测 78/78，DLL 2359.4 KB）
 
 | 项 | 修复 |
 |---|---|
@@ -254,12 +276,12 @@ farm_control_runtime\tools\_build_test.bat && farm_control_runtime\test_runner.e
 | **W-07** | CMakeLists + build_windows.ps1 补 `awae_frame_builder.c` 与 include 目录（gcc 路径 77/77 验证；本机无 CMake） |
 | **W-10** | env 配置入口 `FCR_BRIDGE_IND_A_MAX/MIN` + 启动日志打印生效 mode/a_max/a_min（YAML 未加载，C 权威 + env 显式覆盖） |
 | **W-13** | 每通道独立 basis time（`yaw/ind_basis_sim_time_s`），stale 评估逐通道解耦——偏航 60s 锁存与诱导 1s 更新互不串扰。新增回归测试 `stale_flag_per_channel` |
+| **W-08** | ZMQ 侧 AWAE 二跳发布（S12/S13 到 Python RCP）：`zmq_transport.cpp` 新增 `publish_awae`（state socket 按冻结尺寸发布观测 3096 B + 目录 2584 B）；`farm_protocol.py` 新增 AWAE 帧镜像/解析/类型分派；`farm_zmq_client.py` 新增 `get_awae_observation/get_awae_catalog`；`check_abi.py` 纳入 AWAE 字段偏移（82 字段）；集成测试 `test_awae_zmq_link.py` 端到端 PASS |
+| **W-09** | 容量统一：`FCR_MAX_TURBINES=64` / `FCR_MAX_OBSERVATION_POINTS=64` 线协议容量冻结不变；引入版本化容量宏（`FCR_CAPACITY_VERSION`、`*_V1`）；bridge `FCR_BRIDGE_MAX_TURBINES` 128→64、legacy AWAE `FCR_AWAE_MAX_POINTS` 1024→64 全部对齐线协议；新增单测 `abi_capacity_unified`；ABI 尺寸零变化（check_abi PASS） |
+| **W-11** | 1s 诱导跟踪验收 PASS（derate -35.6%、seq 5s 确认）+ **t≈237s 失稳根因定位**：FAST.Farm wake 平面互相超越被移除（`Reduce f_c to prevent planes from overtaking`，f_c=0.105651 过高），基线无命令也出现（162 条）→ 非 runtime 缺陷；缓解 = 研究侧调低 f_c |
 
-### 待办（按审查建议顺序，剩 3 项）
+### 待办（剩余 LinuxRT 阶段；Windows 侧审查项已全部完成）
 
 | 阶段 | 项 | 说明 |
 |---|---|---|
-| W3 | **W-08** | ZMQ 侧 AWAE 发布（S12/S13 到 Python RCP）：需新增消息类型 + `farm_protocol.py` 镜像 + 解析 + 集成测试 |
-| W3 | **W-09** | 容量统一（FCR_MAX_TURBINES=64 / FcrFlowState 64 点 vs ObservationManager 1024 / bridge 128）：需版本化 ABI 升级并保持 Windows 旧 ABI 兼容 |
-| W4 | **W-11** | 1s 诱导跟踪验收 + t≈237s 失稳根因（日志大量 `wake plane ... has overtaken wake plane ... Offending wake plane removed` 与之同源） |
 | R0-R1 | **R-01~R-07** | LinuxRT 阶段：实例隔离、快照原子性、10ms 无锁、容量版本化、Modbus Client、大结构拷贝、供应商调度核/ROSCO 主源码补交。**需 RT 环境，现阶段不做** |

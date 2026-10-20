@@ -31,7 +31,10 @@
 extern "C" {
 #endif
 
-#define FCR_BRIDGE_MAX_TURBINES 128   /* 初期 30 台，扩展 100+（DR-8） */
+/* W-09：与线协议容量统一（原 128 与 FCR_MAX_TURBINES=64 不一致，会导致
+ * bridge 处理协议无法寻址的机组）。引用 fcr_protocol.h 的版本化常量。 */
+#include "fcr_protocol.h"
+#define FCR_BRIDGE_MAX_TURBINES FCR_MAX_TURBINES  /* 统一：与协议机组容量一致 */
 #define FCR_BRIDGE_MAX_AERO_TABLE 200 /* Ct(lambda,beta) 表最大点数 */
 
 /* ------------------------------------------------------------------ */

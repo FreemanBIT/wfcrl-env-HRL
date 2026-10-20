@@ -26,9 +26,22 @@ extern "C" {
 #define FCR_PROTOCOL_VERSION_V2    2u   /* ICD v1.5 版本                 */
 #define FCR_PROTOCOL_VERSION       FCR_PROTOCOL_VERSION_V2  /* 当前版本 */
 
-#define FCR_MAX_TURBINES           64u  /* 最大机组数（与 RT 侧 NT_MAX 一致） */
-#define FCR_MAX_OBSERVATION_POINTS 64u  /* 最大 AWAE 观察点数            */
-#define FCR_MAX_LOAD_POINTS        16u  /* 最大可配置载荷测点数          */
+/* ------------------------------------------------------------------ */
+/* 容量版本化（W-09 代码审查）：                                       */
+/*   线协议容量（FCR_MAX_TURBINES / FCR_MAX_OBSERVATION_POINTS）冻结于   */
+/*   当前 ABI（帧尺寸不变，见 tests/unit/test_abi.c + tools/check_abi.py）。*/
+/*   为支持未来容量升级而不破坏旧 Windows 二进制，容量常量按版本命名     */
+/*   （*_V1 = 当前 ABI 值），FCR_MAX_* 始终指向当前版本。帧的            */
+/*   protocol_version 字段决定接收方应按哪套容量布局解析。               */
+/*   所有内部消费者（bridge、legacy ObservationManager/WindMapper）必须   */
+/*   引用这些常量，禁止自行放大/缩小（W-09 统一到线协议容量）。           */
+/* ------------------------------------------------------------------ */
+#define FCR_CAPACITY_VERSION            1u  /* 当前容量版本              */
+#define FCR_MAX_TURBINES_V1             64u /* 机组容量（V1 冻结 ABI）    */
+#define FCR_MAX_OBSERVATION_POINTS_V1   64u /* AWAE 观察点容量（V1 冻结 ABI）*/
+#define FCR_MAX_TURBINES                FCR_MAX_TURBINES_V1            /* 最大机组数（与 RT 侧 NT_MAX 一致） */
+#define FCR_MAX_OBSERVATION_POINTS      FCR_MAX_OBSERVATION_POINTS_V1  /* 最大 AWAE 观察点数 */
+#define FCR_MAX_LOAD_POINTS             16u /* 最大可配置载荷测点数      */
 
 #define FCR_FAST_RATE_HZ          100   /* ROSCO/OF 快速态标称 10 ms     */
 #define FCR_LOW_RATE_HZ             1   /* AWAE/状态帧标称 1 s            */

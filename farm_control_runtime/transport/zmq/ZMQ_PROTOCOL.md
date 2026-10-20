@@ -11,9 +11,13 @@ Python Farm Controller              FAST.Farm 进程（FCR 集成 DLL）
 
 ## 2. 帧格式
 
-- 命令帧：`FarmCommandFrame`（fcr_state_types.h）原始二进制 5672 B；
-- 状态帧：`FarmStateFrame` 原始二进制 23096 B；
-- ZMQ 消息 = 一整帧（无拆分/无附加头）。
+- 命令帧：`FarmCommandFrame`（fcr_state_types.h）原始二进制 5664 B；
+- 状态帧：`FarmStateFrame` 原始二进制 25664 B；
+- **AWAE 观测帧（W-08，GG-12）**：`FcrAWAEObservationFrame`（fcr_awae_types.h）3096 B；
+- **AWAE 目录帧（W-08，GG-13）**：`FcrAWAECatalogFrame` 2584 B；
+- ZMQ 消息 = 一整帧（无拆分/无附加头）；**帧类型由冻结尺寸区分**：
+  `25664`=状态帧、`3096`=AWAE 观测、`2584`=AWAE 目录（尺寸在
+  test_abi.c / check_abi.py / farm_protocol.py 冻结，任何漂移即 ABI 破坏）。
 
 ## 3. 端口与启动
 
@@ -32,6 +36,10 @@ Python Farm Controller              FAST.Farm 进程（FCR 集成 DLL）
   且需 > 0 才能通过 WIN-05 帧校验；`FarmZmqClient` 自动用最近状态帧的
   `state_sample_sim_time_s` 补齐；
 - ROSCO 10 ms 控制路径不触碰 ZMQ（只读共享 setpoint）。
+- **AWAE 二跳（W-08，GG-12/GG-13）**：`fcr_runtime_step_low` 每次低速步在状态帧
+  之后发布 AWAE 观测帧 + 目录帧（同一 state PUB socket）。离线环境下 AWAE 数据由
+  Provider 注入（`FCR_CFG_AWAE_SYNTH_POINTS>0`，带 `FCR_AWAE_QUALITY_SIMULATED`
+  质量位）；目录未注入时仍发布合法空帧（不删字段、不伪造点，用户指示）。
 
 ## 5. Python API（wfcrl/transport/farm_zmq_client.py）
 
@@ -42,6 +50,10 @@ client.start()
 state_bytes = client.get_state()          # isinstance bytes / None
 client.send_yaw_delta(1, 0.0873, seq=1)   # T1 +5° CW
 client.send_induction(1, 0.3, seq=1)      # T1 a=0.3
+# W-08: AWAE 二跳（GG-12/GG-13）——接收端按冻结尺寸分派
+obs_raw  = client.get_awae_observation()  # FcrAWAEObservationFrame 原始字节 / None
+cat_raw  = client.get_awae_catalog()      # FcrAWAECatalogFrame 原始字节 / None
+# 解析：wfcrl.transport.farm_protocol.awae_observation_frame_from_bytes(...)
 client.stop()
 ```
 

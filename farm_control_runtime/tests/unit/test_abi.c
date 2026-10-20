@@ -11,6 +11,8 @@
 #include "fcr_awae_types.h"
 #include "fcr_transport.h"
 #include "fcr_rosco_api.h"
+#include "fcr_bridge_core.h"
+#include "awae_point_frame.h"
 #include <stddef.h>
 
 #define CHECK_ABI(type, expected_size) do {                          \
@@ -124,9 +126,28 @@ static void test_abi_protocol_version(void)
     ASSERT(FCR_PROTOCOL_VERSION_V1 == 1u);
 }
 
+/* W-09 容量统一守卫：线协议容量（冻结 ABI）与所有内部消费者一致，
+ * 版本化宏（*_V1）指向当前 ABI 值。 */
+static void test_abi_capacity_unified(void)
+{
+    /* 版本化容量宏：当前版本 = V1 冻结值 */
+    ASSERT(FCR_CAPACITY_VERSION == 1u);
+    ASSERT(FCR_MAX_TURBINES == FCR_MAX_TURBINES_V1);
+    ASSERT(FCR_MAX_OBSERVATION_POINTS == FCR_MAX_OBSERVATION_POINTS_V1);
+    ASSERT(FCR_MAX_TURBINES_V1 == 64u);
+    ASSERT(FCR_MAX_OBSERVATION_POINTS_V1 == 64u);
+
+    /* bridge 容量与协议机组容量一致（原 128 → 64） */
+    ASSERT(FCR_BRIDGE_MAX_TURBINES == FCR_MAX_TURBINES);
+
+    /* legacy AWAE 帧容量与线协议观察点容量一致（原 1024 → 64） */
+    ASSERT(FCR_AWAE_MAX_POINTS == FCR_MAX_OBSERVATION_POINTS);
+}
+
 void test_abi_register(void)
 {
     RUN_TEST("abi_sizes", test_abi_sizes);
     RUN_TEST("abi_offsets", test_abi_offsets);
     RUN_TEST("abi_protocol_version", test_abi_protocol_version);
+    RUN_TEST("abi_capacity_unified", test_abi_capacity_unified);
 }
