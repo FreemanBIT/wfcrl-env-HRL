@@ -238,7 +238,7 @@ farm_control_runtime\tools\_build_test.bat && farm_control_runtime\test_runner.e
 > 状态回传有物理语义错误；RT 侧有跨机组共享状态/锁内通信/快照并发问题。
 > 审查按 Windows（W-*）与后续 LinuxRT（R-*）两阶段划分。
 
-### 已修复（commit `f3d2834`，单测 75/75）
+### 已修复（11 项，单测 77/77，DLL 2358.3 KB）
 
 | 项 | 修复 |
 |---|---|
@@ -249,15 +249,17 @@ farm_control_runtime\tools\_build_test.bat && farm_control_runtime\test_runner.e
 | 附带 | 修正旧 `step_modes` 测试的隐藏错误：其气动表只填了 1 行、其余行全 0，旧代码靠无条件 `induction_enable=1` 掩盖——这正是 W-04 所指的"错误成功回报"。现已全行填表 |
 | **W-01** | ROSCO Fortran 完整保存/恢复 PRC/PS/VS 配置（含 peak-shaving 表）；禁用时不再直接置 0 破坏原配置 |
 | **W-02** | 移除 pitch 通道隐式 `VS_ConstPower=1 + VS_RtPwr=nom*r_pitch` 联动；r_pitch 唯一经 PRC_R_Pitch 生效。**T-22 复测 -15.26% 通过**（判据 -15.8%±2%），证明降载来自桨距通道本身 |
+| **W-05** | Mode2 表轴严格递增校验 + 维度下限 + 缺风不退化 lambda=0（新码 -5 NO_WIND）。新增回归测试 `mode2_find_beta_robust` |
+| **W-06** | 风速来源如实标 OPENFAST + 低置信（不再谎称 ROSCO_WE）；Ct 仅在真实有限值时输出，否则显式 0 |
+| **W-07** | CMakeLists + build_windows.ps1 补 `awae_frame_builder.c` 与 include 目录（gcc 路径 77/77 验证；本机无 CMake） |
+| **W-10** | env 配置入口 `FCR_BRIDGE_IND_A_MAX/MIN` + 启动日志打印生效 mode/a_max/a_min（YAML 未加载，C 权威 + env 显式覆盖） |
+| **W-13** | 每通道独立 basis time（`yaw/ind_basis_sim_time_s`），stale 评估逐通道解耦——偏航 60s 锁存与诱导 1s 更新互不串扰。新增回归测试 `stale_flag_per_channel` |
 
-### 待办（按审查建议顺序）
+### 待办（按审查建议顺序，剩 3 项）
 
 | 阶段 | 项 | 说明 |
 |---|---|---|
-| W0 | **W-07** | CMakeLists/build_windows.ps1 缺 `awae_frame_builder.c` 与 include 目录；需 clean build gate |
-| W1 | **W-05** | Mode2 插值连续性与轴校验、余差阈值（W-01/W-02/W-03 已修） |
-| W2 | **W-06** | `HorWindV` 不得无条件标 ROSCO_WE、Ct 缺数据标 INVALID |
-| W3 | **W-08/W-09/W-10** | ZMQ 侧 AWAE 发布（S12/S13 到 Python RCP）；容量/映射统一；legacy 入口与 YAML 加载 |
-| W4 | **W-11** | 1s 诱导跟踪验收 + t≈237s 失稳根因 |
-| — | **W-13** | 两通道时间语义解耦（偏航 60s 锁存 vs 诱导 1s 更新独立） |
+| W3 | **W-08** | ZMQ 侧 AWAE 发布（S12/S13 到 Python RCP）：需新增消息类型 + `farm_protocol.py` 镜像 + 解析 + 集成测试 |
+| W3 | **W-09** | 容量统一（FCR_MAX_TURBINES=64 / FcrFlowState 64 点 vs ObservationManager 1024 / bridge 128）：需版本化 ABI 升级并保持 Windows 旧 ABI 兼容 |
+| W4 | **W-11** | 1s 诱导跟踪验收 + t≈237s 失稳根因（日志大量 `wake plane ... has overtaken wake plane ... Offending wake plane removed` 与之同源） |
 | R0-R1 | **R-01~R-07** | LinuxRT 阶段：实例隔离、快照原子性、10ms 无锁、容量版本化、Modbus Client、大结构拷贝、供应商调度核/ROSCO 主源码补交。**需 RT 环境，现阶段不做** |
