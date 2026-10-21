@@ -153,6 +153,108 @@ def _farm_power_for_ratios(case: Case, ratios: np.ndarray) -> float:
         shutil.rmtree(lib_dir, ignore_errors=True)
 
 
+def _farm_power_for_acmd(case: Case, a_cmds: np.ndarray, curve) -> float:
+    """标定路径：a_cmd 组合 -> 校准 ratio -> FLORIS 全场功率。
+
+    curve 为 calibrated_a_cmd.CalibrationCurve（无则回退理论 ratio）。
+    末机贪婪（a=0.33）时 ratio 恒 1.0，_apply_curtailment 无效果。
+    """
+    ratios = np.ones_like(a_cmds, dtype=float)
+    for i, a in enumerate(a_cmds):
+        a = float(np.clip(a, 0.05, 1.0 / 3.0))
+        if curve is not None:
+            ratios[i] = curve.ratio_of(a)
+        else:
+            # 回退：理论 Betz ratio = Cp(a)/Cp(1/3)
+            cp = 4.0 * a * (1.0 - a) ** 2
+            ratios[i] = cp / (16.0 / 27.0)
+    return _farm_power_for_ratios(case, ratios)
+
+
+def optimize_derating_calibrated(
+    case: Case,
+    *,
+    curve=None,
+    a_min: float = 0.10,
+    a_grid_step: float = 0.02,
+    refine: bool = True,
+    fix_last_turbine_greedy: bool = True,
+) -> Dict:
+    """Phase 4：在标定 a_cmd 决策变量上搜索最优降额组合（gate 10）。
+
+    决策变量 = 每台上游机 a_cmd ∈ [a_min, 1/3]（标定有效域）；末机默认贪婪
+    (a=1/3)。搜索 a_cmd 网格（粗扫）→ scipy 细化。返回含 a_cmd 列的 dict。
+    """
+    baseline_farm_w, _ = greedy_farm_and_turbine_power(case)
+    p_greedy_w = freestream_greedy_power_w(case)
+
+    n_free = 2 if fix_last_turbine_greedy else 3
+    a_hi = 1.0 / 3.0
+    grid = np.arange(a_min, a_hi + 1e-9, a_grid_step)
+    if not len(grid):
+        grid = np.array([a_hi])
+
+    # --- 粗网格扫描 ---
+    best_val = -1.0
+    best_a = np.full(3, a_hi)
+    for combo in product(grid, repeat=n_free):
+        a_cmds = np.full(3, a_hi)
+        a_cmds[:n_free] = combo
+        val = _farm_power_for_acmd(case, a_cmds, curve)
+        if val > best_val:
+            best_val = val
+            best_a = a_cmds.copy()
+
+    # --- scipy 细化 ---
+    if refine:
+        try:
+            from scipy.optimize import minimize
+
+            def neg(x):
+                a_cmds = np.full(3, a_hi)
+                a_cmds[:n_free] = np.clip(x, a_min, a_hi)
+                return -_farm_power_for_acmd(case, a_cmds, curve)
+
+            res = minimize(neg, best_a[:n_free], method="Nelder-Mead",
+                           options={"maxiter": 60, "xatol": 0.005,
+                                    "fatol": 1e3})
+            cand = np.full(3, a_hi)
+            cand[:n_free] = np.clip(res.x, a_min, a_hi)
+            cand_val = _farm_power_for_acmd(case, cand, curve)
+            if cand_val > best_val:
+                best_val = cand_val
+                best_a = cand
+        except Exception:
+            pass
+
+    # --- 换算（标定口径）---
+    if curve is not None:
+        ratios = [curve.ratio_of(best_a[i]) for i in range(3)]
+    else:
+        ratios = [float(np.clip(best_a[i], 0.05, a_hi)) / a_hi for i in range(3)]
+    from induction_vs_yaw_study.conversion.power_setpoint_tools import (
+        ratio_to_power_mw,
+    )
+    power_mw = [ratio_to_power_mw(ratios[i], case.wind_speed_ms,
+                                  greedy_power_w_value=p_greedy_w)
+                for i in range(3)]
+
+    gain = (100.0 * (best_val - baseline_farm_w) / baseline_farm_w
+            if baseline_farm_w > 0 else 0.0)
+
+    return {
+        "a_cmd": [float(a) for a in best_a],
+        "ratios": [float(r) for r in ratios],
+        "power_target_mw": [float(p) for p in power_mw],
+        "a_diag": [float(a) for a in best_a],   # 标定路径下 a_cmd 即诊断 a
+        "greedy_power_w": float(p_greedy_w),
+        "farm_power_opt_mw": best_val / 1e6,
+        "farm_power_baseline_mw": baseline_farm_w / 1e6,
+        "gain_vs_baseline_pct": gain,
+        "calibrated": curve is not None,
+    }
+
+
 def optimize_derating(
     case: Case,
     *,

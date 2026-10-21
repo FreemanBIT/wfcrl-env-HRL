@@ -34,6 +34,7 @@ LUT_COLUMNS: List[str] = [
     "ratio",
     "min_pitch_deg",
     "a_diag",
+    "a_cmd",       # Phase 4 (gate 10)：标定后的下发决策量（FAST.Farm 实测 map 反推）
     # 优化结果（每工况重复，便于分析）
     "farm_power_opt_mw",       # FLORIS 优化得到的全场功率
     "farm_power_baseline_mw",  # 基准全场功率
