@@ -171,9 +171,14 @@
 - 每次代码改动后先跑 300s 门禁（用户规则）
 - 内存规则：仿真与盒生成错峰；当前无 TurbSim，内存 3.9GB 可跑单仿真
 
-### 6.5 调整后的下一步（ICD v1.5 口径）
+### 6.5 调整后的下一步（ICD v1.5 口径，2026-10-20 更新）
+✅ 已完成：
+- yaw sign 新 DLL 重跑 PASS（§6.3.4）
+- **Phase 4 标定 a_cmd 直优框架**（`db4eb08`）：`optimize/calibrated_a_cmd.py`（map→a_cmd→ratio 校准曲线）+ `floris_derating_opt.optimize_derating_calibrated`（a_cmd 决策变量搜索）+ LUT `a_cmd` 列；U8 冒烟 PASS（a_cmd=[0.32,0.10,0.33]，gain +2.21%，T2 深降载让 T3 尾流恢复）
+
+剩余（不依赖其他风速盒，可继续做）：
 1. TI15_seed03 决策（重造 or 放行 or pilot 用 5 seed）
-2. yaw sign（WD×yaw）在新 DLL 基线重跑（确认符号/幅度）
-3. Phase 4：用新标定 map（`induction_operating_map_icd15.csv`）重建 FLORIS a_cmd LUT + 直优框架
-4. Pilot 486 启动（新 DLL 口径，OMP=1，顺桨过滤已备；注意 §7 诱导 stall 风险在湍流场景的观察）
-5. U6/10/12 盒生成（磁盘已核可行）→ 其余风速标定 → Full DOE
+2. **Phase 4 全 U8 网格 LUT 重建**（144 工况，纯离线；U8 有 map）→ 覆盖 yaw+derating 两套 LUT 到新口径
+3. **DEL rainflow 管线**（Phase 7 前置，`analysis/` 目前仅 std 代理）：用已有 31 通道 outb 写 rainflow+S-N 实现并验证（无需新仿真）
+4. **Pilot 486 启动**（新 DLL 口径，OMP=1，顺桨过滤已备；注意 §7 诱导 stall 风险在湍流场景的观察）
+5. U6/10/12 盒（其他电脑生成中）→ 其余风速标定（`CalibrationCurve.load` 自动识别）→ Phase 4 补该风速 → Full DOE
