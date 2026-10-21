@@ -177,6 +177,8 @@
 - **Phase 4 标定 a_cmd 直优框架**（`db4eb08`）：`optimize/calibrated_a_cmd.py`（map→a_cmd→ratio 校准曲线）+ `floris_derating_opt.optimize_derating_calibrated`（a_cmd 决策变量搜索）+ LUT `a_cmd` 列；U8 冒烟 PASS（a_cmd=[0.32,0.10,0.33]，gain +2.21%，T2 深降载让 T3 尾流恢复）
 - **Phase 4 全 U8 pilot 网格 LUT 重建完成**（2026-10-20，27 case，`grid_u8_pilot.yaml`，162 行）：yaw 增益随间距递减（S4D 5.91%→S8D 1.95%）✓；derating 仅紧间距有益（S4D 0.78%、S8D -0.10%）✓；T2 为降载杠杆（a_cmd 0.10-0.32）
 - **DEL 管线 + 端到端工具**（`1a14a34`、`18ddefd`）：`analysis/del_analysis.py`（rainflow+S-N DEL，正弦验证）+ `run/compute_del_batch.py`（批跑/outb_only/单 case 三输入，逐机逐通道 DEL+功率合并 → del_summary.csv）；gate outb 验证 10 通道物理合理
+- **标定 a_cmd 全链路打通**（`4f98a3b`）：`_rows_to_dict` 透传 a_cmd + replay 直接下发标定值（LUT a_cmd=0.32/0.10/0.333 → Cmd induction_a）；batch filter 数值列强转修复
+- **pilot 批跑全链验证通过**（2026-10-20）：manifest→worker→replay（标定 a_cmd）→新 DLL→状态帧→feather 过滤→status 记录→自动接续下一 case（baseline done 1771.8s，yaw 自动接续）；单 worker ~30min/case；**pilot 吞吐需规划**：486 case 单 worker ≈10 天、2 worker ≈5 天（内存 5.4GB 恰容纳 2×2.7GB）——可考虑 OMP=3（162s/300s，~2.2×，0.018% 噪声对多 seed 统计可接受）或分批
 
 剩余（不依赖其他风速盒，可继续做）：
 1. TI15_seed03 决策（重造 or 放行 or pilot 用 5 seed）
