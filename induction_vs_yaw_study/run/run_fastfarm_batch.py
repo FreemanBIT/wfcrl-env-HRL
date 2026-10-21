@@ -195,8 +195,10 @@ def main():
     if args.resume:
         todo = [r_ for r_ in rows if (r_["case_id"], r_["control"]) not in done]
     else:
-        todo = [r_ for r_ in rows if r_["status"] != "done"]
-    print(f"to run: {len(todo)} (skipping {len(rows)-len(todo)} done/failed)")
+        # 只跑可运行状态；qa_failed（QA 不合格盒）与 blocked（缺盒）绝不自动跑
+        todo = [r_ for r_ in rows
+                if r_.get("status", "pending") not in ("done", "qa_failed", "blocked")]
+    print(f"to run: {len(todo)} (skipping {len(rows)-len(todo)} done/failed/qa_failed/blocked)")
     if not todo:
         print("nothing to run")
         return
