@@ -1,0 +1,21 @@
+# U8 pilot grid for Phase 4 calibrated LUT (no seed - FLORIS LUT seed-independent)
+wind_speeds_ms: [8.0]
+wind_direction_offsets_deg: [0.0, 10.0, 20.0]
+turbulence_intensities: [0.05, 0.10, 0.15]
+spacings_D: [4.0, 6.0, 8.0]
+seeds: [1]
+floris:
+  dt: 60.0
+  max_iter: 3
+fastfarm:
+  control_dt_s: 3.0
+  t_sim_s: 1200.0
+  t_settle_s: 600.0
+derating_search:
+  ratio_min: 0.4
+  ratio_grid_step: 0.1
+  a_cmd_step: 0.02
+yaw_search:
+  yaw_min_deg: -30.0
+  yaw_max_deg: 30.0
+  fix_last_turbine_zero: true
