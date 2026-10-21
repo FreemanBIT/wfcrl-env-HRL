@@ -15,7 +15,11 @@ fastfarm:
   t_settle_s: 600.0    # 显式结算窗口起点（0-600 行波+机组过渡）
 
 batch:
-  workers: 4                       # 并行 FAST.Farm 实例数（实现阶段压测后调优）
+  # Pilot 吞吐配置（2026-10-20 实测调优，见 STATUS §6.5 吞吐模型）
+  #   OMP=1（逐位确定）单 worker ~30min/case；OMP=3（0.018% 噪声）~11min/case
+  #   RAM 15.8GB，单 worker ~2.5GB；约束：浏览器可操作 → 可用 ~13GB
+  workers: 3                       # 并行 FAST.Farm 实例数（推荐 OMP=3×3=9 线程/20 核）
+  omp_threads: 3                   # FAST.Farm OMP 线程数（1=逐位确定；3=快 2.2×，噪声 0.018%）
   max_retries: 2
   cmd_port_base: 5556
   state_port_base: 5557

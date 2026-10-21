@@ -140,6 +140,12 @@ def main():
     args = ap.parse_args()
 
     ff_cfg = yaml.safe_load(open(args.experiment, encoding="utf-8")).get("fastfarm", {})
+    # Pilot 吞吐：从 experiment.yaml 读 OMP 线程数并注入父 env，使全部 worker 的
+    # replay（engine.start 前读 WFCRL_STUDY_OMP_NUM_THREADS）继承；显式 env 优先。
+    _exp_all = yaml.safe_load(open(args.experiment, encoding="utf-8"))
+    _omp_cfg = ((_exp_all or {}).get("batch") or {}).get("omp_threads")
+    if _omp_cfg is not None and not os.environ.get("WFCRL_STUDY_OMP_NUM_THREADS"):
+        os.environ["WFCRL_STUDY_OMP_NUM_THREADS"] = str(_omp_cfg)
     out_dir = args.out or (_STUDY_ROOT / "results" / ("run_%s" % time.strftime("%Y%m%d_%H%M%S")))
     out_dir.mkdir(parents=True, exist_ok=True)
 
