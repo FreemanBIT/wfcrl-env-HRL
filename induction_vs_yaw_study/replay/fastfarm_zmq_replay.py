@@ -115,9 +115,15 @@ def replay_fastfarm_zmq(
         for tid in range(1, n_turbines + 1):
             st = settings.get(tid) or {}
             p_mw = st.get("power_target_mw", float("nan"))
-            a = 1.0 / 3.0
-            if np.isfinite(p_mw) and p_mw > 0:
-                a = power_to_induction(p_mw * 1e6, case.wind_speed_ms, yaw_deg=0.0)
+            # Phase 4 (gate 10)：settings 含标定 a_cmd（FAST.Farm 实测 map 反推的
+            # 下发决策量）时直接用它；否则回退理论 power_target_mw->a（旧口径）。
+            a_cmd = st.get("a_cmd", float("nan"))
+            if np.isfinite(a_cmd):
+                a = float(np.clip(a_cmd, 0.05, 1.0 / 3.0))
+            else:
+                a = 1.0 / 3.0
+                if np.isfinite(p_mw) and p_mw > 0:
+                    a = power_to_induction(p_mw * 1e6, case.wind_speed_ms, yaw_deg=0.0)
             yaw_mis = st.get("yaw_deg", 0.0) or 0.0
             # 动作通道（CW+ delta）：static 模式仅首步下发一次，机舱由初始对齐转到失准角。
             # 不使用绝对 yaw 目标：那需要状态帧 nacelle_heading 反馈（runtime 未可靠填充）。

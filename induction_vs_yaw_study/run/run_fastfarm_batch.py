@@ -162,6 +162,10 @@ def main():
     if args.filter:
         import pandas as _pd
         mf = _pd.DataFrame(rows)
+        # manifest 列是字符串；把数值列转 float 让 pandas query 数值比较生效
+        for _c in ("U", "TI", "WD", "spacing_D", "seed"):
+            if _c in mf.columns:
+                mf[_c] = mf[_c].astype(float)
         try:
             keep = mf.query(args.filter).index
             rows = [rows[i] for i in keep]

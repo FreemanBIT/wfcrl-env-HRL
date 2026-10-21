@@ -95,5 +95,6 @@ def _rows_to_dict(rows: pd.DataFrame) -> Dict[int, Dict[str, float]]:
             "ratio": float(r["ratio"]) if not pd.isna(r["ratio"]) else 1.0,
             "min_pitch_deg": float(r["min_pitch_deg"]) if not pd.isna(r["min_pitch_deg"]) else 0.0,
             "greedy_power_w": float(r["greedy_power_w"]) if not pd.isna(r["greedy_power_w"]) else np.nan,
+            "a_cmd": float(r["a_cmd"]) if "a_cmd" in r and not pd.isna(r["a_cmd"]) else np.nan,
         }
     return out
