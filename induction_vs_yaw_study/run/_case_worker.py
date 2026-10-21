@@ -87,6 +87,10 @@ def main():
         if out is None or out.time is None or len(out.time) == 0:
             print("FAIL no-output")
             return 1
+        # libzmq teardown 崩溃解耦：输出全部落盘后写 DONE 哨兵。
+        # 批跑父进程据此判成功（即使进程在 Python 解释器关闭时被 libzmq
+        # 'Connection reset by peer' assert 杀掉，数据仍完整、不误标 failed）。
+        (case_dir / "DONE.sentinel").write_text("ok", encoding="utf-8")
         # P2 偶发顺桨防护：replay 在 metadata 标记非命令性顺桨（pitch>80° &
         # rotor<1rpm 连续 >=30s）。此类 case 的功率统计被不可逆运行点破坏污染，
         # 打 FEATHERED 标记（父进程写 status=feathered，resume 重试；统计侧剔除）。

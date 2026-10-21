@@ -106,6 +106,12 @@ def _run_one(row, lut, ff_cfg, out_dir: Path, ports) -> dict:
         done = _sp.run(cmd, capture_output=True, text=True, timeout=None)
         out_txt = (done.stdout or "") + (done.stderr or "")
         wall = time.time() - t0
+        # 成功判据优先 DONE.sentinel（worker 写完输出后落盘）：即使进程在
+        # libzmq teardown 时被 Connection-reset assert 杀掉（returncode!=0），
+        # 数据完整，仍算 done。
+        sentinel = out_dir / "cases" / f"{row['case_id']}_{row['control']}" / "DONE.sentinel"
+        if sentinel.exists():
+            return {"ok": True, "error": "", "wall_s": wall, "sentinel": True}
         # P2 偶发顺桨：worker 打 FEATHERED 标记 → status=feathered（非 done，
         # resume 自动重试；汇总区分统计）。ok=True 让父进程继续写状态行。
         if done.returncode == 0 and "FEATHERED" in out_txt:
