@@ -178,7 +178,10 @@
 - **Phase 4 全 U8 pilot 网格 LUT 重建完成**（2026-10-20，27 case，`grid_u8_pilot.yaml`，162 行）：yaw 增益随间距递减（S4D 5.91%→S8D 1.95%）✓；derating 仅紧间距有益（S4D 0.78%、S8D -0.10%）✓；T2 为降载杠杆（a_cmd 0.10-0.32）
 - **DEL 管线 + 端到端工具**（`1a14a34`、`18ddefd`）：`analysis/del_analysis.py`（rainflow+S-N DEL，正弦验证）+ `run/compute_del_batch.py`（批跑/outb_only/单 case 三输入，逐机逐通道 DEL+功率合并 → del_summary.csv）；gate outb 验证 10 通道物理合理
 - **标定 a_cmd 全链路打通**（`4f98a3b`）：`_rows_to_dict` 透传 a_cmd + replay 直接下发标定值（LUT a_cmd=0.32/0.10/0.333 → Cmd induction_a）；batch filter 数值列强转修复
-- **pilot 批跑全链验证通过**（2026-10-20）：manifest→worker→replay（标定 a_cmd）→新 DLL→状态帧→feather 过滤→status 记录→自动接续下一 case（baseline done 1771.8s，yaw 自动接续）；单 worker ~30min/case；**pilot 吞吐需规划**：486 case 单 worker ≈10 天、2 worker ≈5 天（内存 5.4GB 恰容纳 2×2.7GB）——可考虑 OMP=3（162s/300s，~2.2×，0.018% 噪声对多 seed 统计可接受）或分批
+- **pilot 批跑全链验证通过**（2026-10-20）：manifest→worker→replay（标定 a_cmd）→新 DLL→状态帧→feather 过滤→status 记录→自动接续下一 case（baseline done 1771.8s，yaw 自动接续）；单 worker ~30min/case
+- **吞吐配置落地**（`4798a06`）：`experiment.yaml` `batch.workers: 3` + 新增 `batch.omp_threads: 3`（批跑器注入 env → 贯穿 worker）；推荐 **OMP=3×3 → 486 case ~1.2 天**（RAM 7.5GB/9 线程；0.018% 噪声 vs OMP=1 逐位确定 5 天）
+- **libzmq teardown 崩溃解耦**（`35087da`）：probe 发现 induction case 完整产出数据后在解释器关闭时被 libzmq 'Connection reset' assert 杀（returncode≠0→误标 failed）；worker 写 `DONE.sentinel`，batch 以 sentinel 为成功判据——不再浪费 pilot 重试
+- **FLORIS vs FAST.Farm yaw 偏差发现**（probe，WD0 S4D TI10）：LUT 预测 yaw +9.93%/derating +2.21%，FAST.Farm 实测 **yaw −2.9%/derating +1.3%**（窗 [600,1200]）——FLORIS 尾流偏转在 S4D 高估收益（T1 −24% 但 T3 恢复不足）；属研究设计的 model_bias 测量范围，pilot 将揭示真实幅度；yaw sign 仍正确（机舱按 LUT 转至 −24.4°/−28.1°/0°）
 
 剩余（不依赖其他风速盒，可继续做）：
 1. TI15_seed03 决策（重造 or 放行 or pilot 用 5 seed）
