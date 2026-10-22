@@ -171,6 +171,23 @@
 - 每次代码改动后先跑 300s 门禁（用户规则）
 - 内存规则：仿真与盒生成错峰；当前无 TurbSim，内存 3.9GB 可跑单仿真
 
+### 6.6 全量风盒到位与 Full DOE 启动（2026-10-22）
+- **72 盒全部到位**（U6/U8/U10/U12 × TI05/10/15 × seed01-06），共 48.5GB；D: 剩 37GB
+- **QA 70/72 pass**；不合格 2 盒（均为 TI15、实测湍流偏低）：`U08_TI15_seed03`（0.1204 vs 0.15）、`U10_TI15_seed06`（0.1289 vs 0.15）→ 各 36 case 标 qa_failed
+- **manifest 重建**：2592 行 = pending **2520** + qa_failed 72；分 U：U6 648 / U8 612 / U10 612 / U12 648；全部 pending 的 bts 引用有效
+- **pilot 阶段结果**：61/459 case 完成（会话重启致作业中断，数据有效）；per-case 墙钟 **704s（11.7min）** 确认 OMP=3 生效
+- **Full DOE 前置**（进行中）：U6/U10/U12 诱导标定（gate 9，18 点）→ 对应 LUT（gate 10）→ 全量 DOE（2520 case）
+- **Full DOE 时长估算**（OMP=3）：2 workers ≈ **10 天**（2459 剩余 × 704s / 2）；3 workers ≈ 6.7 天但需 ~6.6GB（当前空闲仅 4.8GB，有浏览器卡死风险）
+
+### 6.7 Full DOE 实施（2026-10-22 下午）
+- **诱导标定全风速完成**（gate 9）：`induction_operating_map_icd15.csv` 共 24 点（4U × 6a）。U6 greedy 790 / U8 1622 / U10 3518 / U12 4359 kW；各 U 曲线单调 ✓
+  - 注：U12 a=0.15/0.20 首次运行提前中断（state rows 不足 200 步→P=nan），重跑成功（3468/3949 kW）；`CalibrationCurve` 已加 NaN 行过滤
+- **LUT 全网格完成**（gate 10）：4U × 3TI × 3WD × 4S = 144 case，合并 `luts.parquet` 864 行（yaw 432 / derating 432，a_cmd 100% 覆盖）；yaw 增益均值 5.79%（max 32.6%）、derating 均值 1.48%（max 16.9%）
+- **修复 LUT seed 归一化（关键）**：LUT 与 seed 无关（case_id 固定 seed01），manifest 展开 seed01-06 → 此前 seed02-06 会报 "No LUT rows"（pilot 恰好只跑到 seed01 未暴露）。`normalize_case_id` 归一后 144/144 查表通过
+- **DOE 内存约束（实测）**：引擎 `_ff_case` 全量读 bts 重采样，U06 盒（1950s）峰值 2.93GB、U08 2.7GB。TurbSim 重造 `U08_TI15_seed03` 期间内存紧张 → **U06 的 17 例 bts 读取 MemoryError**，U08/U10/U12 正常
+- **当前运行**：DOE 分速推进——U8/U10/U12（1811 case）1 worker + **OMP=6（实测 305.8s/case，比 OMP=3 的 704s 快 2.3×）**；U06 待 TurbSim 完成释放内存后补跑
+- **预计**：U8/U10/U12 ≈ 6.4 天（1W）；TurbSim 完成后切 2 workers + 补 U06 ≈ 3.2 天
+
 ### 6.5 调整后的下一步（ICD v1.5 口径，2026-10-20 更新）
 ✅ 已完成：
 - yaw sign 新 DLL 重跑 PASS（§6.3.4）
