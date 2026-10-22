@@ -461,6 +461,139 @@ static void test_step_perf_budget(void)
     fcr_rt_destroy(h);
 }
 
+/* ---- B3 D0：非关键数据缺失不阻断运行（AWAE 未注入 → 合法空帧）---- */
+static void test_d0_awae_absent_continues(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(1);
+    FcrRtStatusInfo si;
+    FcrAWAEObservationFrame obs;
+    FcrAWAECatalogFrame cat;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+
+    /* 不注入 AWAE 目录/流场：模块照常运行（D0），输出合法空帧（不伪造点） */
+    ASSERT(step_k(h, 0, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_awae(h, &obs, &cat) == 0);
+    ASSERT(cat.n_points == 0);
+    ASSERT(obs.n_observations == 0);
+    ASSERT(cat.protocol_version == FCR_PROTOCOL_VERSION);
+    fcr_rt_destroy(h);
+}
+
+/* ---- B3 D2：control_enable=0 → 回退标称（基础控制器）---- */
+static void test_d2_control_disable_fallback(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FcrRtStatusInfo si;
+    FarmCommandFrame fr;
+    FcrRoscoExternalSetpoint sp;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+
+    /* 先下发有效诱导命令 → 生效 */
+    mk_ind_cmd(&fr, 1, 0.20, 1, 0.0, 30.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.induction_enable == 1);
+    ASSERT(sp.r_pitch < 1.0);
+
+    /* control_enable=0 → 回退标称（D2） */
+    mk_ind_cmd(&fr, 1, 0.20, 2, 0.01, 30.0);
+    fr.turbines[0].control_enable = 0;
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 1, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.induction_enable == 0);
+    ASSERT(sp.external_yaw_enable == 0);
+    ASSERT(sp.farm_control_enable == 0);       /* 外部场控总使能关闭 */
+    ASSERT((sp.command_status_flags & FCR_CMD_FLAG_CONTROL_DISABLED) != 0);
+    fcr_rt_destroy(h);
+}
+
+/* ---- B4：Inf 命令值被拒绝（与 NaN 同策略）---- */
+static void test_reject_inf_command(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FcrRtStatusInfo si;
+    FarmCommandFrame fr;
+    FcrRoscoExternalSetpoint sp;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+
+    mk_yaw_cmd(&fr, 1, (double)INFINITY, 1, 0.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_INVALID_INPUT);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.external_yaw_enable == 0);       /* 未锁存 */
+
+    /* 诱导 Inf 同样拒绝 */
+    mk_ind_cmd(&fr, 1, (double)INFINITY, 1, 0.0, 30.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 1, &si) == FCR_RT_INVALID_INPUT);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.induction_enable == 0);
+    fcr_rt_destroy(h);
+}
+
+/* ---- B4：越界诱导（a>1/3）→ 不采纳/回退额定（D2）---- */
+static void test_out_of_range_induction_fallback(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FcrRtStatusInfo si;
+    FarmCommandFrame fr;
+    FcrRoscoExternalSetpoint sp;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+
+    /* a=0.9 远超 a_max(1/3)：物理不可达 → 回退额定（r_pitch=1）+ FALLBACK */
+    mk_ind_cmd(&fr, 1, 0.9, 1, 0.0, 30.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT_NEAR(sp.r_pitch, 1.0, 1e-12);
+    ASSERT((sp.command_status_flags & FCR_CMD_FLAG_FALLBACK_ACTIVE) != 0);
+    fcr_rt_destroy(h);
+}
+
+/* ---- B4：版本/规模不匹配被拒绝（要求 §4.1）---- */
+static void test_reject_version_and_size_mismatch(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FarmCommandFrame fr;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+
+    /* 协议版本不匹配 */
+    mk_yaw_cmd(&fr, 1, 0.1, 1, 0.0);
+    fr.protocol_version = 1;                 /* 旧版本 */
+    ASSERT(fcr_rt_set_command(h, &fr) == -2);
+
+    /* n_turbines 超出配置规模 */
+    mk_yaw_cmd(&fr, 1, 0.1, 1, 0.0);
+    fr.n_turbines = 3;                       /* 配置仅 2 台 */
+    ASSERT(fcr_rt_set_command(h, &fr) == -2);
+
+    /* 合法帧被接受 */
+    mk_yaw_cmd(&fr, 1, 0.1, 1, 0.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    fcr_rt_destroy(h);
+}
+
 void test_rt_adapter_register(void)
 {
     RUN_TEST("rt_configure_validation", test_configure_validation);
@@ -475,4 +608,9 @@ void test_rt_adapter_register(void)
     RUN_TEST("rt_ttl_timeout_edge", test_ttl_timeout_edge);
     RUN_TEST("rt_reset_repeatable", test_reset_repeatable);
     RUN_TEST("rt_stop_then_step", test_stop_then_step);
+    RUN_TEST("rt_d0_awae_absent_continues", test_d0_awae_absent_continues);
+    RUN_TEST("rt_d2_control_disable_fallback", test_d2_control_disable_fallback);
+    RUN_TEST("rt_reject_inf_command", test_reject_inf_command);
+    RUN_TEST("rt_out_of_range_induction_fallback", test_out_of_range_induction_fallback);
+    RUN_TEST("rt_reject_version_and_size_mismatch", test_reject_version_and_size_mismatch);
 }

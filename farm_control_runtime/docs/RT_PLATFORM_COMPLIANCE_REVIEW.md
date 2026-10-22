@@ -328,8 +328,8 @@ typedef struct { FcrRtStatus status; int32_t code; uint16_t src; char msg[64]; d
 |---|---|---|---|
 | B1 | 逐信号数据策略表 | §14 | ✅ **已完成**：`RT_DATA_AND_TIME_POLICY.md` §1（S01/S02/S03/S04/S05/S06/S10 逐条件动作） |
 | B2 | 时间语义表 | §5.3 | ✅ **已完成**：同上 §2（调用周期 / 生效时刻 / TTL / 最大保持） |
-| B3 | 降级策略表 + D0/D2 用例 | §6.1、§16 | ⚠️ **部分**：降级映射表已完成（§3）；D0/D2 独立命名用例待补 |
-| B4 | Inf/边界用例补充 | §14 | ⚠️ **部分**：NaN 已测；Inf/越界/版本不匹配显式断言待补 |
+| B3 | 降级策略表 + D0/D2 用例 | §6.1、§16 | ✅ **已完成**：降级映射表（策略文档 §3）+ `rt_d0_awae_absent_continues`（D0 空帧继续）+ `rt_d2_control_disable_fallback`（D2 回退标称） |
+| B4 | Inf/边界用例补充 | §14 | ✅ **已完成**：`rt_reject_inf_command`（Inf 拒绝）、`rt_out_of_range_induction_fallback`（a>1/3 回退）、`rt_reject_version_and_size_mismatch`（版本/规模不匹配） |
 
 ### C. M1 收尾
 
