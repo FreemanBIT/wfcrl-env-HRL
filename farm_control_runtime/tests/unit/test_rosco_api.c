@@ -191,10 +191,75 @@ static void test_api_init_idempotent(void)
     fcr_rosco_api_shutdown();
 }
 
+/* RT 平台要求 §3.3（M1-C1）：DISCON 路径 run → reset → run 结果可重复。
+ * 走 rosco_api 入口（与 DISCON.F90 的 FCR_Step/FCR_Reset 同一调用序列）。 */
+static void test_reset_cycle_reproducible(void)
+{
+    FarmCommandFrame fr;
+    FcrRoscoRawState st;
+    FcrRoscoExternalSetpoint sp1, sp2, sp3;
+
+    ASSERT(fcr_rosco_api_init(64, 0.01) == 0);
+    ASSERT(fcr_rosco_api_register_turbine(1) == 0);
+
+    memset(&st, 0, sizeof(st));
+    st.turbine_id = 1;
+    st.valid = 1;
+    st.nacelle_heading_rad = 0.0;
+    st.gen_power_w = 2.0e6;
+    ASSERT(fcr_rosco_publish_state(1, &st) == 0);
+
+    memset(&fr, 0, sizeof(fr));
+    fr.protocol_version = FCR_PROTOCOL_VERSION;
+    fr.command_frame_seq = 1;
+    fr.n_turbines = 1;
+    fr.turbines[0].control_enable = 1;
+    fr.turbines[0].yaw_valid = 1;
+    fr.turbines[0].yaw_seq = 1;
+    fr.turbines[0].yaw_target_heading_rad = 0.12;
+    fr.turbines[0].induction_valid = 1;
+    fr.turbines[0].induction_seq = 1;
+    fr.turbines[0].induction_ref = 0.2;
+    fr.turbines[0].command_basis_sim_time_s = 0.0;
+
+    /* 第一轮：命令生效 */
+    ASSERT(fcr_rosco_inject_command_frame(&fr) == 0);
+    ASSERT(fcr_rosco_step_high(1, 0.0) == 0);
+    ASSERT(fcr_rosco_read_setpoint(1, &sp1) == 0);
+    ASSERT(sp1.induction_enable == 1);
+    ASSERT(sp1.external_yaw_enable == 1);
+    ASSERT(sp1.yaw_seq == 1);
+    ASSERT(sp1.induction_seq == 1);
+
+    /* reset：状态归零（配置保留） */
+    ASSERT(fcr_rosco_api_reset() == 0);
+    ASSERT(fcr_rosco_read_setpoint(1, &sp2) == 0);
+    ASSERT(sp2.induction_enable == 0);
+    ASSERT(sp2.external_yaw_enable == 0);
+    ASSERT(sp2.yaw_seq == 0);
+    ASSERT(sp2.induction_seq == 0);
+
+    /* 第二轮：同样输入 → 同样输出（可重复） */
+    ASSERT(fcr_rosco_publish_state(1, &st) == 0);
+    ASSERT(fcr_rosco_inject_command_frame(&fr) == 0);
+    ASSERT(fcr_rosco_step_high(1, 0.0) == 0);
+    ASSERT(fcr_rosco_read_setpoint(1, &sp3) == 0);
+    ASSERT(sp3.induction_enable == sp1.induction_enable);
+    ASSERT(sp3.external_yaw_enable == sp1.external_yaw_enable);
+    ASSERT(sp3.yaw_seq == sp1.yaw_seq);
+    ASSERT(sp3.induction_seq == sp1.induction_seq);
+    ASSERT_NEAR(sp3.yaw_target_heading_rad, sp1.yaw_target_heading_rad, 1e-12);
+    ASSERT_NEAR(sp3.r_pitch, sp1.r_pitch, 1e-12);
+    ASSERT_NEAR(sp3.min_pitch_ref_rad, sp1.min_pitch_ref_rad, 1e-12);
+
+    fcr_rosco_api_shutdown();
+}
+
 void test_rosco_api_register(void)
 {
     RUN_TEST("full_abi_chain", test_full_abi_chain);
     RUN_TEST("ack_roundtrip", test_ack_roundtrip);
     RUN_TEST("control_disable_fallback", test_control_disable_fallback);
     RUN_TEST("api_init_idempotent", test_api_init_idempotent);
+    RUN_TEST("reset_cycle_reproducible", test_reset_cycle_reproducible);
 }

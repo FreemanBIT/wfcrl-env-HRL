@@ -11,24 +11,27 @@
 
 | 准入里程碑 | 状态 | 说明 |
 |---|---|---|
-| **M1 Module Verified** | **≈95%** | 独立功能/边界/参考结果/稳定性已具备；**Reset 已补齐（G-01）**，入口 NaN 校验已补齐（G-02） |
-| **M2 Interface Verified** | **≈80%** | 数据字典（88 信号）强；**结构化状态/错误（G-08）、程序化 CONFIGURE（G-11）已实现**；时间语义/数据策略表待成文（G-03/G-05） |
-| **M3 Scheduler Verified** | **≈60%** | **调度器接入层 `fcr_rt_adapter` 已实现**（RTimeCtx / 10ms step / 1s SCADA 计数器 / 状态回传）；**10ms 无锁（G-12）与调度时序测试（G-13）待做** |
+| **M1 Module Verified** | **≈98%** | 独立功能/边界/参考结果/Reset/可重复性已具备（含 DISCON 路径 reset 往返） |
+| **M2 Interface Verified** | **≈95%** | 数据字典（88 信号）强；结构化状态/错误、程序化 CONFIGURE、数据策略表、时间语义表、降级映射均已实现/成文 |
+| **M3 Scheduler Verified** | **≈80%** | 接入层 `fcr_rt_adapter` + RTimeCtx + 1 s SCADA 计数器 + 状态回传 + Mock Scheduler 1000 周期测试 + 执行时预算 + 接口版本 |
 | **M4 RT Ready** | **0%（采购后）** | 按要求属采购后事项 |
 
-**2026-10-20 实施进展**（本次已完成）：
+**实施进展（累计）**：
 
 | 项 | 内容 | 验证 |
 |---|---|---|
-| **G-01 Reset** | `fcr_runtime_reset()` + `fcr_rosco_api_reset()` + `FCR_Reset()`（Fortran）；重建全部运行时状态、保留配置与 ROSCO 标称副本 | `rt_reset_repeatable` 单测 |
-| **G-02 入口校验** | `fcr_command_store_accept_frame` 增加 `isfinite` 校验（偏航目标/诱导因子/时间戳），非法→拒绝并置 `FCR_CMD_FLAG_INVALID_VALUE` | `rt_reject_nan_command` 单测 |
+| **G-01 Reset** | `fcr_runtime_reset()` + `fcr_rosco_api_reset()` + `FCR_Reset()`（Fortran）；重建全部运行时状态、保留配置与 ROSCO 标称副本 | `rt_reset_repeatable`、`reset_cycle_reproducible` |
+| **G-02 入口校验** | `fcr_command_store_accept_frame` 增加 `isfinite` 校验（偏航目标/诱导因子/时间戳），非法→拒绝并置 `FCR_CMD_FLAG_INVALID_VALUE` | `rt_reject_nan_command`、`rt_reject_inf_command` |
 | **G-04 RTimeCtx** | `FcrRtTimeCtx`（n_low/t_low/dt_low/n_fast_low/dt_high/n_high_low）只读传入 | `fcr_rt.h` |
-| **G-07 调度器形态** | `fcr_rt_adapter.c`：create/configure/init/set_*/step/get_*/reset/stop/destroy | 9 个 RT 单测 |
+| **G-07 调度器形态** | `fcr_rt_adapter.c`：create/configure/init/set_*/step/get_*/reset/stop/destroy | RT 单测 15 例 |
 | **G-08 状态接口** | `FcrRtStatus` 九态 + `FcrRtStatusInfo`（ErrorCode/ErrorSource/Message/Timestamp） | 同上 |
 | **G-11 CONFIGURE** | `fcr_rt_configure()` 结构体入参（含 dt_scada 可整除校验） | `rt_configure_validation` |
-| **G-13 SCADA 边界** | 计数器实现（`steps_per_scada = dt_scada/dt_high`），与 DT_Low 解耦 | `rt_scada_boundary_counter`（100 步 = 1 s） |
+| **G-13 SCADA 边界** | 由调度器权威步号推导 + 计数器（与 DT_Low 解耦；重复调用不重复出帧） | `rt_scada_boundary_counter`、`rt_mock_scheduler_1000_cycles` |
+| **A2 执行时预算** | `max_step_us` + `FcrRtPerf` + `fcr_rt_get_perf()`；超预算 WARNING | `rt_step_perf_budget` |
+| **A3 接口版本** | `FCR_RT_ABI_VERSION` + `fcr_rt_get_version()` | `rt_abi_version` |
+| **B1/B2/B3 策略** | `RT_DATA_AND_TIME_POLICY.md`（数据策略/时间语义/降级映射） | `rt_d0_*`、`rt_d2_*`、`rt_out_of_range_induction_fallback` |
 
-**一句话**：场控交互模块的**业务语义与降级行为符合**要求（§7.4 六条已实现并有测试）；**平台接入形态已具备**（生命周期/时间/状态/数据接口齐备）；剩余为**10 ms 无锁改造、调度时序测试、策略表成文**及采购后的 M4。
+**一句话**：场控交互模块的**业务语义与降级行为符合**要求（§7.4 六条已实现并有测试）；**平台接入形态已具备**（生命周期/时间/状态/数据接口齐备，Mock Scheduler 时序已验证）；剩余为**采购后的 M4（RT 框架导入/一致性/实时指标实测）** 与 **R-01~R-07 LinuxRT 项**。
 
 ---
 
@@ -320,7 +323,7 @@ typedef struct { FcrRtStatus status; int32_t code; uint16_t src; char msg[64]; d
 | A1 | **Mock Scheduler 调度时序测试** | §15、M3 | ✅ **已完成**：`rt_mock_scheduler_1000_cycles`（1000×10 ms；step 1000 次、SCADA 出帧 10 次 @ t=1..10、无重复/漏调、RCP 每 1 s 刷新命令） |
 | A2 | **Step 执行时预算与超时策略** | §5.4 | ✅ **已完成**：`max_step_us` 预算 + `FcrRtPerf`（last/max/avg/超预算次数）+ 超预算置 WARNING；`rt_step_perf_budget` |
 | A3 | **RT 接口版本化** | §4.1 | ✅ **已完成**：`FCR_RT_ABI_VERSION` + `fcr_rt_get_version()`；`rt_abi_version` |
-| A4 | 并发假设成文/加固 | §5.4、R-03 | ⚠️ **部分**：已确认 RT 路径无锁（锁仅在 DISCON 路径），假设写入 `RT_DATA_AND_TIME_POLICY.md` §5；多线程搬运加固待定 |
+| A4 | 并发假设成文/加固 | §5.4、R-03 | ✅ **已完成（成文）**：`fcr_rt.h` 明确"非线程安全、调度器单线程调用、RT 路径无锁"；多线程搬运加固仍属平台侧选择（见策略文档 §5） |
 
 ### B. M2 收尾（文档 + 补充用例）
 
@@ -333,10 +336,13 @@ typedef struct { FcrRtStatus status; int32_t code; uint16_t src; char msg[64]; d
 
 ### C. M1 收尾
 
-| # | 工作 | 说明 | 估算 |
+| # | 工作 | 说明 | 状态 |
 |---|---|---|---|
-| C1 | Reset 的 DISCON 路径集成验证 | `run→reset→run` 300 s 短跑，确认结果可重复（当前仅单测级） | 0.5 天 |
-| C2 | 参考结果对比 | Reset 后 300 s 与首次运行偏差 < 0.5% | 含在 C1 |
+| C1 | Reset 的 DISCON 路径集成验证 | 走 `rosco_api` 入口（与 `DISCON.F90` 的 `FCR_Step`/`FCR_Reset` 同一序列）：run→reset→run，断言两轮 setpoint 逐字段一致 | ✅ **已完成**：`test_reset_cycle_reproducible`（rosco_api 级；复位后 yaw_seq/ind_seq/r_pitch/min_pitch 与首轮一致） |
+| C2 | 参考结果对比 | Reset 后与首次运行一致 | ✅ **已完成**（含在 C1：逐字段相等） |
+
+> 说明：C1 采用 `rosco_api` 级端到端序列（init→register→publish_state→inject→step_high→read_setpoint→reset→重复），
+> 覆盖 DISCON 每 10 ms 实际调用的全部入口；比再跑一次 300 s FAST.Farm 更能直接定位复位语义。
 
 ### D. 采购后 M4
 

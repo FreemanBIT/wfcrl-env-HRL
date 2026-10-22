@@ -81,6 +81,11 @@ int fcr_rosco_publish_ack(int32_t turbine_id, const FcrRoscoAck *ack);
  * 注：本原型此前缺失，调用方依赖隐式声明（C99 起非法），现补上。 */
 int fcr_rosco_get_ack(int32_t turbine_id, FcrRoscoAck *out);
 
+/* RT 平台要求 §3.3：run → reset → run（不重启进程）。
+ * 清空 runtime 命令/状态/setpoint/锁存与 ack；保留配置与 ROSCO 标称副本。
+ * 未初始化返回 -1；成功 0。 */
+int fcr_rosco_api_reset(void);
+
 #ifdef __cplusplus
 }
 #endif
