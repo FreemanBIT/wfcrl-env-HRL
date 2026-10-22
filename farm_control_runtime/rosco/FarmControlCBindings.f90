@@ -74,6 +74,11 @@ MODULE FarmControlCBindings
          IMPORT :: C_INT
       END FUNCTION fcr_rosco_api_shutdown
 
+      ! RT platform requirement 3.3: run -> reset -> run (config kept, state cleared)
+      INTEGER(C_INT) FUNCTION fcr_rosco_api_reset() BIND(C, NAME='fcr_rosco_api_reset')
+         IMPORT :: C_INT
+      END FUNCTION fcr_rosco_api_reset
+
       ! 10 ms 路径
       INTEGER(C_INT) FUNCTION fcr_rosco_step_high(turbine_id, sim_time_s) BIND(C, NAME='fcr_rosco_step_high')
          IMPORT :: C_INT, C_DOUBLE

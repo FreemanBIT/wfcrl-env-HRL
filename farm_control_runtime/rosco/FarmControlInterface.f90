@@ -47,7 +47,7 @@ MODULE FarmControlInterface
    REAL(8), SAVE :: PS_WindSpeeds_nom(FCR_MAX_TURBINES_LOCAL, FCR_MAX_PS_TABLE) = 0.0_8
 
    ! ---- 公开接口 ----
-   PUBLIC :: FCR_Init, FCR_Step, FCR_PublishState, FCR_Shutdown
+   PUBLIC :: FCR_Init, FCR_Step, FCR_PublishState, FCR_Shutdown, FCR_Reset
    PUBLIC :: FCR_IsExternalEnabled, FCR_IsYawExternal, FCR_GetYawTargetHeadingDeg, &
              FCR_GetYawSeqApplied, FCR_GetRPitch, FCR_GetRSpeed, FCR_GetRTorque, &
              FCR_GetMinPitchDeg, FCR_GetCommandStatusFlags, FCR_Setpoint, &
@@ -402,6 +402,38 @@ CONTAINS
       VS_MaxTq_nom = 0.0_8
       VS_RefSpd_nom = 0.0_8
    END SUBROUTINE FCR_Shutdown
+
+   ! ------------------------------------------------------------------
+   ! FCR_Reset — RT 平台要求 3.3：run -> reset -> run（不重启进程）
+   !   清空 runtime 命令/状态/setpoint/锁存，保留配置与 ROSCO 标称副本
+   !   （nom_ok 必须保留：那是真实标称值，清掉会把降载配置误当标称）。
+   ! ------------------------------------------------------------------
+   SUBROUTINE FCR_Reset()
+      INTEGER(C_INT) :: rc
+      INTEGER :: i
+      IF (.NOT. api_ok_) RETURN
+      rc = fcr_rosco_api_reset()
+      IF (rc /= 0) api_ok_ = .FALSE.
+      ! 清空本地 setpoint 副本（ratio 恢复为 1 = 标称，enable 置 0）
+      DO i = 1, FCR_MAX_TURBINES_LOCAL
+         setpoint_(i)%valid = 0
+         setpoint_(i)%farm_control_enable = 0
+         setpoint_(i)%external_yaw_enable = 0
+         setpoint_(i)%yaw_seq = 0_8
+         setpoint_(i)%yaw_target_heading_rad = 0.0_8
+         setpoint_(i)%induction_enable = 0
+         setpoint_(i)%induction_seq = 0_8
+         setpoint_(i)%ct_ref = 0.0_8
+         setpoint_(i)%r_pitch = 1.0_8
+         setpoint_(i)%r_speed = 1.0_8
+         setpoint_(i)%r_torque = 1.0_8
+         setpoint_(i)%min_pitch_ref_rad = 0.0_8
+         setpoint_(i)%collective_pitch_offset_rad = 0.0_8
+         setpoint_(i)%command_status_flags = 0
+         setpoint_(i)%ct_tracking_error = 0.0_8
+      END DO
+      current_turbine_id_ = 0
+   END SUBROUTINE FCR_Reset
 
    ! 当前（最近一次 FCR_Step 的）机组号 —— 供 ROSCO 控制子程序查询自身
    INTEGER FUNCTION FCR_CurrentTurbineId() RESULT(r)

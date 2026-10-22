@@ -59,6 +59,9 @@ extern "C" {
 #define FCR_CMD_FLAG_INVALID_SEQ        (1u << 7)  /* 检测到乱序 seq  */
 #define FCR_CMD_FLAG_FALLBACK_ACTIVE    (1u << 8)  /* 处于 fallback   */
 #define FCR_CMD_FLAG_CONTROL_DISABLED   (1u << 9)  /* control_enable=0 */
+/* G-02（RT 平台要求 §4.1/§14）：命令值非法（NaN/Inf）被拒绝时置位。
+ * 该通道不锁存、不生效；调用方可据此区分"未收到"与"收到但非法"。 */
+#define FCR_CMD_FLAG_INVALID_VALUE      (1u << 10)
 
 /* ------------------------------------------------------------------ */
 /* rosco_controller_status_flags (S0301) — ROSCO 上报的状态/饱和/降级标志 */

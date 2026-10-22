@@ -64,6 +64,9 @@ typedef struct {
 
 /* 创建 runtime（内部按 config 创建全部组件并互连）                     */
 FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg);
+/* RT 平台要求 §3.3：run → reset → run（配置保留，状态归零重建）。
+ * 成功后 runtime 与 create 后的初始状态一致；失败返回 -1（状态不可用）。 */
+int fcr_runtime_reset(FcrRuntime *rt);
 /* 销毁 runtime，释放全部资源                                          */
 int fcr_runtime_destroy(FcrRuntime *rt);
 

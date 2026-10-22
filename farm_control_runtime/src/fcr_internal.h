@@ -98,6 +98,8 @@ void fcr_command_store_get_setpoint(const FcrCommandStore *cs, int32_t turbine_i
 FcrTurbineCommandState *fcr_command_store_turbine(FcrCommandStore *cs, int32_t turbine_id);
 void fcr_command_store_debug_counters(uint32_t *yaw_accept, uint32_t *ind_accept,
                                       uint32_t *yaw_latch, uint32_t *ind_latch);
+/* RT 平台要求 §3.3：reset 时清零诊断计数（可重复性） */
+void fcr_command_store_debug_counters_reset(void);
 
 /* ------------------------------------------------------------------ */
 /* state_store.c (ICD v1.5 S0201-S0210, S0301-S0303)                   */
@@ -257,6 +259,8 @@ struct FcrRuntime {
 
 void fcr_runtime_update_setpoints(FcrRuntime *rt, double sim_time_s, uint64_t low_step);
 void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id);
+/* RT 平台要求 §3.3：构造 1 s 聚合状态帧（不发布；供 step_low 与 RT 适配层共用） */
+int fcr_runtime_build_state_frame(FcrRuntime *rt, FarmStateFrame *out);
 
 #ifdef __cplusplus
 }

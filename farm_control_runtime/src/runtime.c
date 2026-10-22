@@ -18,24 +18,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
+/* 构建/重建全部可重建状态（CommandStore/StateStore/Aggregator/Watchdog/bridge）。
+ * create 与 reset 共用，保证 reset 后与初始状态一致（RT 平台要求 §3.3）。 */
+static int runtime_build_state(FcrRuntime *rt)
 {
-    FcrRuntime *rt;
-    if (!cfg) return NULL;
-    if (cfg->n_turbines == 0 || cfg->n_turbines > FCR_MAX_TURBINES) return NULL;
-
-    rt = (FcrRuntime *)calloc(1, sizeof(FcrRuntime));
-    if (!rt) return NULL;
-    rt->cfg = *cfg;
-    if (rt->cfg.dt_high_s <= 0.0) rt->cfg.dt_high_s = 0.01;
-    if (rt->cfg.dt_low_s  <= 0.0) rt->cfg.dt_low_s  = 1.0;
-    if (rt->cfg.stale_threshold_s <= 0.0) rt->cfg.stale_threshold_s = 5.0;
-    if (rt->cfg.flow_stale_threshold_s <= 0.0) rt->cfg.flow_stale_threshold_s = 3.0;
-
     rt->aggregator = fcr_state_aggregator_create(rt->cfg.n_turbines, 1.0);
-    if (!rt->aggregator) { fcr_runtime_destroy(rt); return NULL; }
+    if (!rt->aggregator) return -1;
     rt->induction_supervisor = fcr_induction_supervisor_create(rt->cfg.n_turbines, NULL);
-    if (!rt->induction_supervisor) { fcr_runtime_destroy(rt); return NULL; }
+    if (!rt->induction_supervisor) return -1;
     rt->cs = fcr_command_store_create(rt->cfg.n_turbines,
                                       rt->cfg.default_yaw_ttl_s,
                                       rt->cfg.default_induction_ttl_s,
@@ -43,10 +33,7 @@ FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
                                       rt->cfg.dt_low_s);
     rt->ss = fcr_state_store_create(rt->cfg.n_turbines);
     rt->wd = fcr_watchdog_create(rt->cfg.flow_stale_threshold_s);
-    if (!rt->cs || !rt->ss || !rt->wd) {
-        fcr_runtime_destroy(rt);
-        return NULL;
-    }
+    if (!rt->cs || !rt->ss || !rt->wd) return -1;
     /* DR-3/DR-4：bridge core（bridge_enable=1 时作为 setpoint 生成源） */
     if (rt->cfg.bridge_enable) {
         /* W-10: 诱导映射配置——env 显式覆盖（0 = core 默认 a_max=1/3, a_min=0.05）。
@@ -66,8 +53,27 @@ FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
             pind = &bind;
         }
         rt->bridge_core = fcr_bridge_core_create(rt->cfg.n_turbines, pind, NULL, NULL);
-        if (!rt->bridge_core) { fcr_runtime_destroy(rt); return NULL; }
+        if (!rt->bridge_core) return -1;
     }
+    rt->last_low_step_time_s = -1.0;
+    return 0;
+}
+
+FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
+{
+    FcrRuntime *rt;
+    if (!cfg) return NULL;
+    if (cfg->n_turbines == 0 || cfg->n_turbines > FCR_MAX_TURBINES) return NULL;
+
+    rt = (FcrRuntime *)calloc(1, sizeof(FcrRuntime));
+    if (!rt) return NULL;
+    rt->cfg = *cfg;
+    if (rt->cfg.dt_high_s <= 0.0) rt->cfg.dt_high_s = 0.01;
+    if (rt->cfg.dt_low_s  <= 0.0) rt->cfg.dt_low_s  = 1.0;
+    if (rt->cfg.stale_threshold_s <= 0.0) rt->cfg.stale_threshold_s = 5.0;
+    if (rt->cfg.flow_stale_threshold_s <= 0.0) rt->cfg.flow_stale_threshold_s = 3.0;
+
+    if (runtime_build_state(rt) != 0) { fcr_runtime_destroy(rt); return NULL; }
     /* W-10: 启动日志——打印生效的 control allocation 与诱导映射参数，
      * 明确 legacy / bridge 权威入口。 */
     fprintf(stderr,
@@ -75,8 +81,36 @@ FcrRuntime *fcr_runtime_create(const FcrRuntimeConfig *cfg)
             rt->cfg.bridge_enable, rt->cfg.bridge_induction_mode,
             (rt->cfg.bridge_ind_a_max > 0.0) ? rt->cfg.bridge_ind_a_max : 0.3333333333333333,
             (rt->cfg.bridge_ind_a_max > 0.0) ? rt->cfg.bridge_ind_a_min : 0.05);
-    rt->last_low_step_time_s = -1.0;
     return rt;
+}
+
+/* RT 平台要求 §3.3：run → reset → run，无需重启进程。
+ * 释放并重建全部运行时状态（配置保留），恢复到与 create 后一致的初始状态。 */
+int fcr_runtime_reset(FcrRuntime *rt)
+{
+    if (!rt) return -1;
+    if (rt->aggregator) {
+        fcr_state_aggregator_destroy((FcrStateAggregator *)rt->aggregator);
+        rt->aggregator = NULL;
+    }
+    if (rt->induction_supervisor) {
+        fcr_induction_supervisor_destroy((FcrInductionSupervisor *)rt->induction_supervisor);
+        rt->induction_supervisor = NULL;
+    }
+    if (rt->bridge_core) {
+        fcr_bridge_core_destroy((FcrBridgeCore *)rt->bridge_core);
+        rt->bridge_core = NULL;
+    }
+    if (rt->cs) { fcr_command_store_destroy(rt->cs); rt->cs = NULL; }
+    if (rt->ss) { fcr_state_store_destroy(rt->ss); rt->ss = NULL; }
+    if (rt->wd) { fcr_watchdog_destroy(rt->wd); rt->wd = NULL; }
+
+    memset(rt->setpoint, 0, sizeof(rt->setpoint));
+    rt->state_frame_seq = 0;
+    rt->last_low_step_time_s = -1.0;
+    fcr_command_store_debug_counters_reset();
+
+    return (runtime_build_state(rt) == 0) ? 0 : -1;
 }
 
 int fcr_runtime_destroy(FcrRuntime *rt)
@@ -304,18 +338,28 @@ static void aggregate_state(FcrRuntime *rt, FarmStateFrame *out, double sim_time
     }
 }
 
+/* RT 平台要求 §3.3/§5.2：构造 1 s 聚合状态帧（不发布）。
+ * 供 step_low（含发布）与 RT 适配层（由调度器取走）共用。 */
+int fcr_runtime_build_state_frame(FcrRuntime *rt, FarmStateFrame *out)
+{
+    if (!rt || !out) return -1;
+    fcr_watchdog_update(rt->wd, rt->ss->sim_time_s, rt->ss, rt->cs);
+    if (rt->aggregator) {
+        fcr_state_aggregator_build_frame((FcrStateAggregator *)rt->aggregator, rt->ss, out);
+    } else {
+        aggregate_state(rt, out, rt->ss->sim_time_s);
+    }
+    rt->last_low_step_time_s = rt->ss->sim_time_s;
+    return 0;
+}
+
 int fcr_runtime_step_low(FcrRuntime *rt, double sim_time_s)
 {
     FarmStateFrame out;
     (void)sim_time_s;
     if (!rt) return -1;
 
-    fcr_watchdog_update(rt->wd, rt->ss->sim_time_s, rt->ss, rt->cs);
-    if (rt->aggregator) {
-        fcr_state_aggregator_build_frame((FcrStateAggregator *)rt->aggregator, rt->ss, &out);
-    } else {
-        aggregate_state(rt, &out, rt->ss->sim_time_s);
-    }
+    if (fcr_runtime_build_state_frame(rt, &out) != 0) return -1;
     if (rt->cfg.transport) {
         FcrAWAEObservationFrame obs;
         FcrAWAECatalogFrame cat;
@@ -328,7 +372,6 @@ int fcr_runtime_step_low(FcrRuntime *rt, double sim_time_s)
                                          rt->ss->awae_extra_quality_flags, &obs);
         fcr_transport_publish_awae(rt->cfg.transport, &obs, &cat);
     }
-    rt->last_low_step_time_s = rt->ss->sim_time_s;
     return 0;
 }
 

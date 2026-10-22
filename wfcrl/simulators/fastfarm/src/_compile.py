@@ -82,6 +82,7 @@ if mode == "farmcontrol":
         "watchdog.c", "runtime.c", "rosco_api.c",
         "signal_statistics.c", "state_aggregator.c", "induction_supervisor.c",
         "bridge_runtime_adapter.c",
+        "fcr_rt_adapter.c",
         "shm_command_source.c",
         "offline_fastfarm_provider.c",
     ]

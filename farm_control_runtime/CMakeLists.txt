@@ -25,6 +25,7 @@ set(FCR_SRC
     bridge/yaw_adapter.c
     bridge/rt_snapshot.c
     src/bridge_runtime_adapter.c
+    src/fcr_rt_adapter.c
     awae/observation_manager.c
     awae/wind_mapper.c
     awae/awae_frame_builder.c

@@ -13,10 +13,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 /* debug counters */
 uint32_t g_dbg_yaw_accept = 0, g_dbg_ind_accept = 0;
 uint32_t g_dbg_yaw_latch = 0, g_dbg_ind_latch = 0;
+
+/* RT 平台要求 §3.3：reset 后诊断计数一并归零，保证可重复性 */
+void fcr_command_store_debug_counters_reset(void)
+{
+    g_dbg_yaw_accept = 0;
+    g_dbg_ind_accept = 0;
+    g_dbg_yaw_latch = 0;
+    g_dbg_ind_latch = 0;
+}
 
 FcrCommandStore *fcr_command_store_create(uint32_t n_turbines,
                                           double default_yaw_ttl_s,
@@ -52,7 +62,23 @@ static void accept_turbine(FcrCommandStore *cs, const FcrTurbineCommand *cmd,
                            int32_t turbine_id)
 {
     FcrTurbineCommandState *tc = fcr_command_store_turbine(cs, turbine_id);
+    int yaw_bad, ind_bad, time_bad;
     if (!tc) return;
+
+    /* ---- G-02（RT 平台要求 §4.1/§14）：入口数据有效性 ----
+     * 非有限值一律**拒绝**（不锁存、不生效），置 FCR_CMD_FLAG_INVALID_VALUE，
+     * 使调用方可区分"未收到命令"与"收到但非法"。 */
+    time_bad = !isfinite(cmd->command_basis_sim_time_s) ||
+               !isfinite(cmd->requested_effective_sim_time_s);
+    yaw_bad  = (cmd->yaw_valid != 0) && !isfinite(cmd->yaw_target_heading_rad);
+    ind_bad  = (cmd->induction_valid != 0) && !isfinite(cmd->induction_ref);
+    if (time_bad || yaw_bad || ind_bad) {
+        tc->command_status_flags |= FCR_CMD_FLAG_INVALID_VALUE;
+    } else {
+        tc->command_status_flags &= ~FCR_CMD_FLAG_INVALID_VALUE;
+    }
+    /* 时间戳非有限：整条命令无法排程，直接丢弃（其余字段一律不落地） */
+    if (time_bad) return;
 
     /* ---- 通用控制字段 (S0104, S0111, S0112) ---- */
     tc->control_enable = cmd->control_enable;
@@ -61,7 +87,7 @@ static void accept_turbine(FcrCommandStore *cs, const FcrTurbineCommand *cmd,
     tc->command_basis_sim_time_s = cmd->command_basis_sim_time_s;
 
     /* ---- yaw 通道 (S0108-S0110) ---- */
-    if (cmd->yaw_valid) {
+    if (cmd->yaw_valid && !yaw_bad) {
         if (cmd->yaw_seq > tc->yaw_seq_rx) {
             /* 新 seq：更新待生效值，进入 ACCEPTED 状态 */
             tc->yaw_seq_rx = cmd->yaw_seq;
@@ -87,7 +113,7 @@ static void accept_turbine(FcrCommandStore *cs, const FcrTurbineCommand *cmd,
     }
 
     /* ---- induction 通道 (S0105-S0107) ---- */
-    if (cmd->induction_valid) {
+    if (cmd->induction_valid && !ind_bad) {
         if (cmd->induction_seq > tc->ind_seq_rx) {
             tc->ind_seq_rx = cmd->induction_seq;
             tc->induction_ref = cmd->induction_ref;

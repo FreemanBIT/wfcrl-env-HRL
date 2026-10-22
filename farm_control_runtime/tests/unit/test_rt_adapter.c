@@ -1,0 +1,350 @@
+/*
+ * test_rt_adapter.c — RT 平台接入层测试（要求 §3 生命周期 / §5 时间 / §6 状态 / §14 数据）
+ *
+ * 覆盖：
+ *   - 生命周期：configure 校验、重复 init 拒绝、未 init 调 step、reset 后 run→reset→run 可重复
+ *   - 时间：非法/回退时间上下文拒绝；SCADA 边界由计数器（100×10ms=1s）
+ *   - 状态：NOT_READY / INVALID_INPUT / TIMEOUT（边沿）/ OK
+ *   - 数据：NaN 命令被拒绝（INVALID_VALUE + INVALID_INPUT）
+ */
+#include "test_framework.h"
+#include "fcr_rt.h"
+#include <string.h>
+#include <math.h>
+
+static FcrRtConfig mk_cfg(uint32_t n)
+{
+    FcrRtConfig c;
+    memset(&c, 0, sizeof(c));
+    c.n_turbines = n;
+    c.dt_high_s = 0.01;
+    c.dt_low_s = 1.0;
+    c.dt_scada_s = 1.0;
+    c.default_yaw_ttl_s = 60.0;
+    c.default_induction_ttl_s = 5.0;
+    c.stale_threshold_s = 5.0;
+    c.flow_stale_threshold_s = 3.0;
+    c.bridge_enable = 0;
+    c.bridge_induction_mode = 1;
+    return c;
+}
+
+static void put_state(FcrRtHandle *h, int tid, double heading)
+{
+    FcrRoscoRawState st;
+    memset(&st, 0, sizeof(st));
+    st.turbine_id = tid;
+    st.valid = 1;
+    st.nacelle_heading_rad = heading;
+    st.gen_power_w = 2.0e6;
+    st.rotor_speed_rad_s = 1.2;
+    ASSERT(fcr_rt_set_state(h, tid, &st) == 0);
+}
+
+static void mk_yaw_cmd(FarmCommandFrame *fr, int tid, double target,
+                       uint64_t seq, double basis)
+{
+    memset(fr, 0, sizeof(*fr));
+    fr->protocol_version = FCR_PROTOCOL_VERSION;
+    fr->n_turbines = (uint32_t)tid;
+    fr->command_frame_seq = 1;
+    fr->turbines[tid - 1].control_enable = 1;
+    fr->turbines[tid - 1].control_mode = FCR_CONTROL_MODE_PRC;
+    fr->turbines[tid - 1].command_basis_sim_time_s = basis;
+    fr->turbines[tid - 1].yaw_valid = 1;
+    fr->turbines[tid - 1].yaw_seq = seq;
+    fr->turbines[tid - 1].yaw_target_heading_rad = target;
+    fr->turbines[tid - 1].yaw_ttl_s = 60.0;
+}
+
+static void mk_ind_cmd(FarmCommandFrame *fr, int tid, double a,
+                       uint64_t seq, double basis, double ttl)
+{
+    memset(fr, 0, sizeof(*fr));
+    fr->protocol_version = FCR_PROTOCOL_VERSION;
+    fr->n_turbines = (uint32_t)tid;
+    fr->command_frame_seq = 1;
+    fr->turbines[tid - 1].control_enable = 1;
+    fr->turbines[tid - 1].control_mode = FCR_CONTROL_MODE_PRC;
+    fr->turbines[tid - 1].command_basis_sim_time_s = basis;
+    fr->turbines[tid - 1].induction_valid = 1;
+    fr->turbines[tid - 1].induction_seq = seq;
+    fr->turbines[tid - 1].induction_ref = a;
+    fr->turbines[tid - 1].induction_ttl_s = ttl;
+}
+
+/* 第 k 次 10 ms 调用（k 从 0 起）：n_low=k/100, n_fast_low=k%100 */
+static FcrRtStatus step_k(FcrRtHandle *h, int k, FcrRtStatusInfo *si)
+{
+    FcrRtTimeCtx t;
+    memset(&t, 0, sizeof(t));
+    t.n_low = k / 100;
+    t.n_fast_low = k % 100;
+    t.dt_low = 1.0;
+    t.dt_high = 0.01;
+    t.n_high_low = 100;
+    t.t_low = (double)t.n_low + (double)t.n_fast_low * 0.01;
+    return fcr_rt_step(h, &t, si);
+}
+
+/* ---- 配置校验（要求 §3.1 / §13 invalid init）---- */
+static void test_configure_validation(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c;
+    ASSERT(h != NULL);
+
+    /* 未 configure 就 init → 拒绝 */
+    ASSERT(fcr_rt_init(h) == -2);
+
+    c = mk_cfg(0);
+    ASSERT(fcr_rt_configure(h, &c) == -2);          /* n_turbines=0 */
+
+    c = mk_cfg(2);
+    c.dt_high_s = 0.0;
+    ASSERT(fcr_rt_configure(h, &c) == -2);          /* dt_high=0 */
+
+    c = mk_cfg(2);
+    c.dt_scada_s = 0.015;                            /* 1.5 个 10ms 步 → 非整数 */
+    ASSERT(fcr_rt_configure(h, &c) == -2);
+
+    c = mk_cfg(2);
+    c.dt_scada_s = 0.5;                              /* 50 步，可整除 1s */
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+
+    c = mk_cfg(2);
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    ASSERT(fcr_rt_init(h) == -3);                    /* 重复 init 拒绝 */
+    fcr_rt_destroy(h);
+}
+
+/* ---- run before init（要求 §13）---- */
+static void test_run_before_init(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtStatusInfo si;
+    FcrRtTimeCtx t;
+    ASSERT(h != NULL);
+    memset(&t, 0, sizeof(t));
+    t.dt_low = 1.0;
+    t.dt_high = 0.01;
+    ASSERT(fcr_rt_step(h, &t, &si) == FCR_RT_NOT_READY);
+    fcr_rt_destroy(h);
+}
+
+/* ---- 时间上下文校验（要求 §14 数据/§5 时间）---- */
+static void test_step_time_validation(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FcrRtStatusInfo si;
+    FcrRtTimeCtx t;
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+
+    ASSERT(fcr_rt_step(h, NULL, &si) == FCR_RT_INVALID_INPUT);
+    ASSERT(si.error_source == FCR_RT_SRC_TIME);
+
+    memset(&t, 0, sizeof(t));
+    t.n_low = -1;
+    t.dt_low = 1.0;
+    ASSERT(fcr_rt_step(h, &t, &si) == FCR_RT_INVALID_INPUT);
+
+    /* 正常步进后时间回退 → 拒绝 */
+    ASSERT(step_k(h, 200, &si) != FCR_RT_INVALID_INPUT);
+    memset(&t, 0, sizeof(t));
+    t.n_low = 0; t.t_low = 0.0; t.dt_low = 1.0;
+    ASSERT(fcr_rt_step(h, &t, &si) == FCR_RT_INVALID_INPUT);
+    ASSERT(si.error_code == 5);
+    fcr_rt_destroy(h);
+}
+
+/* ---- SCADA 边界：计数器 100 步 = 1 s（要求 §5.2）---- */
+static void test_scada_boundary_counter(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(1);
+    FcrRtStatusInfo si;
+    FarmStateFrame out;
+    int k, got = 0;
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+
+    /* 前 99 步无 1 s 帧 */
+    for (k = 0; k < 99; ++k) {
+        ASSERT(step_k(h, k, &si) == FCR_RT_OK);
+        ASSERT(fcr_rt_get_output(h, &out) == 0);
+    }
+    /* 第 100 步（k=99）产生 1 s 帧 */
+    ASSERT(step_k(h, 99, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_output(h, &out) == 1);
+    ASSERT(out.protocol_version == FCR_PROTOCOL_VERSION);
+    ASSERT(out.n_turbines == 1);
+    /* 取走后不重复返回 */
+    ASSERT(fcr_rt_get_output(h, &out) == 0);
+    /* 下一个 1 s 边界 */
+    for (k = 100; k < 199; ++k) step_k(h, k, &si);
+    ASSERT(fcr_rt_get_output(h, &out) == 0);
+    step_k(h, 199, &si);
+    ASSERT(fcr_rt_get_output(h, &out) == 1);
+    (void)got;
+    fcr_rt_destroy(h);
+}
+
+/* ---- 命令落地 + setpoint（S01→S08）---- */
+static void test_command_to_setpoint(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FcrRtStatusInfo si;
+    FarmCommandFrame fr;
+    FcrRoscoExternalSetpoint sp;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+
+    mk_yaw_cmd(&fr, 1, 0.1, 1, 0.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_OK);
+
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.external_yaw_enable == 1);
+    ASSERT(sp.yaw_seq == 1);
+    ASSERT_NEAR(sp.yaw_target_heading_rad, 0.1, 1e-12);
+    fcr_rt_destroy(h);
+}
+
+/* ---- NaN 命令被拒绝（G-02；要求 §4.1/§14）---- */
+static void test_reject_nan_command(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FcrRtStatusInfo si;
+    FarmCommandFrame fr;
+    FcrRoscoExternalSetpoint sp;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+
+    mk_yaw_cmd(&fr, 1, 0.0 / 0.0, 1, 0.0);   /* NaN 偏航目标 */
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_INVALID_INPUT);
+    ASSERT(si.error_source == FCR_RT_SRC_COMMAND);
+    ASSERT(si.error_code == 10);
+    /* 通道未被锁存（不生效） */
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.external_yaw_enable == 0);
+
+    /* 恢复合法命令后状态回到 OK 且生效 */
+    mk_yaw_cmd(&fr, 1, 0.1, 2, 0.01);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 1, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.external_yaw_enable == 1);
+    fcr_rt_destroy(h);
+}
+
+/* ---- TTL 到期：边沿报 TIMEOUT，随后 OK（D3 释放外部控制）---- */
+static void test_ttl_timeout_edge(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FcrRtStatusInfo si;
+    FarmCommandFrame fr;
+    FcrRoscoExternalSetpoint sp;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+
+    /* 诱导 ttl=1s，basis=0 */
+    mk_ind_cmd(&fr, 1, 0.20, 1, 0.0, 1.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.induction_enable == 1);
+
+    /* t=2s（k=200）超过 TTL 1s → 本步报 TIMEOUT */
+    ASSERT(step_k(h, 200, &si) == FCR_RT_TIMEOUT);
+    ASSERT(si.error_source == FCR_RT_SRC_COMMAND);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.induction_enable == 0);          /* D3：已释放外部控制 */
+
+    /* 下一步不再重复报 TIMEOUT */
+    ASSERT(step_k(h, 201, &si) == FCR_RT_OK);
+    fcr_rt_destroy(h);
+}
+
+/* ---- Reset：run → reset → run 可重复（要求 §3.3/§13）---- */
+static void test_reset_repeatable(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FcrRtStatusInfo si;
+    FarmCommandFrame fr;
+    FcrRoscoExternalSetpoint sp;
+    FarmStateFrame out;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+
+    /* 第一轮：下发并生效 */
+    mk_yaw_cmd(&fr, 1, 0.1, 1, 0.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.external_yaw_enable == 1);
+
+    /* reset：状态归零 */
+    ASSERT(fcr_rt_reset(h) == 0);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.external_yaw_enable == 0);
+    ASSERT(sp.yaw_seq == 0);
+    ASSERT(sp.induction_enable == 0);
+    ASSERT(fcr_rt_get_output(h, &out) == 0);
+
+    /* 第二轮：同样的命令应再次生效（seq 从 1 重新开始） */
+    put_state(h, 1, 0.0);
+    mk_yaw_cmd(&fr, 1, 0.1, 1, 0.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.external_yaw_enable == 1);
+    ASSERT(sp.yaw_seq == 1);
+
+    /* 1 s 边界仍按 reset 后的计数器重新计时 */
+    ASSERT(fcr_rt_get_output(h, &out) == 0);
+    fcr_rt_destroy(h);
+}
+
+/* ---- stop 后 step → NOT_READY ---- */
+static void test_stop_then_step(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(1);
+    FcrRtStatusInfo si;
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_stop(h) == 0);
+    ASSERT(step_k(h, 1, &si) == FCR_RT_NOT_READY);
+    fcr_rt_destroy(h);
+}
+
+void test_rt_adapter_register(void)
+{
+    RUN_TEST("rt_configure_validation", test_configure_validation);
+    RUN_TEST("rt_run_before_init", test_run_before_init);
+    RUN_TEST("rt_step_time_validation", test_step_time_validation);
+    RUN_TEST("rt_scada_boundary_counter", test_scada_boundary_counter);
+    RUN_TEST("rt_command_to_setpoint", test_command_to_setpoint);
+    RUN_TEST("rt_reject_nan_command", test_reject_nan_command);
+    RUN_TEST("rt_ttl_timeout_edge", test_ttl_timeout_edge);
+    RUN_TEST("rt_reset_repeatable", test_reset_repeatable);
+    RUN_TEST("rt_stop_then_step", test_stop_then_step);
+}

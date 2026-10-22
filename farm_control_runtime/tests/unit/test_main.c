@@ -20,6 +20,7 @@ void test_bridge_core_register(void);
 void test_bridge_adapter_register(void);
 void test_awae_register(void);
 void test_rt_snapshot_register(void);
+void test_rt_adapter_register(void);
 #ifndef MB_STUB
 void test_modbus_register(void);
 #endif
@@ -41,6 +42,7 @@ int main(void)
     test_bridge_adapter_register();
     test_awae_register();
     test_rt_snapshot_register();
+    test_rt_adapter_register();
 #ifndef MB_STUB
     test_modbus_register();
 #endif

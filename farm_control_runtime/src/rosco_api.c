@@ -22,6 +22,8 @@ static double g_lock_hold_max_ms = 0.0;
 static double g_lock_hold_total_ms = 0.0;
 static uint64_t g_lock_count = 0;
 static uint64_t g_queue_depth_max = 0;
+/* ICD v1.5 S0901-S0904: Bridge 确认（seq 回读 + 状态字 + ct_ref） */
+static FcrRoscoAck g_ack[FCR_MAX_TURBINES];
 
 #ifdef _WIN32
 #include <windows.h>
@@ -172,6 +174,28 @@ int fcr_rosco_api_shutdown(void)
     return 0;
 }
 
+/* RT 平台要求 §3.3：run → reset → run（不重启进程）。
+ * 保留 runtime 配置与 g_ack 之外的诊断统计；命令/状态/setpoint/锁存全部归零。
+ * 注意：ROSCO 侧的标称配置副本（nom_ok 等）**不得**在此清除——那是真实标称值，
+ * 清除后会把当前已降载的配置误当标称。 */
+int fcr_rosco_api_reset(void)
+{
+    int rc;
+    if (!g_rt) return -1;
+    FCR_LOCK();
+    rc = fcr_runtime_reset(g_rt);
+    if (rc == 0) {
+        uint32_t i;
+        for (i = 0; i < FCR_MAX_TURBINES; ++i) memset(&g_ack[i], 0, sizeof(g_ack[i]));
+        g_queue_depth_max = 0;
+        g_lock_hold_max_ms = 0.0;
+        g_lock_hold_total_ms = 0.0;
+        g_lock_count = 0;
+    }
+    FCR_UNLOCK();
+    return rc;
+}
+
 FcrRuntime *fcr_rosco_api_runtime(void)   /* 供离线 harness 使用 */
 {
     return g_rt;
@@ -202,9 +226,6 @@ int fcr_rosco_publish_state(int32_t turbine_id, const FcrRoscoRawState *st)
     FCR_UNLOCK();
     return 0;
 }
-
-/* ICD v1.5 S0901-S0904: Bridge 确认发布（seq 回读 + 状态字 + ct_ref） */
-static FcrRoscoAck g_ack[FCR_MAX_TURBINES];
 
 int fcr_rosco_publish_ack(int32_t turbine_id, const FcrRoscoAck *ack)
 {
