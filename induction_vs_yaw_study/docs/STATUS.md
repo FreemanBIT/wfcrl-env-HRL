@@ -187,8 +187,8 @@
 - **DOE 内存约束（实测）**：引擎 `_ff_case` 全量读 bts 重采样，U06 盒（1950s）峰值 2.93GB、U08 2.7GB。TurbSim 重造 `U08_TI15_seed03` 期间内存紧张 → **U06 的 17 例 bts 读取 MemoryError**，U08/U10/U12 正常
 - **当前运行**（TurbSim 停止后）：**全风速 DOE 已启动**（2449 待跑），1 worker + **OMP=6**；U06 已可正常跑（此前 17 例 bts 读取失败在 TurbSim 停止后解决）
   - 实测墙钟：**U08 ≈ 300s/case**、**U06 ≈ 691s/case**（低风速尾流平面更多 → 计算更重）
-  - 2 workers 不可行：每 worker bts 重采样峰值 ~3.7GB，两路并发 ~7.4GB + 系统占用 > 15.8GB 总内存（当前可用 4.8GB）
-- **预计**：1 worker ≈ **10–11 天**完成 2449 case；若释放 ~3GB 系统内存即可开 2 workers（≈5 天）
+  - **2 workers 实测可行**（2026-10-22 17:05 起）：TurbSim 停止后可用 6.8GB，两路 bts 重采样峰值未触发 OOM；连续 21 例无新增失败（failed 仍 17，均为 TurbSim 占内存期间的 U06 历史失败）
+- **预计（2 workers）**：剩余 2438 case ≈ **5.7 天**（实测 17.8 case/h）；残留风险：若两 worker 同时进入大盒（U06）重采样，峰值 ~7GB 可能触发 MemoryError → batch 自动重试（`max-retries 2`）+ `DONE.sentinel` 保证不丢数据
 
 ### 6.5 调整后的下一步（ICD v1.5 口径，2026-10-20 更新）
 ✅ 已完成：
