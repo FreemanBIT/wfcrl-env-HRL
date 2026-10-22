@@ -185,8 +185,10 @@
 - **LUT 全网格完成**（gate 10）：4U × 3TI × 3WD × 4S = 144 case，合并 `luts.parquet` 864 行（yaw 432 / derating 432，a_cmd 100% 覆盖）；yaw 增益均值 5.79%（max 32.6%）、derating 均值 1.48%（max 16.9%）
 - **修复 LUT seed 归一化（关键）**：LUT 与 seed 无关（case_id 固定 seed01），manifest 展开 seed01-06 → 此前 seed02-06 会报 "No LUT rows"（pilot 恰好只跑到 seed01 未暴露）。`normalize_case_id` 归一后 144/144 查表通过
 - **DOE 内存约束（实测）**：引擎 `_ff_case` 全量读 bts 重采样，U06 盒（1950s）峰值 2.93GB、U08 2.7GB。TurbSim 重造 `U08_TI15_seed03` 期间内存紧张 → **U06 的 17 例 bts 读取 MemoryError**，U08/U10/U12 正常
-- **当前运行**：DOE 分速推进——U8/U10/U12（1811 case）1 worker + **OMP=6（实测 305.8s/case，比 OMP=3 的 704s 快 2.3×）**；U06 待 TurbSim 完成释放内存后补跑
-- **预计**：U8/U10/U12 ≈ 6.4 天（1W）；TurbSim 完成后切 2 workers + 补 U06 ≈ 3.2 天
+- **当前运行**（TurbSim 停止后）：**全风速 DOE 已启动**（2449 待跑），1 worker + **OMP=6**；U06 已可正常跑（此前 17 例 bts 读取失败在 TurbSim 停止后解决）
+  - 实测墙钟：**U08 ≈ 300s/case**、**U06 ≈ 691s/case**（低风速尾流平面更多 → 计算更重）
+  - 2 workers 不可行：每 worker bts 重采样峰值 ~3.7GB，两路并发 ~7.4GB + 系统占用 > 15.8GB 总内存（当前可用 4.8GB）
+- **预计**：1 worker ≈ **10–11 天**完成 2449 case；若释放 ~3GB 系统内存即可开 2 workers（≈5 天）
 
 ### 6.5 调整后的下一步（ICD v1.5 口径，2026-10-20 更新）
 ✅ 已完成：
