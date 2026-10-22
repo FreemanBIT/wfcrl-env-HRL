@@ -160,37 +160,126 @@ static void test_step_time_validation(void)
     fcr_rt_destroy(h);
 }
 
-/* ---- SCADA 边界：计数器 100 步 = 1 s（要求 §5.2）---- */
+/* ---- SCADA 边界：total_step 跨 100 步（=1 s）出帧（要求 §5.2）---- */
 static void test_scada_boundary_counter(void)
 {
     FcrRtHandle *h = fcr_rt_create();
     FcrRtConfig c = mk_cfg(1);
     FcrRtStatusInfo si;
     FarmStateFrame out;
-    int k, got = 0;
+    int k;
     ASSERT(fcr_rt_configure(h, &c) == 0);
     ASSERT(fcr_rt_init(h) == 0);
     put_state(h, 1, 0.0);
 
-    /* 前 99 步无 1 s 帧 */
-    for (k = 0; k < 99; ++k) {
+    /* k=0..99（t=0.00..0.99）无 1 s 帧 */
+    for (k = 0; k <= 99; ++k) {
         ASSERT(step_k(h, k, &si) == FCR_RT_OK);
         ASSERT(fcr_rt_get_output(h, &out) == 0);
     }
-    /* 第 100 步（k=99）产生 1 s 帧 */
-    ASSERT(step_k(h, 99, &si) == FCR_RT_OK);
+    /* k=100（n_low=1, t=1.00）→ 产生 1 s 帧，采样时刻 = 1.00 */
+    ASSERT(step_k(h, 100, &si) == FCR_RT_OK);
     ASSERT(fcr_rt_get_output(h, &out) == 1);
     ASSERT(out.protocol_version == FCR_PROTOCOL_VERSION);
     ASSERT(out.n_turbines == 1);
+    ASSERT_NEAR(out.state_sample_sim_time_s, 1.00, 1e-9);
     /* 取走后不重复返回 */
     ASSERT(fcr_rt_get_output(h, &out) == 0);
-    /* 下一个 1 s 边界 */
-    for (k = 100; k < 199; ++k) step_k(h, k, &si);
-    ASSERT(fcr_rt_get_output(h, &out) == 0);
-    step_k(h, 199, &si);
+    /* 下一 1 s 边界（k=200） */
+    for (k = 101; k <= 199; ++k) {
+        step_k(h, k, &si);
+        ASSERT(fcr_rt_get_output(h, &out) == 0);
+    }
+    step_k(h, 200, &si);
     ASSERT(fcr_rt_get_output(h, &out) == 1);
-    (void)got;
+    ASSERT_NEAR(out.state_sample_sim_time_s, 2.00, 1e-9);
     fcr_rt_destroy(h);
+}
+
+/* ---- A1：Mock Scheduler 1000 周期（要求 §15 / M3）----
+ * DT_BASE=10 ms、DT_Low=1 s、DT_SCADA=1 s；运行 1000 个 BASE 周期（t=0.01..10.00）。
+ * 检查：step 调用 1000 次；SCADA 出帧 10 次（t=1..10）；无重复/漏调；命令生效时刻明确。
+ */
+static void test_mock_scheduler_1000_cycles(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(1);
+    FcrRtStatusInfo si;
+    FarmStateFrame out;
+    int k, n_calls = 0, n_out = 0, n_dup = 0;
+    int n_cmd = 0;
+    double first_t = -1.0, last_t = -1.0;
+    double out_t[16];
+    FcrRoscoExternalSetpoint sp;
+    FarmCommandFrame fr;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+
+    /* 1-based 周期：k=1..1000，t=k*0.01（0.01..10.00），n_low=k/100, n_fast=k%100 */
+    for (k = 1; k <= 1000; ++k) {
+        double t = (double)k * 0.01;
+        int n_low = k / 100;
+        int n_fast = k % 100;
+        FcrRtTimeCtx ctx;
+        FcrRtStatus st;
+
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.n_low = n_low;
+        ctx.n_fast_low = n_fast;
+        ctx.dt_low = 1.0;
+        ctx.dt_high = 0.01;
+        ctx.n_high_low = 100;
+        ctx.t_low = t;
+
+        /* 调度器每 10 ms 搬运一次平台状态 */
+        put_state(h, 1, 0.0);
+
+        /* 调度器每 1 s（SCADA 边界）把 RCP 新命令送入（真实 RCP 行为） */
+        if ((k % 100) == 0) {
+            mk_yaw_cmd(&fr, 1, 0.1, (uint64_t)(++n_cmd), t);
+            ASSERT(fcr_rt_set_command(h, &fr) == 0);
+        }
+
+        st = fcr_rt_step(h, &ctx, &si);
+        ASSERT(st == FCR_RT_OK);          /* 命令每 1 s 刷新 → 不超龄 */
+        n_calls++;
+        if (first_t < 0.0) first_t = t;
+        last_t = t;
+
+        /* 输出：仅在 SCADA 边界产生；取走后不得重复 */
+        {
+            int got = fcr_rt_get_output(h, &out);
+            if (got == 1) {
+                ASSERT(n_out < 16);
+                out_t[n_out++] = out.state_sample_sim_time_s;
+            }
+            /* 同一时刻再取一次必须为空（无重复帧） */
+            if (got == 1 && fcr_rt_get_output(h, &out) == 1) n_dup++;
+        }
+    }
+
+    ASSERT(n_calls == 1000);
+    ASSERT(n_cmd == 10);            /* RCP 每 1 s 一次 → 10 次 */
+    ASSERT(n_out == 10);            /* 1000/100 = 10 次场控交换 */
+    ASSERT(n_dup == 0);             /* 无重复帧 */
+    ASSERT_NEAR(first_t, 0.01, 1e-9);
+    ASSERT_NEAR(last_t, 10.00, 1e-9);
+    for (k = 0; k < 10; ++k)        /* 出帧时刻 = 1.00, 2.00, ..., 10.00 */
+        ASSERT_NEAR(out_t[k], (double)(k + 1), 1e-9);
+
+    /* 最后一条命令（k=1000, seq=10）已生效 */
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.external_yaw_enable == 1);
+    ASSERT(sp.yaw_seq == 10);
+    fcr_rt_destroy(h);
+}
+
+/* ---- A3：RT 接口版本（要求 §4.1）---- */
+static void test_rt_abi_version(void)
+{
+    ASSERT(FCR_RT_ABI_VERSION >= 1u);
+    ASSERT(fcr_rt_get_version() == FCR_RT_ABI_VERSION);
 }
 
 /* ---- 命令落地 + setpoint（S01→S08）---- */
@@ -336,12 +425,51 @@ static void test_stop_then_step(void)
     fcr_rt_destroy(h);
 }
 
+/* ---- A2：执行时预算与统计（要求 §5.4）---- */
+static void test_step_perf_budget(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(1);
+    FcrRtStatusInfo si;
+    FcrRtPerf perf;
+
+    /* 预算关闭（0）：不报 WARNING，统计仍工作 */
+    c.max_step_us = 0.0;
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_perf(h, &perf) == 0);
+    ASSERT(perf.n_steps == 1);
+    ASSERT(perf.n_over_budget == 0);
+    ASSERT(perf.last_us >= 0.0);
+    ASSERT(perf.max_us >= perf.last_us - 1e-9);
+    fcr_rt_destroy(h);
+
+    /* 预算极小（0.0001 µs）→ 必超预算：状态 WARNING + 计数，控制输出不变 */
+    h = fcr_rt_create();
+    c = mk_cfg(1);
+    c.max_step_us = 0.0001;
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_WARNING);
+    ASSERT(si.error_source == FCR_RT_SRC_INTERNAL);
+    ASSERT(si.error_code == 50);
+    ASSERT(fcr_rt_get_perf(h, &perf) == 0);
+    ASSERT(perf.n_over_budget >= 1);
+    fcr_rt_destroy(h);
+}
+
 void test_rt_adapter_register(void)
 {
     RUN_TEST("rt_configure_validation", test_configure_validation);
     RUN_TEST("rt_run_before_init", test_run_before_init);
     RUN_TEST("rt_step_time_validation", test_step_time_validation);
     RUN_TEST("rt_scada_boundary_counter", test_scada_boundary_counter);
+    RUN_TEST("rt_mock_scheduler_1000_cycles", test_mock_scheduler_1000_cycles);
+    RUN_TEST("rt_abi_version", test_rt_abi_version);
+    RUN_TEST("rt_step_perf_budget", test_step_perf_budget);
     RUN_TEST("rt_command_to_setpoint", test_command_to_setpoint);
     RUN_TEST("rt_reject_nan_command", test_reject_nan_command);
     RUN_TEST("rt_ttl_timeout_edge", test_ttl_timeout_edge);

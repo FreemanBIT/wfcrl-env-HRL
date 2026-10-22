@@ -19,6 +19,27 @@
 #include <math.h>
 #include <stdio.h>
 
+/* ---- 单调时钟（§5.4 执行时统计；Windows QPC / POSIX CLOCK_MONOTONIC）---- */
+#ifdef _WIN32
+#include <windows.h>
+static double rt_now_us(void)
+{
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER c;
+    if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart * 1.0e6 / (double)freq.QuadPart;
+}
+#else
+#include <time.h>
+static double rt_now_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1.0e6 + (double)ts.tv_nsec * 1.0e-3;
+}
+#endif
+
 struct FcrRtHandle {
     FcrRtConfig cfg;
     FcrRuntime *rt;
@@ -26,10 +47,14 @@ struct FcrRtHandle {
     int inited;
     int stopped;
 
-    /* SCADA 边界（计数器；与 DT_Low 解耦） */
-    uint64_t step_index;       /* 每次 step() 自增 */
+    /* SCADA 边界（计数器；与 DT_Low 解耦）
+     * 用调度器权威步号推导 total_step，边界 = total_step 跨过 steps_per_scada 的整数倍。
+     * 这样：① DT_SCADA=DT_Low 时等价于"n_low 变化"（t=1.0,2.0,...）；
+     *       ② DT_SCADA 为其他可整除值时仍正确；③ 重复调用（total_step 不变）不重复出帧。 */
+    uint64_t step_index;       /* 每次 step() 自增（诊断用） */
     uint32_t steps_per_low;    /* = round(dt_low / dt_high) */
     uint32_t steps_per_scada;  /* = round(dt_scada / dt_high) */
+    uint64_t last_scada_idx;   /* 上次出帧的 SCADA 序号（初始 0 = 不在 t=0 出帧） */
 
     /* 待落地命令（调度器 1 s 送入；下一个 10 ms 步生效） */
     FarmCommandFrame pending;
@@ -42,6 +67,13 @@ struct FcrRtHandle {
     /* 状态 */
     FcrRtStatusInfo last_status;
     double last_t_low;
+
+    /* §5.4 执行时统计 */
+    double   perf_last_us;
+    double   perf_max_us;
+    double   perf_total_us;
+    uint64_t perf_n;
+    uint64_t perf_over;
 
     /* TTL 到期边沿检测（每机 1 bit；≤64 机） */
     uint64_t prev_yaw_ttl;
@@ -98,6 +130,11 @@ static int build_output(FcrRtHandle *h)
 }
 
 /* ---------------- 生命周期 ---------------- */
+uint32_t fcr_rt_get_version(void)
+{
+    return FCR_RT_ABI_VERSION;
+}
+
 FcrRtHandle *fcr_rt_create(void)
 {
     FcrRtHandle *h = (FcrRtHandle *)calloc(1, sizeof(FcrRtHandle));
@@ -155,11 +192,17 @@ int fcr_rt_init(FcrRtHandle *h)
     h->inited = 1;
     h->stopped = 0;
     h->step_index = 0;
+    h->last_scada_idx = 0;
     h->pending_valid = 0;
     h->output_valid = 0;
     h->last_t_low = -1.0;
     h->prev_yaw_ttl = 0;
     h->prev_ind_ttl = 0;
+    h->perf_last_us = 0.0;
+    h->perf_max_us = 0.0;
+    h->perf_total_us = 0.0;
+    h->perf_n = 0;
+    h->perf_over = 0;
     set_status(h, &h->last_status, FCR_RT_OK, FCR_RT_SRC_NONE, 0, "");
     return 0;
 }
@@ -170,11 +213,17 @@ int fcr_rt_reset(FcrRtHandle *h)
     if (fcr_runtime_reset(h->rt) != 0) return -1;
     h->stopped = 0;
     h->step_index = 0;
+    h->last_scada_idx = 0;
     h->pending_valid = 0;
     h->output_valid = 0;
     h->last_t_low = -1.0;
     h->prev_yaw_ttl = 0;
     h->prev_ind_ttl = 0;
+    h->perf_last_us = 0.0;
+    h->perf_max_us = 0.0;
+    h->perf_total_us = 0.0;
+    h->perf_n = 0;
+    h->perf_over = 0;
     memset(&h->last_frame, 0, sizeof(h->last_frame));
     set_status(h, &h->last_status, FCR_RT_OK, FCR_RT_SRC_NONE, 0, "");
     return 0;
@@ -291,11 +340,9 @@ static FcrRtStatus eval_status(FcrRtHandle *h, FcrRtStatusInfo *si,
     return si->status;
 }
 
-FcrRtStatus fcr_rt_step(FcrRtHandle *h, const FcrRtTimeCtx *t,
-                        FcrRtStatusInfo *out_status)
+static FcrRtStatus rt_step_impl(FcrRtHandle *h, const FcrRtTimeCtx *t,
+                                FcrRtStatusInfo *si)
 {
-    FcrRtStatusInfo local;
-    FcrRtStatusInfo *si = out_status ? out_status : &local;
     uint64_t yaw_ttl = 0, ind_ttl = 0;
     uint64_t fast_step;
 
@@ -340,12 +387,22 @@ FcrRtStatus fcr_rt_step(FcrRtHandle *h, const FcrRtTimeCtx *t,
         return FCR_RT_FATAL;
     }
 
-    /* ---- 4) SCADA 边界：1 s 帧（计数器，与 DT_Low 解耦）---- */
+    /* ---- 4) SCADA 边界：total_step 跨过 steps_per_scada 整数倍 ----
+     * total_step 由调度器权威步号推导（n_low*steps_per_low + n_fast_low），
+     * 因此重复调用（total_step 不变）不会重复出帧，漏调用也不会补发历史帧。 */
     h->step_index++;
-    if (h->steps_per_scada > 0 && (h->step_index % h->steps_per_scada) == 0) {
-        if (build_output(h) != 0) {
-            set_status(h, si, FCR_RT_FATAL, FCR_RT_SRC_INTERNAL, 7, "output build failed");
-            return FCR_RT_FATAL;
+    {
+        uint64_t total_step = (uint64_t)t->n_low * (uint64_t)h->steps_per_low +
+                              (uint64_t)((t->n_fast_low > 0) ? t->n_fast_low : 0);
+        uint64_t scada_idx = (h->steps_per_scada > 0)
+                                 ? (total_step / (uint64_t)h->steps_per_scada)
+                                 : 0;
+        if (scada_idx > h->last_scada_idx) {
+            if (build_output(h) != 0) {
+                set_status(h, si, FCR_RT_FATAL, FCR_RT_SRC_INTERNAL, 7, "output build failed");
+                return FCR_RT_FATAL;
+            }
+            h->last_scada_idx = scada_idx;
         }
     }
 
@@ -355,8 +412,46 @@ FcrRtStatus fcr_rt_step(FcrRtHandle *h, const FcrRtTimeCtx *t,
     h->prev_yaw_ttl = yaw_ttl;
     h->prev_ind_ttl = ind_ttl;
     h->last_t_low = t->t_low;
+    return si->status;
+}
+
+/* 每 10 ms 调用的公开入口：包一层执行时统计（§5.4） */
+FcrRtStatus fcr_rt_step(FcrRtHandle *h, const FcrRtTimeCtx *t,
+                        FcrRtStatusInfo *out_status)
+{
+    FcrRtStatusInfo local;
+    FcrRtStatusInfo *si = out_status ? out_status : &local;
+    double t0, dur;
+
+    if (!h) return FCR_RT_NOT_READY;
+    t0 = rt_now_us();
+    (void)rt_step_impl(h, t, si);
+    dur = rt_now_us() - t0;
+
+    h->perf_last_us = dur;
+    if (dur > h->perf_max_us) h->perf_max_us = dur;
+    h->perf_total_us += dur;
+    h->perf_n++;
+    /* §5.4：超预算 → WARNING（不改变控制输出；D1/D4 由调度器据状态决定） */
+    if (h->cfg.max_step_us > 0.0 && dur > h->cfg.max_step_us) {
+        h->perf_over++;
+        bump_status(h, si, FCR_RT_WARNING, FCR_RT_SRC_INTERNAL, 50,
+                    "step exceeded max_step_us budget");
+    }
+
     h->last_status = *si;
     return si->status;
+}
+
+int fcr_rt_get_perf(const FcrRtHandle *h, FcrRtPerf *out)
+{
+    if (!h || !out) return -1;
+    out->last_us = h->perf_last_us;
+    out->max_us = h->perf_max_us;
+    out->avg_us = (h->perf_n > 0) ? (h->perf_total_us / (double)h->perf_n) : 0.0;
+    out->n_steps = h->perf_n;
+    out->n_over_budget = h->perf_over;
+    return 0;
 }
 
 /* ---------------- 输出 ---------------- */

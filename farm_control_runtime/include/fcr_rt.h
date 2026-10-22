@@ -29,6 +29,14 @@ extern "C" {
 #endif
 
 /* ================================================================== */
+/* 0. 接口版本（要求 §4.1"接口版本是否兼容"；调度器启动时握手校验）      */
+/* ================================================================== */
+/* 变更规则：任何影响结构布局/函数签名的改动都必须提升本版本号。          */
+#define FCR_RT_ABI_VERSION      1u
+/* 返回本模块编译时的 RT 接口版本；调度器与 FCR_RT_ABI_VERSION 比对。 */
+uint32_t fcr_rt_get_version(void);
+
+/* ================================================================== */
 /* 1. 调度器时间上下文（要求 §5.1；只读传入）                          */
 /* ================================================================== */
 typedef struct {
@@ -73,6 +81,17 @@ typedef struct {
 } FcrRtStatusInfo;
 
 /* ================================================================== */
+/* 2b. 执行时统计（要求 §5.4：典型/最大执行时间、超预算计数）          */
+/* ================================================================== */
+typedef struct {
+    double   last_us;        /* 上一步执行耗时（µs） */
+    double   max_us;         /* 最大执行耗时（µs） */
+    double   avg_us;         /* 平均执行耗时（µs） */
+    uint64_t n_steps;        /* 已执行步数 */
+    uint64_t n_over_budget;  /* 超过 max_step_us 的次数 */
+} FcrRtPerf;
+
+/* ================================================================== */
 /* 3. 配置（要求 §3 CONFIGURE；不依赖环境变量）                        */
 /* ================================================================== */
 typedef struct {
@@ -91,6 +110,10 @@ typedef struct {
     uint32_t bridge_alloc_w_torque;
     double   bridge_ind_a_max;        /* 0 = core 默认 1/3 */
     double   bridge_ind_a_min;        /* 0 = core 默认 0.05 */
+    /* §5.4 执行时预算：0 = 不检查；超过则状态置 WARNING 并计数（不改变控制输出）。
+     * 本模块 step 为纯内存计算（无 I/O/无锁/无分配），典型值在数十 µs 量级；
+     * 预算由平台按 10 ms 周期分配填写（建议 ≤ 1000 µs）。 */
+    double   max_step_us;
 } FcrRtConfig;
 
 typedef struct FcrRtHandle FcrRtHandle;
@@ -140,6 +163,8 @@ int fcr_rt_get_awae(FcrRtHandle *h, FcrAWAEObservationFrame *obs,
 
 /* 状态查询（诊断/测试） */
 int fcr_rt_get_status(const FcrRtHandle *h, FcrRtStatusInfo *out);
+/* 执行时统计（§5.4） */
+int fcr_rt_get_perf(const FcrRtHandle *h, FcrRtPerf *out);
 
 /* 状态码转字符串（日志/测试用） */
 const char *fcr_rt_status_str(FcrRtStatus s);

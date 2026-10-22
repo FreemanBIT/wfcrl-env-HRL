@@ -165,7 +165,7 @@
 |---|---|---|---|
 | **G-04** | 无 `RTimeCtx` 时间接口 | §5.1、§5.2 | ✅ **已实现**：`FcrRtTimeCtx` 只读传入；10 ms 调用、DT_SCADA=1 s |
 | **G-07** | 无调度器可调用形态 | §2.2、§15 | ✅ **已实现**：`fcr_rt_adapter.c`（create/configure/init/set_command/set_state/set_extra/set_flow/set_wind_estimate/set_awae_catalog/step/get_output/get_setpoint/get_awae/reset/stop/destroy） |
-| **G-12** | 10 ms 路径含互斥锁 | R-03、§5.4 | ⬜ 待做（`FCR_LOCK` 在 `fcr_rosco_step_high`/`publish_state`；RT 路径 `fcr_rt_step` 经 runtime 也走锁，需改无锁 double-buffer） |
+| **G-12** | 10 ms 路径含互斥锁 | R-03、§5.4 | ⚠️ **RT 路径已无锁**（`fcr_rt_adapter.c` → `fcr_runtime_step_high`/`build_state_frame`/`fcr_command_store_*`/`fcr_state_store_*` 均无 `FCR_LOCK`，锁只在 `rosco_api.c` 的 DISCON 内嵌路径）；剩余：单线程调度假设需写入接口说明 + 若平台用多线程搬运则补原子/双缓冲 |
 | **G-13** | 无调度时序测试 | §15 | ⚠️ 部分：`rt_scada_boundary_counter` 已验证 100×10 ms = 1 s 边界；完整 1000 周期调度测试待补 |
 
 ### M4 — RT Ready（采购后）
@@ -247,7 +247,14 @@ int fcr_rt_step(FcrRtHandle *h, double t_low, int32_t n_low, double dt_low);
 > 补充说明：因为模块 10 ms 被调、1 s 做 SCADA 交换，模块**必须能可靠识别 1 s 边界**。
 > 方案 A 中可用 `t->n_low` 变化作为边界信号（n_low 是权威步号），比用浮点时间比较更可靠。
 
-### 4.3 Q3 详解：状态/错误怎么回传给调度器（待确认）
+### 4.3 Q3 详解：状态/错误怎么回传给调度器（已确认：方案 A）
+
+> **已确认（2026-10-20）**：Q2 = 方案 A（RTimeCtx 只读指针入参）；
+> Q3 = 方案 A（同步返回 `FcrRtStatus` + `FcrRtStatusInfo` 详情）；
+> 传输（ZMQ/Modbus）由调度器负责，本模块只提供接口数据；
+> 1 s 边界用 `n_low` 变化定义（DT_Low=1 s），但 DT_SCADA 变化时改用计数器
+> （已实现为 `steps_per_scada = dt_scada/dt_high`，与 DT_Low 解耦）。
+> 实现见 `include/fcr_rt.h` + `src/fcr_rt_adapter.c`。
 
 **问题是什么**：要求 §6 规定模块要向调度器返回**结构化状态**
 （OK/WARNING/STALE_DATA/INVALID_INPUT/NOT_READY/TIMEOUT/NUMERICAL_ERROR/COMM_ERROR/FATAL
@@ -304,12 +311,60 @@ typedef struct { FcrRtStatus status; int32_t code; uint16_t src; char msg[64]; d
 
 ---
 
-## 5. 附：现有证据索引
+## 5. 下一步开发清单（按优先级，2026-10-22）
 
-- 单测 80/80：`farm_control_runtime/tools/_build_test.bat && test_runner.exe`
+### A. 阻塞 M3（进入 WSL 系统集成前必须完成）
+
+| # | 工作 | 要求条款 | 状态 |
+|---|---|---|---|
+| A1 | **Mock Scheduler 调度时序测试** | §15、M3 | ✅ **已完成**：`rt_mock_scheduler_1000_cycles`（1000×10 ms；step 1000 次、SCADA 出帧 10 次 @ t=1..10、无重复/漏调、RCP 每 1 s 刷新命令） |
+| A2 | **Step 执行时预算与超时策略** | §5.4 | ✅ **已完成**：`max_step_us` 预算 + `FcrRtPerf`（last/max/avg/超预算次数）+ 超预算置 WARNING；`rt_step_perf_budget` |
+| A3 | **RT 接口版本化** | §4.1 | ✅ **已完成**：`FCR_RT_ABI_VERSION` + `fcr_rt_get_version()`；`rt_abi_version` |
+| A4 | 并发假设成文/加固 | §5.4、R-03 | ⚠️ **部分**：已确认 RT 路径无锁（锁仅在 DISCON 路径），假设写入 `RT_DATA_AND_TIME_POLICY.md` §5；多线程搬运加固待定 |
+
+### B. M2 收尾（文档 + 补充用例）
+
+| # | 工作 | 要求条款 | 状态 |
+|---|---|---|---|
+| B1 | 逐信号数据策略表 | §14 | ✅ **已完成**：`RT_DATA_AND_TIME_POLICY.md` §1（S01/S02/S03/S04/S05/S06/S10 逐条件动作） |
+| B2 | 时间语义表 | §5.3 | ✅ **已完成**：同上 §2（调用周期 / 生效时刻 / TTL / 最大保持） |
+| B3 | 降级策略表 + D0/D2 用例 | §6.1、§16 | ⚠️ **部分**：降级映射表已完成（§3）；D0/D2 独立命名用例待补 |
+| B4 | Inf/边界用例补充 | §14 | ⚠️ **部分**：NaN 已测；Inf/越界/版本不匹配显式断言待补 |
+
+### C. M1 收尾
+
+| # | 工作 | 说明 | 估算 |
+|---|---|---|---|
+| C1 | Reset 的 DISCON 路径集成验证 | `run→reset→run` 300 s 短跑，确认结果可重复（当前仅单测级） | 0.5 天 |
+| C2 | 参考结果对比 | Reset 后 300 s 与首次运行偏差 < 0.5% | 含在 C1 |
+
+### D. 采购后 M4
+
+| # | 工作 | 说明 |
+|---|---|---|
+| D1 | RT 框架导入 / 目标系统编译加载 | 平台 RT 框架（如 RT-Linux/Xenomai）集成 |
+| D2 | RT vs WSL 结果一致性 | 同工况对比 |
+| D3 | 实时指标实测 | Deadline / Jitter / Worst Case / Deadline Miss |
+
+### E. 项目其他遗留（非平台要求，但未完成）
+
+| # | 工作 | 来源 | 说明 |
+|---|---|---|---|
+| E1 | R-01~R-07 LinuxRT 项 | ICD 进度 §6 | 实例隔离、快照原子性、Modbus Client、大结构拷贝、供应商调度核/ROSCO 源码补交（A4 与之部分重叠） |
+| E2 | T-29 失稳缓解 | ICD 进度 §4 | 研究侧调低 `.fstf` 的 `f_c`（t≈237 s wake plane 超越问题） |
+| E3 | 交付包更新 | 本审查 | 现有 `farm_control_runtime_delivery_20261020.zip` 未含 `fcr_rt.h`/`fcr_rt_adapter.c`，需重新打包 |
+| E4 | 调试脚本清理 | ICD 进度 §4 | 已决策保留（5 个 `_*.py`） |
+
+---
+
+## 6. 附：现有证据索引
+
+- 单测 **89/89**：`farm_control_runtime/tools/_build_test.bat && test_runner.exe`
+- RT 接入测试 **9 例**：`tests/unit/test_rt_adapter.c`
 - 协议 12/12：`farm_control_runtime/tests/integration/test_icd_v15_abi_python.py`
 - ABI：`tools/check_abi.py`（82 字段偏移）
 - 门禁：`tools/check_icd_gates.py`（G-1/G-2/G-3）、`tools/audit_signals.py`（88/88）
 - 集成 26/26：`pytest farm_control_runtime/tests/integration -q`（逐文件）
-- 系统回归：T-21 4366 kW（0.00%）、T-22 -15.14%、T-23 同 run 复核、T-24 隔离、T-25 Bridge、T-27 Modbus
+- 系统回归：T-21 4367 kW（0.02%）、T-22 -15.14%、T-23 同 run 复核、T-24 隔离、T-25 Bridge、T-27 Modbus
 - 交付说明：`docs/DELIVERY_NOTE_RT_INTEGRATION.md`
+- RT 接口：`include/fcr_rt.h` / `src/fcr_rt_adapter.c`
