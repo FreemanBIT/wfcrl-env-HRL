@@ -40,6 +40,9 @@ def main():
     ap.add_argument("--quick", action="store_true",
                     help="快速第一版：降额粗网格 step=0.1 且跳过 Nelder-Mead 细化"
                          "（默认全精度 step=0.05+细化，每工况 ~270 次模型重建，很慢）")
+    ap.add_argument("--out", default=None,
+                    help="输出 LUT 路径（默认 results/luts/luts.parquet）；"
+                         "支持按 U 并行构建后合并")
     args = ap.parse_args()
 
     grid = load_grid(args.grid)
@@ -150,7 +153,7 @@ def main():
             except Exception as e:  # noqa
                 print(f"  DERATING FAILED: {e}")
 
-    out = _results_dir() / "luts.parquet"
+    out = Path(args.out) if args.out else (_results_dir() / "luts.parquet")
     save_lut(lut, str(out))
     print(f"\nSaved LUT: {out} ({len(lut)} rows)")
 

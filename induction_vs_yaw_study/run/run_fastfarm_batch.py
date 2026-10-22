@@ -47,10 +47,11 @@ def _lut_settings(lut, case_id: str, control_type: str):
         return {i: {"yaw_deg": 0.0, "power_target_mw": float("nan"),
                     "ratio": 1.0, "min_pitch_deg": 0.0,
                     "greedy_power_w": float("nan")} for i in (1, 2, 3)}
-    rows = lut[(lut["case_id"] == case_id) & (lut["control_type"] == lut_ctype)]
+    from induction_vs_yaw_study.lut.interpolate import _rows_to_dict, normalize_case_id
+    _cid = normalize_case_id(case_id)   # LUT 与 seed 无关（seed01 归一）
+    rows = lut[(lut["case_id"] == _cid) & (lut["control_type"] == lut_ctype)]
     if rows.empty:
-        raise ValueError(f"No LUT rows for {case_id}/{control_type}")
-    from induction_vs_yaw_study.lut.interpolate import _rows_to_dict
+        raise ValueError(f"No LUT rows for {case_id} (normalized {_cid})/{control_type}")
     return _rows_to_dict(rows)
 
 
@@ -193,7 +194,10 @@ def main():
                 if row.get("status") == "done":
                     done.add((row["case_id"], row["control"]))
     if args.resume:
-        todo = [r_ for r_ in rows if (r_["case_id"], r_["control"]) not in done]
+        # resume 也要排除不可运行状态（qa_failed/blocked），否则会用不合格盒跑
+        todo = [r_ for r_ in rows
+                if (r_["case_id"], r_["control"]) not in done
+                and r_.get("status", "pending") not in ("qa_failed", "blocked")]
     else:
         # 只跑可运行状态；qa_failed（QA 不合格盒）与 blocked（缺盒）绝不自动跑
         todo = [r_ for r_ in rows

@@ -19,6 +19,17 @@ _KEYS = ["wind_speed_ms", "wind_direction_offset_deg",
          "turbulence_intensity", "spacing_D"]
 
 
+def normalize_case_id(case_id: str) -> str:
+    """把 case_id 的 seed 段归一化为 seed01。
+
+    FLORIS LUT 与 seed 无关（同一 (U,TI,WD,S) 只算一次），故 LUT 的 case_id
+    固定用 seed01；而 FAST.Farm manifest 展开 seed01..06。查表前必须归一化，
+    否则 seed02-06 的 case 会查不到 LUT 行。
+    """
+    import re as _re
+    return _re.sub(r"_seed\d+", "_seed01", str(case_id))
+
+
 def lookup(
     lut: pd.DataFrame,
     control_type: str,

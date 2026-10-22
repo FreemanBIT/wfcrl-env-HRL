@@ -30,9 +30,11 @@ def _lut_settings(lut, case_id: str, control_type: str):
         return {i: {"yaw_deg": 0.0, "power_target_mw": float("nan"),
                     "ratio": 1.0, "min_pitch_deg": 0.0,
                     "greedy_power_w": float("nan")} for i in (1, 2, 3)}
-    rows = lut[(lut["case_id"] == case_id) & (lut["control_type"] == lut_ctype)]
+    from induction_vs_yaw_study.lut.interpolate import normalize_case_id
+    _cid = normalize_case_id(case_id)   # LUT 与 seed 无关（seed01 归一）
+    rows = lut[(lut["case_id"] == _cid) & (lut["control_type"] == lut_ctype)]
     if rows.empty:
-        raise ValueError(f"No LUT rows for {case_id}/{control_type}")
+        raise ValueError(f"No LUT rows for {case_id} (normalized {_cid})/{control_type}")
     return _rows_to_dict(rows)
 
 

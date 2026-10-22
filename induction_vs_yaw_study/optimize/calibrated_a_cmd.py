@@ -75,6 +75,10 @@ class CalibrationCurve:
                     p = float(r["P_kW"]) * 1e3
                 except (KeyError, ValueError):
                     continue
+                # 跳过无效点（NaN/inf/非正功率）：U12 深降载曾出现仿真提前中断
+                # 导致 P=nan 的行，不能污染校准曲线
+                if not (p == p) or p <= 0.0:
+                    continue
                 if abs(u - float(u_ms)) < 1e-9:
                     rows.append((a, p))
         if not rows:
