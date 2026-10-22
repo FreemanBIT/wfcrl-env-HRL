@@ -116,6 +116,23 @@ def main():
             write_case_metadata(case_dir, row, ff_cfg)
         except Exception:
             pass
+        # DOE 磁盘清理：case 已完成、统计口径只依赖 timeseries.csv +
+        # zmq_state_rows.json。删除每 case 的重复大件（重采样 bts、servo DLL
+        # 副本、outb、以及误开日志产生的 dbg*），避免 2000+ case 写爆磁盘。
+        # WFCRL_STUDY_KEEP_CASE_FILES=1 可保留（DEL/诊断需要时）。
+        if os.environ.get("WFCRL_STUDY_KEEP_CASE_FILES", "0") != "1":
+            try:
+                import glob as _g
+                for _pat in ("FarmInputs/*.bts", "FarmInputs/Case.T*.outb",
+                             "FarmInputs/*.dbg", "FarmInputs/*.dbg2",
+                             "FarmInputs/*.dbg3", "5MW_Baseline/ServoData/*.dll"):
+                    for _f in _g.glob(str(case_dir / _pat)):
+                        try:
+                            os.remove(_f)
+                        except Exception:
+                            pass
+            except Exception as _e:
+                print(f"[warn] case cleanup: {_e}")
         print(f"OK {row['case_id']} {row['control']} wall={time.time()-t0:.0f}s")
         return 0
     except Exception as e:  # noqa

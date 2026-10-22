@@ -150,6 +150,28 @@ def replay_fastfarm_zmq(
             add_load_channels(_ff_base, verbose=False)
     except Exception as _e:
         print(f"[warn] load channels: {_e}")
+    # ---- DOE 磁盘保护：关闭 ROSCO 调试日志 ----
+    # 模板 LoggingLevel=1 会让每台机写 ~77MB .dbg（3 机 = 231MB/case），
+    # 全 DOE 可吃满磁盘（实测 255 case 写 48.9GB）。DOE 只需状态帧/timeseries，
+    # 故逐 case 把 LoggingLevel 改为 0（研究侧就地改物化后的 DISCON 文件）。
+    # WFCRL_STUDY_ROSCO_LOG=1 可恢复（诊断用）。
+    if _os.environ.get("WFCRL_STUDY_ROSCO_LOG", "0") != "1":
+        try:
+            import glob as _glob
+            import re as _re
+            _fi = getattr(engine._ff, "_farm_base", None)
+            if _fi:
+                for _f in _glob.glob(_os.path.join(_fi, "DISCON*.IN")):
+                    try:
+                        _txt = open(_f, "r", encoding="ascii", errors="replace").read()
+                        _new = _re.sub(r"(?m)^(\s*)\d+(\s+!?\s*LoggingLevel)",
+                                       r"\g<1>0\g<2>", _txt, count=1)
+                        if _new != _txt:
+                            open(_f, "w", encoding="ascii", errors="replace").write(_new)
+                    except Exception:
+                        pass
+        except Exception as _e:
+            print(f"[warn] rosco log off: {_e}")
     # ---- P2 非确定性修复：固定 OMP 线程数 ----
     # FAST.Farm 的 OMP 浮点归约顺序差异造成运行间 ~1.9% farm 功率差（STATUS §三.2），
     # 并疑似参与偶发顺桨事件。默认钉 1 线程；WFCRL_STUDY_OMP_NUM_THREADS 可覆盖，

@@ -188,7 +188,17 @@
 - **当前运行**（TurbSim 停止后）：**全风速 DOE 已启动**（2449 待跑），1 worker + **OMP=6**；U06 已可正常跑（此前 17 例 bts 读取失败在 TurbSim 停止后解决）
   - 实测墙钟：**U08 ≈ 300s/case**、**U06 ≈ 691s/case**（低风速尾流平面更多 → 计算更重）
   - **2 workers 实测可行**（2026-10-22 17:05 起）：TurbSim 停止后可用 6.8GB，两路 bts 重采样峰值未触发 OOM；连续 21 例无新增失败（failed 仍 17，均为 TurbSim 占内存期间的 U06 历史失败）
-- **预计（2 workers）**：剩余 2438 case ≈ **5.7 天**（实测 17.8 case/h）；残留风险：若两 worker 同时进入大盒（U06）重采样，峰值 ~7GB 可能触发 MemoryError → batch 自动重试（`max-retries 2`）+ `DONE.sentinel` 保证不丢数据
+- **预计（2 workers）**：剩余 2304 case ≈ **4.9 天**（实测 ~19.7 case/h）；残留风险：两 worker 同时大盒重采样峰值 ~7GB 可能 MemoryError → 自动重试 + `DONE.sentinel` 保证不丢数据
+
+### 6.8 磁盘危机与修复（2026-10-22 深夜）
+- **事故**：DOE 跑到 255 case 时 **D: 盘写满**（`OSError: No space left on device`），批跑中止
+- **根因**：ROSCO `LoggingLevel=1`（模板默认）→ 每机写 ~77MB `.dbg`，**3 机 = 231MB/case**；660 个 dbg 文件累计 **48.9GB**
+- **修复**（研究侧，不改模板）：
+  1. 立即删除 660 个 .dbg（释放 48.9GB）
+  2. `replay` 在 `engine.setup()` 后把物化 DISCON 的 `LoggingLevel` 改为 **0**（`WFCRL_STUDY_ROSCO_LOG=1` 可恢复诊断）
+  3. `_case_worker` 在产出落盘后清理每 case 大件：重采样 `*.bts`、`Case.T*.outb`、`ServoData/*.dll`、`*.dbg*`（`WFCRL_STUDY_KEEP_CASE_FILES=1` 可保留，DEL 阶段需要）
+- **效果**：每 case 从 241MB → **~1.8MB**；DOE 目录从 51GB → 0.47GB（255 case）；D: 剩 50.5GB（2304 case 预计仅需 ~4GB）
+- **进度**：磁盘满前已完成 216 case（U06 108 / U08 107 / U10 1）；35 failed（17 TurbSim 期 + 18 磁盘满）→ 保留在 manifest pending，后续 `--resume` 自动重试
 
 ### 6.5 调整后的下一步（ICD v1.5 口径，2026-10-20 更新）
 ✅ 已完成：
