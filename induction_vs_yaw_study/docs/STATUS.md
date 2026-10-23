@@ -212,6 +212,8 @@
   2. 剔除 152 个 OMP=6 失稳 case（从 status 移除 + 删目录）→ status 剩 318 done（全部 stable）
   3. DOE 以 **OMP=3 + 2 workers** 重启
 - **教训**：OMP=6 表面快 2.3×（305s vs 700s/case），实则因尾流模型数值破坏而“虚快”且产出 37% 无效数据 —— **正确性优先**
+- **复验**：OMP=3 重启后全量扫描 **322 done / 322 stable / 0 unstable**；平均墙钟 **399s**（min 257 / max 766）；重跑的先前失稳 case 全部 STABLE
+- **当前预计**：剩余 2198 case × 399s / 2 workers ≈ **5.1 天**（OMP=3 + 2 workers）
 
 ### 6.5 调整后的下一步（ICD v1.5 口径，2026-10-20 更新）
 ✅ 已完成：
