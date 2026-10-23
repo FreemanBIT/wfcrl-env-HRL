@@ -200,6 +200,19 @@
 - **效果**：每 case 从 241MB → **~1.8MB**；DOE 目录从 51GB → 0.47GB（255 case）；D: 剩 50.5GB（2304 case 预计仅需 ~4GB）
 - **进度**：磁盘满前已完成 216 case（U06 108 / U08 107 / U10 1）；35 failed（17 TurbSim 期 + 18 磁盘满）→ 保留在 manifest pending，后续 `--resume` 自动重试
 
+### 6.9 重大发现：OMP=6 破坏 FAST.Farm 数值稳定性（2026-10-23）
+- **现象**：DOE 完成 470 case 后抽查发现 **32.3%（152/470）** 的 case 在统计窗内有机组顺桨 90°/停机（pitch→90°@8°/s、rpm→0、P→0），且 baseline/yaw/induction 各占约 1/3，与 U/TI/spacing 无关 → 非控制问题
+- **误判排查**：
+  - 先怀疑 FAST.Farm 尾流平面追赶（`Offending wake plane removed`）→ 按警告降 `f_c` 0.1057→0.04（DT_Low=3s 的稳定性准则上限 0.053）→ 仅部分改善（2 例测试 1 稳 1 不稳），且 overtaken 次数几乎不变（707→671）→ **f_c 非根因**
+  - 猜测深尾流低于切入风速的物理停机 → 但 U12（12 m/s，尾流不可能低于 3 m/s）同样失稳 → **非物理**
+- **决定性对比**：pilot 的 61 个 case 是 **OMP=3** 跑的 → **0% 失稳**；DOE 的 255 个 case 是 **OMP=6** → **36.9% 失稳** → **OMP 线程数是根因**
+- **验证**：同一失稳 case（U12_TI05_seed01_wd0_s2D_induction，OMP=6 下 T1 顺桨 P=0）用 **OMP=3** 重跑 → **完全稳定**（T1 4993kW 额定、T2 2383、T3 1428），耗时仅 235s
+- **处置**：
+  1. `WFCRL_STUDY_F_C` 补丁默认关闭（保持模板 f_c=0.1057，OMP=3 下稳定）
+  2. 剔除 152 个 OMP=6 失稳 case（从 status 移除 + 删目录）→ status 剩 318 done（全部 stable）
+  3. DOE 以 **OMP=3 + 2 workers** 重启
+- **教训**：OMP=6 表面快 2.3×（305s vs 700s/case），实则因尾流模型数值破坏而“虚快”且产出 37% 无效数据 —— **正确性优先**
+
 ### 6.5 调整后的下一步（ICD v1.5 口径，2026-10-20 更新）
 ✅ 已完成：
 - yaw sign 新 DLL 重跑 PASS（§6.3.4）

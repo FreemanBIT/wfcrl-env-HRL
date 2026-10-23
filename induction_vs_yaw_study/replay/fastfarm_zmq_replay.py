@@ -150,6 +150,29 @@ def replay_fastfarm_zmq(
             add_load_channels(_ff_base, verbose=False)
     except Exception as _e:
         print(f"[warn] load channels: {_e}")
+    # ---- 尾流数值稳定性：f_c 与 DT_Low 匹配 ----
+    # FAST.Farm 极坐标尾流模型要求 f_c <= 1/(2*pi*DT_Low)（否则尾流平面互相
+    # 追赶 → 'Offending wake plane removed' → 流场破坏 → 机组顺桨 90°/停机）。
+    # 模板硬编码 f_c=0.1057Hz 而 DT_Low=3.0s（准则上限 0.053Hz）→ 实测 32% 的
+    # 1200s case 出现失稳。研究侧逐 case 降低 f_c（默认 0.04Hz，留 20% 余量），
+    # 不改变 DT_Low/控制周期与仿真开销。WFCRL_STUDY_F_C=0 恢复模板值（诊断用）。
+    # 注：实测 OMP>3 才是真正的失稳根因（OMP=3 下模板原 f_c 完全稳定），
+    # 故默认关闭该补丁（保持模板值）；排查尾流问题时可用 WFCRL_STUDY_F_C 覆盖。
+    _fc_env = _os.environ.get("WFCRL_STUDY_F_C", "0")
+    if _fc_env not in ("", "0"):
+        try:
+            import re as _re2
+            _fi2 = getattr(engine._ff, "_farm_base", None)
+            _fstf = _os.path.join(_fi2, "Case.fstf") if _fi2 else None
+            if _fstf and _os.path.exists(_fstf):
+                _txt2 = open(_fstf, "r", encoding="ascii", errors="replace").read()
+                _new2, _n = _re2.subn(r"(?m)^(\s*)[\d.]+(\s+f_c\s)",
+                                      r"\g<1>" + str(float(_fc_env)) + r"\g<2>",
+                                      _txt2, count=1)
+                if _n:
+                    open(_fstf, "w", encoding="ascii", errors="replace").write(_new2)
+        except Exception as _e2:
+            print(f"[warn] f_c patch: {_e2}")
     # ---- DOE 磁盘保护：关闭 ROSCO 调试日志 ----
     # 模板 LoggingLevel=1 会让每台机写 ~77MB .dbg（3 机 = 231MB/case），
     # 全 DOE 可吃满磁盘（实测 255 case 写 48.9GB）。DOE 只需状态帧/timeseries，
