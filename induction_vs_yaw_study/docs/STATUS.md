@@ -215,6 +215,14 @@
 - **复验**：OMP=3 重启后全量扫描 **322 done / 322 stable / 0 unstable**；平均墙钟 **399s**（min 257 / max 766）；重跑的先前失稳 case 全部 STABLE
 - **当前预计**：剩余 2198 case × 399s / 2 workers ≈ **5.1 天**（OMP=3 + 2 workers）
 
+### 6.10 DOE 运行现实与分析管线（2026-10-26）
+- **内存现实**：本机 15.8GB，系统+浏览器常占 ~10.8GB；每 case 峰值 ~5GB（bts 2.93GB + 仿真 2GB）→ **2 workers 不可行**（实测 OOM），最终定为 **1 worker**
+- **卡死修复**：`_run_one` 的 `subprocess.run` 原本 `timeout=None`，实测有 worker 卡死 3 天占满槽位 → 加 `WFCRL_STUDY_CASE_TIMEOUT_S`（默认 2700s）+ 超时清理残留进程 + worker 错峰启动
+- **失稳率分层**：OMP=6 时期 37%；OMP=3 新跑样本 **2.5%**（10-26 最新 40 case 仅 1 例）；全量 17.4% 主要是 OMP=6 残留 → 全部失稳 case 待 DOE 结束后统一重跑
+- **失稳判据收紧**：原 pitch>80/rpm<1 会漏掉“半顺桨”（pitch 79°、rpm 1.5）并产出 +117% 假增益 → 改为 **pitch>40 或 rpm<2**
+- **分析管线** `run/analyze_doe.py`：读 `cases/*/timeseries.csv` → `case_summary.csv`（逐 case + 稳定性）/ `group_summary.csv`（跨 seed 聚合）/ `gains.csv`（**seed 配对**增益 + FLORIS 预测对比）/ `report.md`
+- **初步结果**（489 case，单 seed 为主，仅供管线校验）：增益中位 +0.45%、p5 −5.8%、p95 +10.4%；yaw 在 wd20 且低间距时最高 +25%；FLORIS 对 U8/U10 的 yaw 收益仍高估
+
 ### 6.5 调整后的下一步（ICD v1.5 口径，2026-10-20 更新）
 ✅ 已完成：
 - yaw sign 新 DLL 重跑 PASS（§6.3.4）
