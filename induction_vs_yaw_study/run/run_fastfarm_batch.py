@@ -104,7 +104,11 @@ def _run_one(row, lut, ff_cfg, out_dir: Path, ports) -> dict:
         "--experiment", str(args_exp), "--lut", str(args_lut),
     ]
     try:
-        done = _sp.run(cmd, capture_output=True, text=True, timeout=None)
+        # 超时保护：worker 偶尔卡在 libzmq teardown / FAST.Farm 未退出，无 timeout
+        # 会永久占用 worker 槽位（曾实测卡死 3 天）。单 case 上限 45min 足够
+        # （最慢 U06 1200s ~15min）；超时即杀 worker，父进程继续。
+        _case_timeout = float(os.environ.get("WFCRL_STUDY_CASE_TIMEOUT_S", "2700"))
+        done = _sp.run(cmd, capture_output=True, text=True, timeout=_case_timeout)
         out_txt = (done.stdout or "") + (done.stderr or "")
         wall = time.time() - t0
         # 成功判据优先 DONE.sentinel（worker 写完输出后落盘）：即使进程在
@@ -127,6 +131,21 @@ def _run_one(row, lut, ff_cfg, out_dir: Path, ports) -> dict:
         err = " | ".join(tail[-3:])[:300] if tail else f"rc={done.returncode}"
         return {"ok": False, "error": err, "wall_s": wall}
     except Exception as e:  # noqa
+        # 超时/异常：清理该 case 的残留 worker/FAST.Farm 进程，避免占槽位
+        try:
+            import psutil as _ps  # 可选依赖
+            _ps_ok = True
+        except Exception:
+            _ps_ok = False
+        if _ps_ok:
+            try:
+                import psutil as _ps
+                for _p in _ps.process_iter(["pid", "cmdline"]):
+                    _cl = " ".join(_p.info.get("cmdline") or [])
+                    if "_case_worker" in _cl and str(out_dir) in _cl:
+                        _p.kill()
+            except Exception:
+                pass
         return {"ok": False, "error": repr(e)[:300], "wall_s": time.time() - t0}
 
 
@@ -211,7 +230,15 @@ def main():
     global _STATUS_LOCK
     _STATUS_LOCK = threading.Lock()
 
-    def run_one_with_retry(j, lut_local, ff_cfg_local):
+    # worker 错峰：每个 task 首次跑 case 前按序号延迟，避免多个 worker 同时进入
+    # bts 重采样（每 worker 峰值 ~3.7GB，并发会 OOM）。WFCRL_STUDY_STAGGER_S 可调。
+    _stagger_s = float(os.environ.get("WFCRL_STUDY_STAGGER_S", "180"))
+
+    def run_one_with_retry(j, lut_local, ff_cfg_local, task_idx: int = 0):
+        if task_idx > 0 and _stagger_s > 0:
+            _delay = task_idx * _stagger_s
+            print(f"  [stagger] task{task_idx} sleeps {_delay:.0f}s before first case", flush=True)
+            time.sleep(_delay)
         res = {"ok": False, "error": "unrun", "wall_s": 0.0}
         for attempt in range(max(1, args.max_retries + 1)):
             res = _run_one(j, lut_local, ff_cfg_local, out_dir, None)
@@ -226,7 +253,8 @@ def main():
 
     results = []
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
-        futs = [pool.submit(run_one_with_retry, j, lut, ff_cfg) for j in todo]
+        futs = [pool.submit(run_one_with_retry, j, lut, ff_cfg, i % max(1, args.workers))
+                for i, j in enumerate(todo)]
         for fut in futs:
             results.append(fut.result())
 
