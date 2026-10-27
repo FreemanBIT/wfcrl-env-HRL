@@ -1,9 +1,9 @@
-﻿# farm_control_runtime（场控交互模块）— WSL 部署与测试指南
+# farm_control_runtime（场控交互模块）— WSL 部署与测试指南
 
 > **读者**：下一阶段开发人员（WSL / Linux 环境）
 > **目标**：把交付的场控模块部署到 WSL，跑通构建与测试，并按其接口接入调度器
-> **版本**：`dev/farm-control-runtime`（含 RT 接入层 `fcr_rt_*`，RT ABI 版本 **1**）
-> **配套文档**：`WSL_READINESS.md`（就绪性审计）、`RT_DATA_AND_TIME_POLICY.md`（数据/时间/降级策略）、`RT_PLATFORM_COMPLIANCE_REVIEW.md`（要求符合性）
+> **版本**：RT ABI **v2**，AWAE 容量 **1000 点**
+> **配套文档**：`00_DELIVERY_NOTE_RT_INTEGRATION.md`（交付说明）、`01_WSL_FASTFARMRT_INTEGRATION.md`（fastfarmRT 接入）、`03_RT_DATA_AND_TIME_POLICY.md`（数据/时间/降级策略）
 
 ---
 
@@ -13,11 +13,12 @@
 
 ```
 farm_control_runtime_delivery_20261022/
-├── 00_DELIVERY_NOTE_RT_INTEGRATION.md      交付说明（架构/ABI/红线）
-├── 01_WSL_READINESS.md                     WSL 就绪性审计
-├── 02_RT_PLATFORM_COMPLIANCE_REVIEW.md     平台要求符合性 + 剩余清单
+├── 00_DELIVERY_NOTE_RT_INTEGRATION.md      交付说明（内容/架构/ABI/红线）
+├── 01_WSL_FASTFARMRT_INTEGRATION.md        fastfarmRT 接入（映射/共享/ROSCO .a）
+├── 02_WSL_DEPLOY_AND_TEST_GUIDE.md         ← 本文档
 ├── 03_RT_DATA_AND_TIME_POLICY.md           数据策略/时间语义/降级映射
-├── 04_WSL_DEPLOY_AND_TEST_GUIDE.md         ← 本文档
+├── 04_ARCHITECTURE_DIAGRAMS.md             架构图（Windows / WSL-fastfarmRT）
+├── figures/                                架构图 PNG/SVG
 ├── docs/farm_control/inputs/
 │   └── FASTFarm_WFC_Signal_ICD_v1_5_SingleHop.csv   ICD v1.5 信号字典（88 信号）
 ├── farm_control_runtime/                   ★ 交付主体（WSL 使用）
@@ -28,11 +29,10 @@ farm_control_runtime_delivery_20261022/
 │   ├── offline/                            离线 Provider + Linux SHM stub
 │   ├── transport/                          ZMQ / Modbus（Windows-only，见 §1.2）
 │   ├── tests/unit/                         单元 + RT 测试（93 例可在 WSL 跑）
-│   ├── tools/                              build_linux.sh / check_abi.py / check_icd_gates.py / audit_signals.py
+│   ├── tools/                              build_linux.sh / build_rosco_linux.sh / 三个校验脚本
 │   ├── examples/rt_minimal_example.c       最小调度器接入示例（可直接编译）
-│   ├── rosco/                              Fortran 绑定（WSL 仅作参考）
+│   ├── rosco/                              Fortran 绑定 + ROSCO 源码（rosco/src/）
 │   ├── config/                             诱导映射等配置
-│   ├── docs/                               ICD 进度/任务计划/交接/策略文档
 │   └── CMakeLists.txt                      跨平台构建入口
 └── wfcrl/
     ├── transport/farm_protocol.py          Python 侧 ABI 镜像（ctypes）
@@ -199,8 +199,8 @@ gcc -std=gnu11 -O2 -Iinclude examples/rt_minimal_example.c \
 期望输出（实测基准）：
 
 ```
-fcr_rt ABI version = 1
-FCR_RT_ABI_VERSION = 1
+fcr_rt ABI version = 2
+FCR_RT_ABI_VERSION = 2
 [output] t=1.00 s seq=1 n_turbines=2
 ...
 [output] t=10.00 s seq=10 n_turbines=2
@@ -315,16 +315,16 @@ reset（可选，run→reset→run）→ stop → destroy
 
 ## 10. 范围边界
 
-**不在本次 WSL 交付范围**（属采购后 M4 或平台侧）：
+**不在 WSL 交付范围**（属采购后 M4 或平台侧）：
 
 - 实时框架导入与 RT 指标实测（Deadline/Jitter/WorstCase/Miss）；
 - Linux 版 ZMQ/Modbus 传输实现（若平台调度器不接管传输）；
-- R-01~R-07 LinuxRT 项（实例隔离、快照原子性、Modbus Client、大结构拷贝、供应商调度核/ROSCO 主源码）。
+- Modbus Client 侧实现（当前提供 Server 侧）。
 
-> **FAST.Farm 物理闭环不在此列**：WSL 侧由 **fastfarmRT** 提供（2026-10-22 更新），
-> 接入映射与待确认项见 `WSL_FASTFARMRT_INTEGRATION.md`。
+> **FAST.Farm 物理闭环不在此列**：WSL 侧由 **fastfarmRT** 提供，
+> 接入方式见 `01_WSL_FASTFARMRT_INTEGRATION.md`。
 > `DISCON_WT1.dll` 本身仍为 Windows 产物，WSL 不使用它。
 
 ---
 
-*文档版本：2026-10-22　对应交付包：`farm_control_runtime_delivery_20261022.zip`*
+*对应交付包：`farm_control_runtime_delivery_20261022.zip`*

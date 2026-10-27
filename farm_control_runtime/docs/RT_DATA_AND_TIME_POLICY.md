@@ -1,4 +1,4 @@
-# 场控交互模块 — 数据策略 / 时间语义 / 降级映射
+﻿# 场控交互模块 — 数据策略 / 时间语义 / 降级映射
 
 > 依据《风电控制策略实时验证平台子模块开发、接入与测试要求》§4.1 / §5.3 / §6.1 / §7.4 / §14 / §16
 > 对应实现：`farm_control_runtime/src/{command_store,state_store,state_aggregator,bridge_runtime_adapter,fcr_rt_adapter}.c`
@@ -39,7 +39,7 @@
 |---|---|---|
 | `valid = 0` | 该机不参与聚合 | 状态帧对应机 `valid = 0` |
 | `gen_power_w` / `nacelle_heading_rad` NaN/Inf（valid=1） | 上报 | `NUMERICAL_ERROR`（D4 建议） |
-| `rotor_ct` ∉ (0,2) 或 NaN | `ct_hat = 0`（显式无估计） | W-06：不冒充真实 Ct |
+| `rotor_ct` ∉ (0,2) 或 NaN | `ct_hat = 0`（显式无估计） | 不冒充真实 Ct |
 | `tower_base_*` NaN | 该统计保持 invalid | 离线接口不可得 |
 
 ### 1.3 S04/S05 AWAE（注入）

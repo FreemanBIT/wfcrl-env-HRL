@@ -1,7 +1,7 @@
 ﻿# 场控模块架构图（Windows 运行态 / WSL 部署态）
 
-> 配套：`WSL_DEPLOY_AND_TEST_GUIDE.md`、`WSL_READINESS.md`、`RT_DATA_AND_TIME_POLICY.md`
-> 图片：`docs/figures/arch_windows_runtime.png|.svg`、`docs/figures/arch_wsl_deploy.png|.svg`
+> 配套：`00_DELIVERY_NOTE_RT_INTEGRATION.md`、`01_WSL_FASTFARMRT_INTEGRATION.md`、`02_WSL_DEPLOY_AND_TEST_GUIDE.md`、`03_RT_DATA_AND_TIME_POLICY.md`
+> 图片：`figures/arch_windows_runtime.png|.svg`、`figures/arch_wsl_deploy.png|.svg`
 
 ---
 
@@ -50,7 +50,7 @@ ServoDyn → DISCON(avrSWAP,...)
 ```
 
 **产物与验收**：`DISCON_WT1.dll`（2369.7 KB）、`libzmq.dll`、`check_abi.py`（82 字段偏移）、
-`audit_signals.py`（88/88）、单元测试 100/100、T-21 300 s 回归 4379 kW（+0.3%）。
+`audit_signals.py`（88/88）、单元测试 100/100。
 
 ---
 
