@@ -59,6 +59,7 @@ static void test_snapshot_basic(void) {
 /* ---- 多线程竞争注入：Slow 高频写 vs Fast 高频读（无撕裂）---- */
 #include <pthread.h>
 #include <stdlib.h>
+#include <time.h>   /* nanosleep / struct timespec（Linux 需显式包含） */
 
 static volatile int g_stop = 0;
 static FcrRtSnapshot *g_s = NULL;

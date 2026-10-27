@@ -358,8 +358,9 @@ typedef struct { FcrRtStatus status; int32_t code; uint16_t src; char msg[64]; d
 |---|---|---|---|
 | E1 | R-01~R-07 LinuxRT 项 | ICD 进度 §6 | 实例隔离、快照原子性、Modbus Client、大结构拷贝、供应商调度核/ROSCO 源码补交（A4 与之部分重叠） |
 | E2 | T-29 失稳缓解 | ICD 进度 §4 | 研究侧调低 `.fstf` 的 `f_c`（t≈237 s wake plane 超越问题） |
-| E3 | 交付包更新 | 本审查 | 现有 `farm_control_runtime_delivery_20261020.zip` 未含 `fcr_rt.h`/`fcr_rt_adapter.c`，需重新打包 |
+| E3 | 交付包更新 | 本审查 | ✅ **已完成**：`farm_control_runtime_delivery_20261022.zip`（含 RT 适配层/策略文档/WSL 构建脚本） |
 | E4 | 调试脚本清理 | ICD 进度 §4 | 已决策保留（5 个 `_*.py`） |
+| E5 | **WSL 可交付性** | 本审查 | ✅ **已完成**：CMake 条件编译（排除 Winsock/SHM/ZMQ）+ 跨平台对齐/pthread + `tools/build_linux.sh` + `docs/WSL_READINESS.md` |
 
 ---
 

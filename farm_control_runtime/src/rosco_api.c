@@ -131,7 +131,12 @@ int fcr_rosco_api_init(uint32_t n_turbines_max, double dt_high_s)
                 extern int fcr_zmq_transport_hook(FcrRuntime *rt, int cmd_port, int state_port);
                 int cport = cp ? atoi(cp) : 0;
                 int sport = sp ? atoi(sp) : 0;
-                fcr_zmq_transport_hook(g_rt, cport, sport);
+                /* WSL/Linux 构建可不编入 ZMQ transport（弱符号解析为 NULL）：
+                 * 未链接时跳过，避免空指针调用。RT 平台由调度器负责传输。 */
+#if defined(__GNUC__)
+                if (fcr_zmq_transport_hook)
+#endif
+                    fcr_zmq_transport_hook(g_rt, cport, sport);
             }
         }
         g_transport_done = 1;

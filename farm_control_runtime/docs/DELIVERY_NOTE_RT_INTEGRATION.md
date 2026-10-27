@@ -207,6 +207,26 @@ RT 侧若改走 Modbus，AWAE 帧按 `modbus_register_map.h` 布局（0x3000 区
 
 ---
 
+### 7.5 WSL 环境测试（采购前可做）
+
+模块级与调度器级测试**可在 WSL 完成**（不需要 FAST.Farm）：
+
+```bash
+sudo apt-get install -y build-essential cmake
+cd farm_control_runtime
+bash tools/build_linux.sh          # cmake 构建 + ctest
+# 预期：91/91 通过（Windows 为 98/98，差 7 个 Windows-only Modbus 用例）
+```
+
+- Linux 自动排除的 Windows-only 模块：`modbus_transport.c`（Winsock）、
+  `shm_command_source.c`（Windows SHM，替换为 no-op stub）、`zmq_transport.cpp`（LoadLibrary）；
+- RT 路径本身平台无关：`fcr_rt_adapter.c` 用 `CLOCK_MONOTONIC`，`rosco_api.c` 用 pthread；
+- **不在 WSL 范围**：`DISCON_WT1.dll`（Windows PE）与 FAST.Farm 闭环（属 M4）。
+
+详细审计与验证清单见 **`docs/WSL_READINESS.md`**。
+
+---
+
 ## 8. 关键文档索引
 
 | 文档 | 内容 |

@@ -29,10 +29,18 @@ set(FCR_SRC
     awae/observation_manager.c
     awae/wind_mapper.c
     awae/awae_frame_builder.c
-    offline/harness/shm_command_source.c
     offline/provider/offline_fastfarm_provider.c
-    transport/modbus/modbus_transport.c
 )
+
+# ---- 平台相关源（WSL/Linux 无 Windows 共享内存与 Winsock）----
+if(WIN32)
+    list(APPEND FCR_SRC
+        offline/harness/shm_command_source.c
+        transport/modbus/modbus_transport.c)
+else()
+    # RT/WSL：传输由调度器负责，离线 SHM 注入源替换为 no-op
+    list(APPEND FCR_SRC offline/harness/shm_command_source_stub.c)
+endif()
 
 add_library(farm_control_runtime STATIC ${FCR_SRC})
 # W-07: 库自身需要 src/bridge/awae/offline/transport 等子目录头文件
@@ -48,6 +56,12 @@ target_compile_features(farm_control_runtime PUBLIC c_std_11)
 set_target_properties(farm_control_runtime PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     C_VISIBILITY_PRESET hidden)
+
+# rosco_api.c 在非 Windows 下使用 pthread 互斥锁
+if(NOT WIN32)
+    find_package(Threads REQUIRED)
+    target_link_libraries(farm_control_runtime PUBLIC Threads::Threads)
+endif()
 
 # WIN-04: offline ZMQ transport as separate shared library
 # (loaded at runtime via LoadLibrary, avoids static link dependency)
@@ -75,15 +89,25 @@ add_executable(fcr_unit_tests
     tests/unit/test_signal_statistics.c
     tests/unit/test_state_aggregator.c
     tests/unit/test_induction_supervisor.c
-    tests/unit/test_modbus.c
     tests/unit/test_bridge_core.c
     tests/unit/test_bridge_adapter.c
     tests/unit/test_awae.c
     tests/unit/test_rt_snapshot.c
+    tests/unit/test_rt_adapter.c
 )
+# Modbus 单测依赖 Winsock（transport/modbus/modbus_transport.h -> windows.h），仅 Windows
+if(WIN32)
+    target_sources(fcr_unit_tests PRIVATE tests/unit/test_modbus.c)
+else()
+    # test_main.c 在 MB_STUB 下不注册 Modbus 用例
+    target_compile_definitions(fcr_unit_tests PRIVATE MB_STUB)
+endif()
 target_include_directories(fcr_unit_tests PRIVATE ${FCR_INCLUDE_DIR} src bridge awae offline/harness offline/provider transport/modbus tests/unit)
 target_link_libraries(fcr_unit_tests PRIVATE farm_control_runtime m)
 if(WIN32)
     target_link_libraries(fcr_unit_tests PRIVATE ws2_32)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(fcr_unit_tests PRIVATE Threads::Threads)
 endif()
 add_test(NAME unit COMMAND fcr_unit_tests)
