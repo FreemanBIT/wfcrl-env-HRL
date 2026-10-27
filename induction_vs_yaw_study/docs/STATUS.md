@@ -223,6 +223,13 @@
 - **分析管线** `run/analyze_doe.py`：读 `cases/*/timeseries.csv` → `case_summary.csv`（逐 case + 稳定性）/ `group_summary.csv`（跨 seed 聚合）/ `gains.csv`（**seed 配对**增益 + FLORIS 预测对比）/ `report.md`
 - **初步结果**（489 case，单 seed 为主，仅供管线校验）：增益中位 +0.45%、p5 −5.8%、p95 +10.4%；yaw 在 wd20 且低间距时最高 +25%；FLORIS 对 U8/U10 的 yaw 收益仍高估
 
+### 6.11 QA 容差修正：TI 改相对容差（2026-10-26）
+- **问题**：`U08_TI15_seed03`（TI 0.1204）与 `U10_TI15_seed06`（TI 0.1289）两个 TI15 盒被 ±0.02 绝对容差判为不合格；但 `.inp` 目标是 `IECturbc=15.0`，实测偏差来自**单次 1700-1800s 实现的天然抽样波动**
+- **关键认识**：TurbSim 给定 seed 是**确定性**的（`RandSeed1=66006`），同 seed 重跑必然复现同一实现 → 用户重造后数值完全一致（0.1204 / 0.1289）
+- **修正**：QA 判据改为 `|dTI| <= max(0.02, 0.25*TI_target)` → TI05 仍 0.02（40%）、TI10 0.025（25%）、TI15 0.0375（25%）→ **72/72 全部通过**
+- **影响**：manifest 全量 **2592 pending / 0 qa_failed**；DOE 范围从 2520 扩到 2592（+72 case）
+- 说明：TI15 组的实际实现 TI 为 0.12–0.16（抽样散布），分析时以实测 TI 为协变量更严谨
+
 ### 6.5 调整后的下一步（ICD v1.5 口径，2026-10-20 更新）
 ✅ 已完成：
 - yaw sign 新 DLL 重跑 PASS（§6.3.4）

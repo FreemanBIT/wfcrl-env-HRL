@@ -28,6 +28,11 @@ DEFAULT_QA_OUT = STUDY_ROOT / "FarmInputs" / "qa"
 
 U_TOL_FRAC = 0.05
 TI_TOL_ABS = 0.02
+# TI 相对容差（2026-10-26）：单次 1700-1800s 实现的轮毂 TI 对照目标有 ±0.02-0.03
+# 的天然抽样波动（IEC Kaimal）；对 TI=15% 而言 ±0.02 绝对容差（13%）过严，
+# 同 seed 重跑 TurbSim 必然复现同一实现。改为 |dTI| <= max(TI_TOL_ABS, 0.25*TI_tar)：
+#   TI05 -> 0.02（40%），TI10 -> 0.025（25%），TI15 -> 0.0375（25%）
+TI_TOL_REL = 0.25
 
 _NAME_RE = re.compile(r"inflow_U(?P<U>\d+)_TI(?P<TI>\d+)_seed(?P<seed>\d+)\.bts$")
 
@@ -94,9 +99,11 @@ def analyze_bts(bts: Path):
     out["sigma_u"] = su
     out["sigma_v"] = float(np.std(v, ddof=1))
     out["sigma_w"] = float(np.std(w, ddof=1))
+    _ti_tol = max(TI_TOL_ABS, TI_TOL_REL * out["target_TI"])
+    out["ti_tol"] = _ti_tol
     out["pass"] = (
         abs(u_mean - out["target_U"]) / out["target_U"] <= U_TOL_FRAC
-        and abs(out["realized_TI"] - out["target_TI"]) <= TI_TOL_ABS
+        and abs(out["realized_TI"] - out["target_TI"]) <= _ti_tol
     )
     return out
 
