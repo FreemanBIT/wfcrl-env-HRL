@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """check_abi.py — 校验 farm_control_runtime ABI（ICD v1.5）
 
 三件事：
@@ -33,7 +33,7 @@ TYPE_EXPECT = {
     "FcrRoscoRawState": 232,
     "FcrSignalStats": 48,
     "FcrTurbineExtraState": 840,
-    "FcrFlowState": 5152,
+    "FcrFlowState": 57568,
     # ---- Bridge 链路 (S07/S08/S09) ----
     "FcrBridgeInput": 72,
     "FcrBridgeOutput": 56,
@@ -45,9 +45,9 @@ TYPE_EXPECT = {
     "FarmStateFrame": 25664,
     # ---- AWAE (S04/S05) + 风估计 (S06) ----
     "FcrAWAECatalogEntry": 40,
-    "FcrAWAECatalogFrame": 2584,
+    "FcrAWAECatalogFrame": 40024,
     "FcrAWAEObservation": 48,
-    "FcrAWAEObservationFrame": 3096,
+    "FcrAWAEObservationFrame": 48024,
     "FcrTurbineWindEstimate": 32,
     # ---- 诱导映射 ----
     "FcrInductionMapConfig": 56,

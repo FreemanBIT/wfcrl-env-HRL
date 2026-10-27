@@ -189,6 +189,8 @@ int fcr_rt_init(FcrRtHandle *h)
 
     h->rt = fcr_runtime_create(&rc);
     if (!h->rt) return -2;
+    /* 与 Fortran/ROSCO 侧共享同一实例（fastfarmRT：ROSCO 以 .a 与 OF 同核调用） */
+    (void)fcr_rosco_api_adopt_runtime(h->rt);
     h->inited = 1;
     h->stopped = 0;
     h->step_index = 0;
@@ -239,7 +241,10 @@ int fcr_rt_stop(FcrRtHandle *h)
 void fcr_rt_destroy(FcrRtHandle *h)
 {
     if (!h) return;
-    if (h->rt) fcr_runtime_destroy(h->rt);
+    if (h->rt) {
+        fcr_rosco_api_detach_runtime(h->rt);   /* 先解除单例引用，避免悬垂 */
+        fcr_runtime_destroy(h->rt);
+    }
     free(h);
 }
 

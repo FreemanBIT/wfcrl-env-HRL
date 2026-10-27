@@ -160,6 +160,43 @@ int fcr_rosco_api_register_turbine(int32_t turbine_id)
     return 0;
 }
 
+/* ---- RT 平台集成（fastfarmRT：调度器 + ROSCO .a 同核）----
+ * 调度器通过 fcr_rt_* 创建 runtime 后，把它注入本单例，使 Fortran 侧
+ * （FCR_ApplyReferences / fcr_rosco_read_setpoint）读到**同一份** setpoint。
+ * 注入后由调度器负责步进，故 fcr_rosco_step_high 变为 no-op（避免双重步进）。 */
+static int g_rt_rt_mode = 0;
+
+int fcr_rosco_api_adopt_runtime(FcrRuntime *rt)
+{
+    if (!rt) return -1;
+    /* 注：不使用 FCR_LOCK——RT 路径由调度器单线程调用，且锁只在
+     * fcr_rosco_api_init 中初始化（RT 路径不经过该函数）。 */
+    if (g_rt && g_rt != rt) return -2;   /* 已有其他实例：拒绝，避免双状态 */
+    /* Fortran 侧入口（read_setpoint / publish_state）仍会取锁，
+     * 而 RT 路径不经过 fcr_rosco_api_init，故在此惰性初始化。 */
+#if defined(_WIN32)
+    if (!g_lock_init) FCR_LOCK_INIT();
+#endif
+    g_rt = rt;
+    g_rt_rt_mode = 1;
+    g_transport_done = 1;                /* 传输归调度器，不挂 shm/zmq */
+    return 0;
+}
+
+int fcr_rosco_api_rt_mode(void)
+{
+    return g_rt_rt_mode;
+}
+
+/* 解除单例引用（不销毁 runtime，不触碰锁）——供 fcr_rt_destroy 在销毁前调用 */
+void fcr_rosco_api_detach_runtime(FcrRuntime *rt)
+{
+    if (!rt || g_rt == rt) {
+        g_rt = NULL;
+        g_rt_rt_mode = 0;
+    }
+}
+
 /* 诊断（Phase 8 定位用；交付可保留）：直接读 setpoint 槽的 yaw target */
 double fcr_rosco_debug_yaw_target(int32_t turbine_id)
 {
@@ -173,7 +210,12 @@ int fcr_rosco_api_shutdown(void)
     extern int fcr_offline_shm_fini(void);
     fcr_offline_shm_fini();
     FCR_LOCK();
-    if (g_rt) { fcr_runtime_destroy(g_rt); g_rt = NULL; }
+    if (g_rt) {
+        /* RT 模式下 runtime 由调度器句柄持有与销毁，此处只解除引用 */
+        if (!g_rt_rt_mode) fcr_runtime_destroy(g_rt);
+        g_rt = NULL;
+    }
+    g_rt_rt_mode = 0;
     FCR_UNLOCK();
     FCR_LOCK_FINI();
     return 0;
@@ -260,6 +302,9 @@ int fcr_rosco_step_high(int32_t turbine_id, double sim_time_s)
     FcrRoscoRawState st;
     uint64_t qdepth = 0;
     if (!g_rt) return -1;
+    /* RT 模式：调度器已通过 fcr_rt_step 完成命令 refresh 与 setpoint 生成，
+     * 此处不得重复步进（否则时序/统计重复）。Fortran 侧仍可 read_setpoint。 */
+    if (g_rt_rt_mode) return 0;
     FCR_LOCK();
     /* Transport 命令帧拉取（Phase 7：ZeroMQ 命令通道，每 10 ms 轮询） */
     if (g_rt->cfg.transport) {

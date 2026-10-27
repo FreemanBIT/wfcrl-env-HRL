@@ -1,4 +1,4 @@
-# farm_control_runtime（场控交互模块）— WSL 部署与测试指南
+﻿# farm_control_runtime（场控交互模块）— WSL 部署与测试指南
 
 > **读者**：下一阶段开发人员（WSL / Linux 环境）
 > **目标**：把交付的场控模块部署到 WSL，跑通构建与测试，并按其接口接入调度器
@@ -27,7 +27,7 @@ farm_control_runtime_delivery_20261022/
 │   ├── awae/                               AWAE 帧组装（S04/S05/S12/S13）
 │   ├── offline/                            离线 Provider + Linux SHM stub
 │   ├── transport/                          ZMQ / Modbus（Windows-only，见 §1.2）
-│   ├── tests/unit/                         单元 + RT 测试（92 例可在 WSL 跑）
+│   ├── tests/unit/                         单元 + RT 测试（93 例可在 WSL 跑）
 │   ├── tools/                              build_linux.sh / check_abi.py / check_icd_gates.py / audit_signals.py
 │   ├── examples/rt_minimal_example.c       最小调度器接入示例（可直接编译）
 │   ├── rosco/                              Fortran 绑定（WSL 仅作参考）
@@ -46,7 +46,7 @@ farm_control_runtime_delivery_20261022/
 |---|---|---|
 | 场控核心（`src/`、`bridge/`、`awae/`、`offline/provider/`） | ✅ | 纯 C11 |
 | RT 接入层 `src/fcr_rt_adapter.c` + `include/fcr_rt.h` | ✅ | POSIX `CLOCK_MONOTONIC` |
-| 单元/RT 测试（`tests/unit/`） | ✅ **92 例** | Modbus 7 例为 Windows-only |
+| 单元/RT 测试（`tests/unit/`） | ✅ **93 例** | Modbus 7 例为 Windows-only |
 | Python ABI 镜像 `farm_protocol.py` | ✅ | 纯 ctypes |
 | 工具 `check_abi.py` / `check_icd_gates.py` / `audit_signals.py` | ✅ | 需 `gcc`（check_abi） |
 | `transport/modbus/` | ❌ | Winsock，CMake 自动排除 |
@@ -157,7 +157,7 @@ gcc -std=gnu11 -I path/to/farm_control_runtime/include \
 cd farm_control_runtime
 bash tools/build_linux.sh
 # 预期最后一行：100% tests passed, 0 tests failed out of 1
-# 内部用例数：92/92（Windows 为 99/99，差 7 个 Windows-only Modbus 用例）
+# 内部用例数：93/93（Windows 为 100/100，差 7 个 Windows-only Modbus 用例）
 ```
 
 期望输出片段：
@@ -173,7 +173,7 @@ bash tools/build_linux.sh
 
 ```bash
 ./build-linux/fcr_unit_tests | tail -5
-# == farm_control_runtime unit tests done: 92/92 passed ==
+# == farm_control_runtime unit tests done: 93/93 passed ==
 ```
 
 ### 5.2 静态一致性检查（建议跑）
@@ -277,7 +277,7 @@ reset（可选，run→reset→run）→ stop → destroy
 
 | 准入 | WSL 可做 | 做法 |
 |---|---|---|
-| **M1 Module Verified** | ✅ | §5.1 单测 92/92 + §5.3 RT 示例 |
+| **M1 Module Verified** | ✅ | §5.1 单测 93/93 + §5.3 RT 示例 |
 | **M2 Interface Verified** | ✅ | §5.2 ABI/门禁/审计 + §6 接口约定 |
 | **M3 Scheduler Verified** | ✅（需你方调度器或 Mock） | 按 §6 时序接入；参考 `tests/unit/test_rt_adapter.c::test_mock_scheduler_1000_cycles`；**有 fastfarmRT 时可做物理闭环**（见 `WSL_FASTFARMRT_INTEGRATION.md`） |
 | **M4 RT Ready** | ❌（采购后） | RT 框架导入/一致性/Jitter/Deadline 实测 |
@@ -303,13 +303,13 @@ reset（可选，run→reset→run）→ stop → destroy
 
 - [ ] §3 部署完整性检查全部 `True`
 - [ ] `bash tools/build_linux.sh` 构建成功
-- [ ] `ctest` 通过，测试程序报告 **92/92 passed**
+- [ ] `ctest` 通过，测试程序报告 **93/93 passed**
 - [ ] `python3 tools/check_abi.py` → `ABI CHECK: PASS`
 - [ ] `python3 tools/check_icd_gates.py` → PASS（88 信号 / 13 组）
 - [ ] `python3 tools/audit_signals.py` → PASS（88/88）
 - [ ] `examples/rt_minimal_example.c` 编译并运行，输出 10 次 `[output]`、`r_pitch=0.8640`、reset 后 `0/0`
 - [ ] 按 §6 接入（或 Mock）调度器，10 ms/1 s 周期与 D0~D4 行为符合预期
-- [ ] 记录并回传：gcc/cmake 版本、92 例结果、任何告警
+- [ ] 记录并回传：gcc/cmake 版本、93 例结果、任何告警
 
 ---
 

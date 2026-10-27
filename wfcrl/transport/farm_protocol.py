@@ -1,4 +1,4 @@
-"""
+﻿"""
 farm_protocol.py — FarmController ↔ farm_control_runtime 帧协议（ICD v1.5）
 
 二进制帧 = C 结构体（fcr_state_types.h）的原始字节（little-endian，与
@@ -27,7 +27,7 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 FCR_PROTOCOL_VERSION = 2  # ICD v1.5
 FCR_MAX_TURBINES = 64
-FCR_MAX_OBSERVATION_POINTS = 64  # W-09: 容量统一（与 C 侧 fcr_protocol.h 一致）
+FCR_MAX_OBSERVATION_POINTS = 1000  # W-09: 容量统一（与 C 侧 fcr_protocol.h 一致）
 
 # control_mode (S0111)
 FCR_CONTROL_MODE_BASELINE = 0
@@ -220,9 +220,9 @@ assert ctypes.sizeof(FarmStateFrame) == 25664, ctypes.sizeof(FarmStateFrame)
 
 # AWAE 帧（W-08）：与 C 侧 fcr_awae_types.h 冻结尺寸一致
 assert ctypes.sizeof(FcrAWAECatalogEntry) == 40, ctypes.sizeof(FcrAWAECatalogEntry)
-assert ctypes.sizeof(FcrAWAECatalogFrame) == 2584, ctypes.sizeof(FcrAWAECatalogFrame)
+assert ctypes.sizeof(FcrAWAECatalogFrame) == 40024, ctypes.sizeof(FcrAWAECatalogFrame)
 assert ctypes.sizeof(FcrAWAEObservation) == 48, ctypes.sizeof(FcrAWAEObservation)
-assert ctypes.sizeof(FcrAWAEObservationFrame) == 3096, ctypes.sizeof(FcrAWAEObservationFrame)
+assert ctypes.sizeof(FcrAWAEObservationFrame) == 48024, ctypes.sizeof(FcrAWAEObservationFrame)
 
 # 关键偏移（任何漂移都会让 Python 解析错位）
 assert FarmCommandFrame.turbines.offset == 32, FarmCommandFrame.turbines.offset

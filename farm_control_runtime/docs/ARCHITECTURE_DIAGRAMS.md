@@ -1,4 +1,4 @@
-# 场控模块架构图（Windows 运行态 / WSL 部署态）
+﻿# 场控模块架构图（Windows 运行态 / WSL 部署态）
 
 > 配套：`WSL_DEPLOY_AND_TEST_GUIDE.md`、`WSL_READINESS.md`、`RT_DATA_AND_TIME_POLICY.md`
 > 图片：`docs/figures/arch_windows_runtime.png|.svg`、`docs/figures/arch_wsl_deploy.png|.svg`
@@ -50,7 +50,7 @@ ServoDyn → DISCON(avrSWAP,...)
 ```
 
 **产物与验收**：`DISCON_WT1.dll`（2369.7 KB）、`libzmq.dll`、`check_abi.py`（82 字段偏移）、
-`audit_signals.py`（88/88）、单元测试 99/99、T-21 300 s 回归 4379 kW（+0.3%）。
+`audit_signals.py`（88/88）、单元测试 100/100、T-21 300 s 回归 4379 kW（+0.3%）。
 
 ---
 
@@ -74,7 +74,7 @@ flowchart TB
       C["AWAE builder · 生命周期<br/>create/configure/init/reset/stop/destroy<br/>FcrRtStatus + StatusInfo"]
     end
     CTRL["单机控制 / ROSCO<br/>（fastfarmRT 内置或独立模块）"]
-    T["测试与工具<br/>build_linux.sh · fcr_unit_tests 92/92<br/>rt_minimal_example · check_abi/gates/audit"]
+    T["测试与工具<br/>build_linux.sh · fcr_unit_tests 93/93<br/>rt_minimal_example · check_abi/gates/audit"]
   end
   RCP -->|"命令 S01"| COMM
   COMM -->|"set_command（1 s）"| A
@@ -93,7 +93,7 @@ create → configure → init
   reset（run→reset→run 可重复）→ stop → destroy
 ```
 
-**WSL 中可执行**：`tools/build_linux.sh`（cmake 或 `--gcc` 兜底）、`fcr_unit_tests`（92/92）、
+**WSL 中可执行**：`tools/build_linux.sh`（cmake 或 `--gcc` 兜底）、`fcr_unit_tests`（93/93）、
 `examples/rt_minimal_example`、`check_abi.py` / `check_icd_gates.py` / `audit_signals.py`，
 以及基于 **fastfarmRT** 的 6T 物理闭环（M3）。
 

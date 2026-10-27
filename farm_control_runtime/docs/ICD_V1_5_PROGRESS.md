@@ -1,4 +1,4 @@
-# ICD v1.5 迁移进度（farm_control_runtime）
+﻿# ICD v1.5 迁移进度（farm_control_runtime）
 
 > 本文件记录 ICD v1.5 迁移的实际完成状态、验证证据与剩余工作。
 > 计划与信号清单见 `ICD_V1_5_TASK_PLAN.md` / `ICD_V1_5_IMPLEMENTATION_PLAN.md` /
@@ -202,8 +202,8 @@ Phase C 发布链路（Modbus 侧）已完成；代码审查 W-08（ZMQ AWAE 二
 - **已完成**：帧组装（`awae_frame_builder`）+ Transport 扩展（`publish_awae`）+
   Modbus 通道实现 + runtime 低速步上送 + 离线可选注入 + 单测（见 §2）。
 - **W-08（ZMQ 侧 AWAE 二跳）已完成**：`zmq_transport.cpp` 新增 `zmq_publish_awae`，
-  在 state PUB socket 上按冻结尺寸发布 `FcrAWAEObservationFrame`(3096 B) +
-  `FcrAWAECatalogFrame`(2584 B)；`wfcrl/transport/farm_protocol.py` 增加对应
+  在 state PUB socket 上按冻结尺寸发布 `FcrAWAEObservationFrame`(48024 B) +
+  `FcrAWAECatalogFrame`(40024 B)；`wfcrl/transport/farm_protocol.py` 增加对应
   ctypes 镜像/尺寸断言/解析；`farm_zmq_client.py` 接收循环按尺寸分派并缓存，
   新增 `get_awae_observation()` / `get_awae_catalog()`；`check_abi.py` 将 AWAE 帧
   纳入逐字段偏移校验（64→82 字段）；集成测试 `test_awae_zmq_link.py` 端到端
@@ -319,7 +319,7 @@ farm_control_runtime\tools\_build_test.bat && farm_control_runtime\test_runner.e
 | **W-07** | CMakeLists + build_windows.ps1 补 `awae_frame_builder.c` 与 include 目录（gcc 路径 77/77 验证；本机无 CMake） |
 | **W-10** | env 配置入口 `FCR_BRIDGE_IND_A_MAX/MIN` + 启动日志打印生效 mode/a_max/a_min（YAML 未加载，C 权威 + env 显式覆盖） |
 | **W-13** | 每通道独立 basis time（`yaw/ind_basis_sim_time_s`），stale 评估逐通道解耦——偏航 60s 锁存与诱导 1s 更新互不串扰。新增回归测试 `stale_flag_per_channel` |
-| **W-08** | ZMQ 侧 AWAE 二跳发布（S12/S13 到 Python RCP）：`zmq_transport.cpp` 新增 `publish_awae`（state socket 按冻结尺寸发布观测 3096 B + 目录 2584 B）；`farm_protocol.py` 新增 AWAE 帧镜像/解析/类型分派；`farm_zmq_client.py` 新增 `get_awae_observation/get_awae_catalog`；`check_abi.py` 纳入 AWAE 字段偏移（82 字段）；集成测试 `test_awae_zmq_link.py` 端到端 PASS |
+| **W-08** | ZMQ 侧 AWAE 二跳发布（S12/S13 到 Python RCP）：`zmq_transport.cpp` 新增 `publish_awae`（state socket 按冻结尺寸发布观测 48024 B + 目录 40024 B）；`farm_protocol.py` 新增 AWAE 帧镜像/解析/类型分派；`farm_zmq_client.py` 新增 `get_awae_observation/get_awae_catalog`；`check_abi.py` 纳入 AWAE 字段偏移（82 字段）；集成测试 `test_awae_zmq_link.py` 端到端 PASS |
 | **W-09** | 容量统一：`FCR_MAX_TURBINES=64` / `FCR_MAX_OBSERVATION_POINTS=64` 线协议容量冻结不变；引入版本化容量宏（`FCR_CAPACITY_VERSION`、`*_V1`）；bridge `FCR_BRIDGE_MAX_TURBINES` 128→64、legacy AWAE `FCR_AWAE_MAX_POINTS` 1024→64 全部对齐线协议；新增单测 `abi_capacity_unified`；ABI 尺寸零变化（check_abi PASS） |
 | **W-11** | 1s 诱导跟踪验收 PASS（derate -35.6%、seq 5s 确认）+ **t≈237s 失稳根因定位**：FAST.Farm wake 平面互相超越被移除（`Reduce f_c to prevent planes from overtaking`，f_c=0.105651 过高），基线无命令也出现（162 条）→ 非 runtime 缺陷；缓解 = 研究侧调低 f_c |
 

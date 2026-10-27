@@ -1,4 +1,4 @@
-# 场控接口模块对《风电控制策略实时验证平台子模块开发、接入与测试要求》的符合性审查
+﻿# 场控接口模块对《风电控制策略实时验证平台子模块开发、接入与测试要求》的符合性审查
 
 > 依据：《风电控制策略实时验证平台子模块开发、接入与测试要求》（2026-10-20 提供）
 > 审查对象：`farm_control_runtime`（场控交互模块）及其 ROSCO/Python 侧接口
@@ -366,7 +366,7 @@ typedef struct { FcrRtStatus status; int32_t code; uint16_t src; char msg[64]; d
 
 ## 6. 附：现有证据索引
 
-- 单测 **99/99**：`farm_control_runtime/tools/_build_test.bat && test_runner.exe`（Linux 92/92）
+- 单测 **100/100**：`farm_control_runtime/tools/_build_test.bat && test_runner.exe`（Linux 93/93）
 - RT 接入测试 **9 例**：`tests/unit/test_rt_adapter.c`
 - 协议 12/12：`farm_control_runtime/tests/integration/test_icd_v15_abi_python.py`
 - ABI：`tools/check_abi.py`（82 字段偏移）

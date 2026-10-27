@@ -1,4 +1,4 @@
-/*
+﻿/*
  * test_modbus.c — Modbus TCP Transport 单元测试（Phase 9）
  * 验证：寄存器编解码、命令区→FarmCommandFrame、FarmStateFrame→状态区、
  * frame_seq 门控语义。
@@ -200,7 +200,7 @@ static void test_awae_area_layout(void)
     ASSERT(MB_AWAE_FRAME_SEQ_SLOT + 4 <= MB_AWAE_SOURCE_TIME);
     ASSERT(MB_AWAE_SOURCE_TIME + 4 <= MB_AWAE_POINT_0);
     /* 末点仍落在 modbus_transport_create 分配的 0x4000 寄存器区内 */
-    ASSERT(last < 0x4000);
+    ASSERT(last < MB_TOTAL_REGS);
 }
 
 /* ICD v1.5 GG-12/GG-13：publish_awae 把观测/目录写入 AWAE 缓冲 */

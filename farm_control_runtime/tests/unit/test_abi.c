@@ -36,7 +36,7 @@ static void test_abi_sizes(void)
     CHECK_ABI(FcrRoscoRawState, 232);           /* 原 FcrRoscoFastState，尺寸不变 */
     CHECK_ABI(FcrSignalStats, 48);
     CHECK_ABI(FcrTurbineExtraState, 840);
-    CHECK_ABI(FcrFlowState, 5152);
+    CHECK_ABI(FcrFlowState, 57568);
 
     /* ---- Bridge 链路 (S07/S08/S09) ---- */
     CHECK_ABI(FcrBridgeInput, 72);
@@ -53,9 +53,9 @@ static void test_abi_sizes(void)
 
     /* ---- AWAE (S04/S05) + 风估计 (S06) ---- */
     CHECK_ABI(FcrAWAECatalogEntry, 40);
-    CHECK_ABI(FcrAWAECatalogFrame, 2584);
+    CHECK_ABI(FcrAWAECatalogFrame, 40024);
     CHECK_ABI(FcrAWAEObservation, 48);
-    CHECK_ABI(FcrAWAEObservationFrame, 3096);
+    CHECK_ABI(FcrAWAEObservationFrame, 48024);
     CHECK_ABI(FcrTurbineWindEstimate, 32);
 
     /* ---- 诱导映射 ---- */
@@ -132,17 +132,18 @@ static void test_abi_protocol_version(void)
  * 版本化宏（*_V1）指向当前 ABI 值。 */
 static void test_abi_capacity_unified(void)
 {
-    /* 版本化容量宏：当前版本 = V1 冻结值 */
-    ASSERT(FCR_CAPACITY_VERSION == 1u);
+    /* 版本化容量宏：当前版本 = V2（AWAE 1000 点；V1 值仍保留以便旧二进制解析） */
+    ASSERT(FCR_CAPACITY_VERSION == 2u);
     ASSERT(FCR_MAX_TURBINES == FCR_MAX_TURBINES_V1);
-    ASSERT(FCR_MAX_OBSERVATION_POINTS == FCR_MAX_OBSERVATION_POINTS_V1);
+    ASSERT(FCR_MAX_OBSERVATION_POINTS == FCR_MAX_OBSERVATION_POINTS_V2);
     ASSERT(FCR_MAX_TURBINES_V1 == 64u);
     ASSERT(FCR_MAX_OBSERVATION_POINTS_V1 == 64u);
+    ASSERT(FCR_MAX_OBSERVATION_POINTS_V2 == 1000u);
 
     /* bridge 容量与协议机组容量一致（原 128 → 64） */
     ASSERT(FCR_BRIDGE_MAX_TURBINES == FCR_MAX_TURBINES);
 
-    /* legacy AWAE 帧容量与线协议观察点容量一致（原 1024 → 64） */
+    /* legacy AWAE 帧容量与线协议观察点容量一致（跟随当前容量版本） */
     ASSERT(FCR_AWAE_MAX_POINTS == FCR_MAX_OBSERVATION_POINTS);
 }
 

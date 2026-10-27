@@ -36,11 +36,12 @@ extern "C" {
 /*   所有内部消费者（bridge、legacy ObservationManager/WindMapper）必须   */
 /*   引用这些常量，禁止自行放大/缩小（W-09 统一到线协议容量）。           */
 /* ------------------------------------------------------------------ */
-#define FCR_CAPACITY_VERSION            1u  /* 当前容量版本              */
+#define FCR_CAPACITY_VERSION            2u  /* 当前容量版本（V2：AWAE 1000 点） */
 #define FCR_MAX_TURBINES_V1             64u /* 机组容量（V1 冻结 ABI）    */
 #define FCR_MAX_OBSERVATION_POINTS_V1   64u /* AWAE 观察点容量（V1 冻结 ABI）*/
+#define FCR_MAX_OBSERVATION_POINTS_V2   1000u /* AWAE 观察点容量（V2，fastfarmRT/GPU AWAE）*/
 #define FCR_MAX_TURBINES                FCR_MAX_TURBINES_V1            /* 最大机组数（与 RT 侧 NT_MAX 一致） */
-#define FCR_MAX_OBSERVATION_POINTS      FCR_MAX_OBSERVATION_POINTS_V1  /* 最大 AWAE 观察点数 */
+#define FCR_MAX_OBSERVATION_POINTS      FCR_MAX_OBSERVATION_POINTS_V2  /* 最大 AWAE 观察点数 */
 #define FCR_MAX_LOAD_POINTS             16u /* 最大可配置载荷测点数      */
 
 #define FCR_FAST_RATE_HZ          100   /* ROSCO/OF 快速态标称 10 ms     */

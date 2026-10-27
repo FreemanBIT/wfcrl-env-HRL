@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """test_awae_zmq_link.py — W-08 集成测试：ZMQ 侧 AWAE 二跳发布（GG-12/GG-13）
 
 验证 Scheduler → RCP 的 AWAE 观测/目录帧真正到达 Python RCP：
@@ -91,7 +91,7 @@ def test_awae_zmq_link_reaches_python_rcp():
                 break
             time.sleep(0.5)
         assert obs_raw is not None, "60s 内未收到 AWAE 观测帧（检查 FCR_CFG_AWAE_SYNTH_POINTS 与 DLL）"
-        assert len(obs_raw) == fp.FCR_AWAE_OBSERVATION_FRAME_SIZE == 3096
+        assert len(obs_raw) == fp.FCR_AWAE_OBSERVATION_FRAME_SIZE == 48024
 
         obs = fp.awae_observation_frame_from_bytes(obs_raw)
         assert obs.protocol_version == fp.FCR_PROTOCOL_VERSION == 2
@@ -118,7 +118,7 @@ def test_awae_zmq_link_reaches_python_rcp():
                 break
             time.sleep(0.5)
         assert cat_raw is not None, "60s 内未收到 AWAE 目录帧"
-        assert len(cat_raw) == fp.FCR_AWAE_CATALOG_FRAME_SIZE == 2584
+        assert len(cat_raw) == fp.FCR_AWAE_CATALOG_FRAME_SIZE == 40024
 
         cat = fp.awae_catalog_frame_from_bytes(cat_raw)
         assert cat.protocol_version == fp.FCR_PROTOCOL_VERSION == 2

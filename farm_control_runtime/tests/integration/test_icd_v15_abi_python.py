@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """test_icd_v15_abi_python.py — Python↔C 协议镜像与 ICD v1.5 语义测试
 
 覆盖（对应任务计划 T-04 / T-05 / T-12 的 Python 侧）：
@@ -262,7 +262,7 @@ def test_command_basis_is_sim_time_not_wall_clock():
 
 def test_awae_catalog_frame_roundtrip():
     """GG-13 S1301-S1303 AWAE 目录帧：构造→序列化→解析一致（W-08）"""
-    assert fp.FCR_AWAE_CATALOG_FRAME_SIZE == 2584
+    assert fp.FCR_AWAE_CATALOG_FRAME_SIZE == 40024
     cat = fp.FcrAWAECatalogFrame()
     cat.protocol_version = fp.FCR_PROTOCOL_VERSION
     cat.frame_seq = 21
@@ -276,7 +276,7 @@ def test_awae_catalog_frame_roundtrip():
     cat.entries[2].point_id = 103
 
     raw = bytes(cat)
-    assert len(raw) == fp.FCR_AWAE_CATALOG_FRAME_SIZE == 2584
+    assert len(raw) == fp.FCR_AWAE_CATALOG_FRAME_SIZE == 40024
 
     back = fp.awae_catalog_frame_from_bytes(raw)
     assert back.frame_seq == 21
@@ -300,7 +300,7 @@ def test_awae_catalog_frame_roundtrip():
 
 def test_awae_observation_frame_roundtrip():
     """GG-12 S1201-S1207 AWAE 观测帧：构造→序列化→解析一致（W-08）"""
-    assert fp.FCR_AWAE_OBSERVATION_FRAME_SIZE == 3096
+    assert fp.FCR_AWAE_OBSERVATION_FRAME_SIZE == 48024
     obs = fp.FcrAWAEObservationFrame()
     obs.protocol_version = fp.FCR_PROTOCOL_VERSION
     obs.frame_seq = 33
@@ -319,7 +319,7 @@ def test_awae_observation_frame_roundtrip():
     obs.observations[1].turbulence_intensity = 0.12
 
     raw = bytes(obs)
-    assert len(raw) == fp.FCR_AWAE_OBSERVATION_FRAME_SIZE == 3096
+    assert len(raw) == fp.FCR_AWAE_OBSERVATION_FRAME_SIZE == 48024
 
     back = fp.awae_observation_frame_from_bytes(raw)
     assert back.frame_seq == 33

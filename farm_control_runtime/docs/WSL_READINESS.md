@@ -1,4 +1,4 @@
-# WSL 交付就绪性检查（farm_control_runtime 场控交互模块）
+﻿# WSL 交付就绪性检查（farm_control_runtime 场控交互模块）
 
 > 检查对象：`dev/farm-control-runtime` 当前版本（含 RT 接入层 `fcr_rt_adapter`）
 > 检查目的：能否交付给开发人员在 **WSL** 环境下做模块级/调度器级测试
@@ -19,14 +19,14 @@
 | 能力 | WSL 可用 | 说明 |
 |---|---|---|
 | 场控核心（命令/状态/桥接/AWAE/RT 适配层） | ✅ 可构建 | 纯 C11，无平台依赖 |
-| 单元/RT 测试（92 例） | ✅ 可运行 | Modbus 7 例为 Windows-only |
+| 单元/RT 测试（93 例） | ✅ 可运行 | Modbus 7 例为 Windows-only |
 | `fcr_rt_*` 调度器接入 + 自写 Mock Scheduler | ✅ | 见 `include/fcr_rt.h` |
 | Python 协议镜像（`farm_protocol.py`） | ✅ | 纯 ctypes，Linux x86_64 布局一致 |
 | ZMQ / Modbus 传输 | ❌ | Windows-only（RT 平台由调度器负责传输） |
 | `DISCON_WT1.dll` | ❌ | Windows PE（WSL 不使用它） |
 | **FAST.Farm 闭环** | ✅ **可做（2026-10-22 更新）** | 由 **fastfarmRT** 提供 OF/WD/AWAE（CPU/GPU）；见 `WSL_FASTFARMRT_INTEGRATION.md` |
 
-**交付前必须由开发人员在 WSL 主机执行一次 `bash tools/build_linux.sh`，确认 92/92 通过**（本机无 WSL，无法代跑）。
+**交付前必须由开发人员在 WSL 主机执行一次 `bash tools/build_linux.sh`，确认 93/93 通过**（本机无 WSL，无法代跑）。
 
 ---
 
@@ -37,7 +37,7 @@
 | B1 | `transport/modbus/modbus_transport.c` 依赖 Winsock | `#include <winsock2.h>`、`_beginthreadex` | CMake 在非 WIN32 下**排除**；对应 `test_modbus.c` 排除并定义 `MB_STUB` |
 | B2 | `offline/harness/shm_command_source.c` 依赖 Windows SHM/线程 | `#include <windows.h>`、`CreateThread` | 非 WIN32 下替换为 `shm_command_source_stub.c`（no-op；RT 由调度器传输） |
 | B3 | `transport/zmq/zmq_transport.cpp` 依赖 `LoadLibraryA` | `<windows.h>`、`LoadLibraryA/GetProcAddress` | 原本即 `if(WIN32)`；另在 `rosco_api.c` 增加弱符号 NULL 守卫，避免未链接时空指针调用 |
-| B4 | CMake 单测目标**漏列** `test_rt_adapter.c`（而 `test_main.c` 已引用其注册函数） | CMakeLists 单测列表 | 已补入；Linux 下 92 例 |
+| B4 | CMake 单测目标**漏列** `test_rt_adapter.c`（而 `test_main.c` 已引用其注册函数） | CMakeLists 单测列表 | 已补入；Linux 下 93 例 |
 | B5 | 非 Windows 未链接 pthread | `rosco_api.c` 的 `#else #include <pthread.h>` | CMake 在非 WIN32 下 `find_package(Threads)` 并链接 |
 | B6 | 无 Linux 构建入口 | 只有 `_build_test.bat` / `.ps1` / `_compile.py`（硬编码 TDM-GCC 与 DLL） | 新增/更新 `tools/build_linux.sh`（cmake 优先，gcc 兜底） |
 | B7 | `bridge/rt_snapshot.h` 对齐宏 | `__declspec(align(64))` | 审计确认已有 `#if _MSC_VER / #else __attribute__((aligned(64)))` 分支，**无需改** |
@@ -58,7 +58,7 @@ bash tools/build_linux.sh            # cmake 构建 build-linux/ 并跑 ctest
 # 或：bash tools/build_linux.sh --gcc   # 无 cmake 时的纯 gcc 兜底
 
 # 3) 预期
-#    ctest 通过；单元/RT 测试 92/92（Windows 为 99/99，差 7 个 Modbus 用例）
+#    ctest 通过；单元/RT 测试 93/93（Windows 为 100/100，差 7 个 Modbus 用例）
 ```
 
 ---
@@ -81,7 +81,7 @@ bash tools/build_linux.sh            # cmake 构建 build-linux/ 并跑 ctest
 | 项 | 命令（在 `farm_control_runtime/`） | 预期 |
 |---|---|---|
 | 构建 | `bash tools/build_linux.sh` | 无错误 |
-| 单测/RT | `ctest --test-dir build-linux --output-on-failure` | **92/92** |
+| 单测/RT | `ctest --test-dir build-linux --output-on-failure` | **93/93** |
 | ABI（Python↔C） | `python3 tools/check_abi.py`（需 gcc） | PASS（82 字段偏移） |
 | 信号门禁 | `python3 tools/check_icd_gates.py` | PASS（88 信号） |
 | 信号审计 | `python3 tools/audit_signals.py` | PASS（88/88） |
@@ -94,7 +94,7 @@ bash tools/build_linux.sh            # cmake 构建 build-linux/ 并跑 ctest
 | 项 | 原因 | 建议 |
 |---|---|---|
 | Linux 编译/链接 | 本机未安装 WSL，无法执行 | 开发人员首次 `bash tools/build_linux.sh` 验证 |
-| 92 例测试结果 | 同上 | 以 ctest 输出为准；若有失败请回传日志 |
+| 93 例测试结果 | 同上 | 以 ctest 输出为准；若有失败请回传日志 |
 | Python 镜像在 Linux 的尺寸 | ctypes 布局理论上一致（LP64/固定宽度类型） | `python3 tools/check_abi.py` 会直接校验 |
 | 调度器实机联调 | 平台调度器不在本仓库 | M3 联调（Mock/实际 Scheduler） |
 

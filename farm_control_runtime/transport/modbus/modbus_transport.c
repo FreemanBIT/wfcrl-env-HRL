@@ -1,4 +1,4 @@
-/*
+﻿/*
  * modbus_transport.c — Modbus TCP Transport 实现（Phase 9）
  *
  * 自包含实现（无第三方库）：
@@ -350,7 +350,7 @@ FcrTransport *modbus_transport_create(int port, uint32_t n_turbines)
     }
     /* 寄存器区覆盖命令(0x0000+0x1000)+时钟(0x0800)+状态(0x1000..0x2FFF)
      * +AWAE 观察点缓冲(0x3000..0x3808)。 */
-    mt->regs = (uint16_t *)calloc(0x4000, sizeof(uint16_t));
+    mt->regs = (uint16_t *)calloc(MB_TOTAL_REGS, sizeof(uint16_t));
     if (!mt->regs) { closesocket(mt->listen_sock); free(mt); return NULL; }
     mt->stop = 0;
     mt->last_frame_seq = 0;

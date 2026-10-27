@@ -17,6 +17,9 @@
 #ifndef MODBUS_REGISTER_MAP_H
 #define MODBUS_REGISTER_MAP_H
 
+/* 容量常量（AWAE 点容量随 V1/V2 版本变化，寄存器区总长据此计算） */
+#include "fcr_protocol.h"
+
 /* ---- 命令区：每机 64 寄存器，从 0x0000 + (turbine_id-1)*64 ---- */
 #define MB_CMD_BASE              0x0000
 #define MB_CMD_PER_TURBINE       64
@@ -119,5 +122,12 @@
 #define MB_AWAE_POINT_QUALITY    29       /* S0506: u16（质量标志） */
 #define MB_AWAE_POINT_CRC16      30       /* u16（单点完整性） */
 /* 31: 保留（对齐 32 寄存器/点） */
+
+/* ---- 寄存器区总长 ----
+ * 随 AWAE 容量扩展：V2（1000 点）时 = 0x3009 + 1000×32 ≈ 44.3k 寄存器，
+ * 仍低于 Modbus 单从站 65536 寄存器上限。modbus_transport_create 按此分配。 */
+#define MB_AWAE_POINT_0_REG      MB_AWAE_POINT_0
+#define MB_TOTAL_REGS            (MB_AWAE_POINT_0_REG + \
+                                  (int)FCR_MAX_OBSERVATION_POINTS * MB_AWAE_PER_POINT)
 
 #endif /* MODBUS_REGISTER_MAP_H */

@@ -269,6 +269,15 @@ void fcr_runtime_update_setpoint_one(FcrRuntime *rt, int32_t turbine_id);
 /* RT 平台要求 §3.3：构造 1 s 聚合状态帧（不发布；供 step_low 与 RT 适配层共用） */
 int fcr_runtime_build_state_frame(FcrRuntime *rt, FarmStateFrame *out);
 
+/* ------------------------------------------------------------------ */
+/* rosco_api.c — RT 集成（fastfarmRT：调度器 + ROSCO .a 同核）          */
+/* ------------------------------------------------------------------ */
+/* 调度器创建 runtime 后注入单例，使 Fortran 侧读到同一份 setpoint。      */
+FcrRuntime *fcr_rosco_api_runtime(void);
+int  fcr_rosco_api_adopt_runtime(FcrRuntime *rt);
+void fcr_rosco_api_detach_runtime(FcrRuntime *rt);
+int  fcr_rosco_api_rt_mode(void);
+
 #ifdef __cplusplus
 }
 #endif

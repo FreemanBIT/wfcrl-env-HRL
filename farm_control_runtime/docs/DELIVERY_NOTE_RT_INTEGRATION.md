@@ -1,4 +1,4 @@
-# farm_control_runtime 交付说明（ICD v1.5 / Windows 离线验证完成版）
+﻿# farm_control_runtime 交付说明（ICD v1.5 / Windows 离线验证完成版）
 
 > 交付对象：LinuxRT 实时机开发人员（后续阶段 R-01~R-07）
 > 仓库：`D:\HR_Project\wfcrl-env-HRL`　分支：`dev/farm-control-runtime`
@@ -91,7 +91,7 @@ REM ---- 7) 构建 DISCON_WT1.dll（含 runtime + ROSCO + Fortran）----
 | `FcrRoscoRawState` | 232 | S03 + 扩展 |
 | `FcrSignalStats` | 48 | 1s 统计容器 |
 | `FcrTurbineExtraState` | 840 | S0208-0210 + 载荷 |
-| `FcrFlowState` | 5152 | AWAE 流场（64 点） |
+| `FcrFlowState` | 57568 | AWAE 流场（64 点） |
 | `FcrBridgeInput` | 72 | S07 |
 | `FcrBridgeOutput` | 56 | S08 |
 | `FcrBridgeAck` | 32 | S09 |
@@ -99,8 +99,8 @@ REM ---- 7) 构建 DISCON_WT1.dll（含 runtime + ROSCO + Fortran）----
 | `FcrRoscoAck` | 32 | S09 |
 | `FcrFarmTurbineState` | 400 | S10 |
 | `FarmStateFrame` | 25664 | 状态帧（64 头 + 400×64） |
-| `FcrAWAECatalogEntry/Frame` | 40 / 2584 | S04/S13 |
-| `FcrAWAEObservation/Frame` | 48 / 3096 | S05/S12 |
+| `FcrAWAECatalogEntry/Frame` | 40 / 40024 | S04/S13 |
+| `FcrAWAEObservation/Frame` | 48 / 48024 | S05/S12 |
 | `FcrTurbineWindEstimate` | 32 | S06 |
 
 ### 4.2 容量版本化（W-09）
@@ -120,7 +120,7 @@ REM ---- 7) 构建 DISCON_WT1.dll（含 runtime + ROSCO + Fortran）----
 
 ### 4.3 ZMQ 帧类型区分（W-08）
 
-ZMQ 消息 = 一整帧，帧类型由**冻结尺寸**区分（state 25664 / AWAE obs 3096 / AWAE catalog 2584）。
+ZMQ 消息 = 一整帧，帧类型由**冻结尺寸**区分（state 25664 / AWAE obs 48024 / AWAE catalog 40024）。
 RT 侧若改走 Modbus，AWAE 帧按 `modbus_register_map.h` 布局（0x3000 区，32 寄存器/点）。
 
 ---
@@ -215,7 +215,7 @@ RT 侧若改走 Modbus，AWAE 帧按 `modbus_register_map.h` 布局（0x3000 区
 sudo apt-get install -y build-essential cmake
 cd farm_control_runtime
 bash tools/build_linux.sh          # cmake 构建 + ctest
-# 预期：92/92 通过（Windows 为 99/99，差 7 个 Windows-only Modbus 用例）
+# 预期：93/93 通过（Windows 为 100/100，差 7 个 Windows-only Modbus 用例）
 ```
 
 - Linux 自动排除的 Windows-only 模块：`modbus_transport.c`（Winsock）、

@@ -11,7 +11,7 @@
 
 | 测试层级 | 之前评估 | **基于 fastfarmRT 的重新评估** |
 |---|---|---|
-| 场控模块单元/RT 测试 | ✅ | ✅ 不变（Windows 99/99，Linux 92/92） |
+| 场控模块单元/RT 测试 | ✅ | ✅ 不变（Windows 100/100，Linux 93/93） |
 | 调度器时序（Mock） | ✅ | ✅ 不变 |
 | **FAST.Farm 闭环（6T 案例）** | ❌ 不可 | ✅ **可做**：由 fastfarmRT 提供 OF/WD/AWAE，场控模块挂在调度时序上 |
 | 硬件在环 / RT 指标 | ❌ | ❌ 仍属采购后 M4 |
@@ -93,17 +93,38 @@ fcr_rt_get_setpoint(h, 1, &sp);                              /* S08 */
 | C1 | **S02（OpenFAST 原始状态）无输入通路**——只定义了 `FcrOpenFASTRawState` 类型，未接入运行时 | 新增 `fcr_rt_set_openfast_state()` + `FcrStateStore.of[]` 槽 + 字段级合并；RT ABI **v1→v2**（仅新增函数，向后兼容） | `rt_set_openfast_state` 单测：仅喂 S02 即可产出 S10（含推力统计）；补 S03 后物理量不被清零 |
 | C2 | S02 的推力/轴矩/塔基弯矩未进入 1 s 统计 | `set_openfast_state` 同步喂 extra 统计 | 同上（S10 中 `rotor_aero_thrust_n` 非零） |
 | C3 | 统计样本取原始输入（可能被 0 覆盖） | `set_state` / `set_openfast_state` 改为喂**合并后**的值 | 单测覆盖 |
+| C4 | **调度器与 Fortran 侧是两个独立 runtime**（S08 不同源） | 新增单例注入：`fcr_rt_init` 调 `fcr_rosco_api_adopt_runtime`；RT 模式下 `fcr_rosco_step_high` no-op；`fcr_rt_destroy` 先 detach | `rt_shared_runtime_with_rosco_side` |
+| C5 | AWAE 容量 64 点不足 | 容量扩到 **1000 点**（`FCR_MAX_OBSERVATION_POINTS_V2`、`FCR_CAPACITY_VERSION=2`），同步帧尺寸/Modbus 区/Python 镜像/ABI 校验 | `check_abi.py` PASS、93/93 单测、12/12 协议 |
+| C6 | ROSCO 无 Linux `.a` 构建方式 | 新增 `rosco/src/`（9 个源文件）+ `tools/build_rosco_linux.sh` + `rosco/README_ROSCO_SRC.md` | 需在 WSL 首次实测 |
 
-### 3.2 仍需平台确认 / 补齐
+### 3.2 平台方已确认（2026-10-22）与本版处理
 
-| # | 事项 | 影响 | 建议 |
+| # | 事项 | 平台方答复 | 本版处理 |
 |---|---|---|---|
-| P1 | **AWAE 测点数**：本模块容量 `FCR_MAX_OBSERVATION_POINTS = 64` | 若 GPU AWAE 输出点数 > 64，会被截断 | 平台告知点数：≤64 直接用；>64 则在适配层**降采样/选点**（推荐），或提 ABI v3 扩容（需同步 `check_abi`/CSV） |
-| P2 | **调用线程**：模块约定单线程调用（RT 路径无锁） | fastfarmRT 若 OF/WD 多线程并行，需固定一个线程调用场控 | 建议在 **AWAE 更新后的主控/低速线程**统一调用 `set_*`/`step`/`get_*` |
-| P3 | **时间基**：`RTimeCtx` 各字段由 fastfarmRT 填充 | 字段语义偏差会导致 TTL/SCADA 边界错位 | 确认 `DT_Low`（1 s？3 s？）、`n_fast_low` 语义；SCADA 边界由模块内部计数器独立于 DT_Low |
-| P4 | **单机控制形态**：fastfarmRT 中的 ROSCO 是模块还是库 | 决定 S08 由谁消费 | 若是 C/C++ 接口，直接 `fcr_rt_get_setpoint()`；若是 Fortran，用 `rosco/FarmControlCBindings.f90` 绑定 |
-| P5 | **ROSCO 侧 Linux 构建**：本交付的 `_compile.py` 仅 Windows | 若需复用我们的 ROSCO 集成（`FCR_Step`/`FCR_ApplyReferences` 钩子） | 需补 Linux 构建脚本（gfortran `-shared -fPIC`）；若用 fastfarmRT 自带控制器管线则可省 |
-| P6 | **S02 采样频率** | OF 子步与 10 ms 不对齐时，S10 的 1 s 均值含义变化 | 建议每 10 ms 喂一次（OF 子步内取最新值，ZOH） |
+| P1 | AWAE 测点数 | **扩容到 1000** | ✅ `FCR_MAX_OBSERVATION_POINTS_V2 = 1000`，`FCR_MAX_OBSERVATION_POINTS` 指向 V2，`FCR_CAPACITY_VERSION = 2`；帧尺寸：Catalog **40024 B**、Observation **48024 B**、`FcrFlowState` **57568 B**；Modbus 寄存器区随容量扩展（`MB_TOTAL_REGS` ≈ 44.3k，仍 < 65536） |
+| P2 | 多线程 | **先不考虑**（单线程） | 保持"单线程调用、RT 路径无锁"的约定；`FCR_LOCK` 只用于 Windows DISCON 路径与 Fortran 侧入口 |
+| P3 | DT_Low | **1 s** | 与内部实现一致；SCADA 边界仍由计数器驱动（`steps_per_scada`），`DT_Low` 变化时无需改代码 |
+| P4 | ROSCO 形态 | **与 OpenFAST 同一 CPU 核，以 `.a` 被调用** | ✅ 新增**运行时共享**：`fcr_rt_init()` 自动 `adopt` 全局单例，调度器与 Fortran 侧读写**同一份** setpoint；RT 模式下 `fcr_rosco_step_high` 变 no-op（避免双重步进）；`fcr_rt_destroy` 先 detach |
+| P5 | ROSCO/bridge 源码 | **需要 Fortran 源码以在 WSL 构建 `.a`** | ✅ 新增 `rosco/src/`（9 个 ROSCO 源文件）+ `rosco/README_ROSCO_SRC.md` + `tools/build_rosco_linux.sh` → `build-linux/libfcr_rosco.a`（与 C 运行时一起链接） |
+| P6 | S02 采样频率 | **10 ms** | 与 `RTimeCtx.dt_high` 一致；建议每控制步调用一次 `fcr_rt_set_openfast_state`（ZOH 到下一步） |
+
+> **P4 的接口一致性是本轮最关键的结构性修正**：此前 `fcr_rt_*`（调度器句柄）与
+> `fcr_rosco_*`（Fortran 侧全局实例）是**两个独立 runtime**；若原样交给 fastfarmRT，
+> 调度器算出的 S08 与 ROSCO 读到的将不是同一份数据。现已统一为单例共享，
+> 并有单测 `rt_shared_runtime_with_rosco_side` 固化（覆盖 adopt / 同源 setpoint / no-op step / detach）。
+
+### 3.3 容量升级的影响面（P1 实施记录）
+
+| 对象 | 旧 (V1, 64 点) | 新 (V2, 1000 点) | 受影响处 |
+|---|---|---|---|
+| `FcrAWAECatalogFrame` (S13) | 2584 B | **40024 B** | ZMQ/Modbus 传输、Python 镜像 `farm_protocol.py`、`check_abi.py`、`test_abi.c`、协议测试 |
+| `FcrAWAEObservationFrame` (S12) | 3096 B | **48024 B** | 同上 |
+| `FcrFlowState`（内部，1 s ZOH） | 5152 B | **57568 B** | StateStore 槽、bridge 输入、AWAE 构建 |
+| Modbus 寄存器区 | 0x4000（16384） | **`MB_TOTAL_REGS` ≈ 44304** | `modbus_transport.c` 分配、`test_modbus.c` 边界断言 |
+| `FCR_CAPACITY_VERSION` | 1 | **2** | 收方据 `protocol_version` + 容量版本选择布局 |
+
+> 说明：`FCR_MAX_TURBINES` **保持 64**（本项只涉及 AWAE 观察点容量）；
+> `FarmStateFrame`（S10）仍为 25664 B，未受影响。
 
 ---
 
@@ -111,9 +132,9 @@ fcr_rt_get_setpoint(h, 1, &sp);                              /* S08 */
 
 | 里程碑 | 内容 | 依赖 | 预期证据 |
 |---|---|---|---|
-| **M1 模块** | `bash tools/build_linux.sh` → 92/92；`rt_minimal_example` 冒烟 | 无 | ctest 输出、示例输出 |
-| **M2 接口** | ABI/门禁/审计三件套；S02/S03/S05/S08 映射联调（可用 Mock 数据） | P1/P3 | `check_abi.py` PASS、映射表核对 |
-| **M3 调度/闭环** | 用 fastfarmRT 跑 6T 案例：验证 10 ms 步进、1 s SCADA、命令生效、TTL→D3、状态帧上送 | P1~P6 | 与 Windows 基线（T-21 4379 kW）对比、时序日志 |
+| **M1 模块** | `bash tools/build_linux.sh` → 93/93；`rt_minimal_example` 冒烟 | 无 | ctest 输出、示例输出 |
+| **M2 接口** | ABI/门禁/审计三件套；S02/S03/S05/S08 映射联调（可用 Mock 数据）；ROSCO `.a` 构建 | 无（P1~P6 已确认） | `check_abi.py` PASS、`libfcr_rosco.a` 生成、映射表核对 |
+| **M3 调度/闭环** | 用 fastfarmRT 跑 6T 案例：验证 10 ms 步进、1 s SCADA、命令生效、TTL→D3、状态帧上送、S08 被 ROSCO 采纳 | 平台侧联调 | 与 Windows 基线（T-21 4379 kW）对比、时序日志、`FcrRoscoAck` 回读 |
 | **M4 RT** | 采购后：RT 框架、Jitter/Deadline/WorstCase | 采购 | 实测报告 |
 
 **M3 建议的第一轮验证**（最小闭环，不依赖 RCP）：
@@ -128,25 +149,35 @@ fcr_rt_get_setpoint(h, 1, &sp);                              /* S08 */
 
 | 需要 | 路径 |
 |---|---|
-| 头文件 | `farm_control_runtime/include/`（`fcr_rt.h` 为入口；RT ABI **v2**） |
-| 静态库 | `build-linux/libfarm_control_runtime.a`（`bash tools/build_linux.sh` 生成） |
+| 头文件 | `farm_control_runtime/include/`（`fcr_rt.h` 入口；RT ABI **v2**，AWAE 容量 **V2/1000 点**） |
+| C 静态库 | `build-linux/libfarm_control_runtime.a`（`bash tools/build_linux.sh`） |
+| **Fortran 静态库（P5）** | `build-linux/libfcr_rosco.a`（`bash tools/build_rosco_linux.sh`；源码在 `rosco/src/`） |
+| ROSCO 源码与说明 | `farm_control_runtime/rosco/src/`、`rosco/README_ROSCO_SRC.md` |
 | 最小示例 | `farm_control_runtime/examples/rt_minimal_example.c` |
-| RT 测试 | `farm_control_runtime/tests/unit/test_rt_adapter.c`（含 1000×10 ms Mock Scheduler） |
-| 策略/时间/降级 | `03_RT_DATA_AND_TIME_POLICY.md` |
-| Fortran 绑定（若用 ROSCO） | `farm_control_runtime/rosco/FarmControlCBindings.f90`、`FarmControlInterface.f90` |
+| RT 测试 | `farm_control_runtime/tests/unit/test_rt_adapter.c`（含 1000×10 ms Mock Scheduler、共享 runtime 用例） |
+| 策略/时间/降级 | `04_RT_DATA_AND_TIME_POLICY.md` |
+| Fortran 绑定 | `farm_control_runtime/rosco/FarmControlCBindings.f90`、`FarmControlInterface.f90` |
 | 信号字典 | `docs/farm_control/inputs/FASTFarm_WFC_Signal_ICD_v1_5_SingleHop.csv` |
 | **不需要** | `wfcrl/.../DISCON_WT1.dll`（Windows PE）、`transport/modbus`、`transport/zmq` |
 
+**链接顺序（两库一起给链接器）**
+
+```bash
+gfortran your_main.o build-linux/libfcr_rosco.a build-linux/libfarm_control_runtime.a -lpthread -lm
+```
+
 ---
 
-## 6. 风险小结
+## 6. 风险小结（P1~P6 确认后）
 
-| 风险 | 影响 | 缓解 |
+| 风险 | 影响 | 状态 / 缓解 |
 |---|---|---|
-| AWAE 点数 > 64 | 流场信息截断，二跳帧不完整 | P1：适配层选点/降采样，或扩容 ABI |
-| 多线程调用 | 数据竞争（模块无锁） | P2：固定单线程调用点 |
-| DT_Low ≠ 1 s | SCADA 边界/TTL 语义偏差 | 已实现独立计数器；需 P3 确认 |
-| ROSCO 形态不同 | S08 无人消费或需新绑定 | P4：C 接口直接取用；Fortran 用现成绑定 |
+| AWAE 点数不足 | 流场信息截断 | ✅ **已解决**：容量扩到 1000 点（ABI V2） |
+| 多线程调用 | 数据竞争（模块无锁） | ✅ 平台确认单线程；约定写入 `fcr_rt.h` |
+| DT_Low 语义偏差 | SCADA 边界/TTL 错位 | ✅ 平台确认 **1 s**；边界由计数器独立驱动 |
+| S08 与 ROSCO 不同源 | 命令不生效 | ✅ **已解决**：单例共享 + `fcr_rosco_step_high` no-op（`rt_shared_runtime_with_rosco_side`） |
+| ROSCO 无法在 Linux 构建 | 闭环无法成立 | ✅ 已提供源码 + `build_rosco_linux.sh`；**首次构建需在 WSL 实测** |
+| GPU/CPU 数值差异 | 与 Windows 基线功率偏差 | 首轮 baseline 对比，建立 WSL 新基线 |
 | GPU/CPU 数值差异 | 与 Windows 基线功率偏差 | 首轮 baseline 对比，建立新基线 |
 
 ---

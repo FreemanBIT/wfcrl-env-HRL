@@ -663,6 +663,43 @@ static void test_set_openfast_state(void)
     fcr_rt_destroy(h);
 }
 
+/* ---- 与 Fortran/ROSCO 侧共享同一 runtime（fastfarmRT：ROSCO .a 同核）---- */
+static void test_shared_runtime_with_rosco_side(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FcrRtStatusInfo si;
+    FarmCommandFrame fr;
+    FcrRoscoExternalSetpoint sp;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    /* init 后单例已被注入：Fortran 侧可直接读到同一实例 */
+    ASSERT(fcr_rosco_api_rt_mode() == 1);
+
+    put_state(h, 1, 0.0);
+    mk_yaw_cmd(&fr, 1, 0.1, 1, 0.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+    ASSERT(step_k(h, 0, &si) == FCR_RT_OK);
+
+    /* Fortran 侧 fcr_rosco_read_setpoint 与调度器 get_setpoint 同源 */
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.external_yaw_enable == 1);
+    {
+        FcrRoscoExternalSetpoint sp2;
+        ASSERT(fcr_rosco_read_setpoint(1, &sp2) == 0);
+        ASSERT(sp2.yaw_seq == sp.yaw_seq);
+        ASSERT_NEAR(sp2.yaw_target_heading_rad, sp.yaw_target_heading_rad, 1e-12);
+    }
+
+    /* RT 模式下 rosco step_high 为 no-op（调度器已步进，不得重复） */
+    ASSERT(fcr_rosco_step_high(1, 0.01) == 0);
+
+    /* 销毁后单例解除，不影响后续使用 */
+    fcr_rt_destroy(h);
+    ASSERT(fcr_rosco_api_rt_mode() == 0);
+}
+
 void test_rt_adapter_register(void)
 {
     RUN_TEST("rt_configure_validation", test_configure_validation);
@@ -683,4 +720,5 @@ void test_rt_adapter_register(void)
     RUN_TEST("rt_out_of_range_induction_fallback", test_out_of_range_induction_fallback);
     RUN_TEST("rt_reject_version_and_size_mismatch", test_reject_version_and_size_mismatch);
     RUN_TEST("rt_set_openfast_state", test_set_openfast_state);
+    RUN_TEST("rt_shared_runtime_with_rosco_side", test_shared_runtime_with_rosco_side);
 }
