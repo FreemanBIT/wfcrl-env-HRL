@@ -108,6 +108,7 @@ void fcr_command_store_debug_counters_reset(void);
 struct FcrStateStore {
     uint32_t n_turbines;
     FcrRoscoRawState       fast[FCR_MAX_TURBINES];     /* ROSCO 10 ms 槽 */
+    FcrOpenFASTRawState    of[FCR_MAX_TURBINES];       /* S02 OpenFAST 10 ms 槽 */
     FcrTurbineExtraState   extra[FCR_MAX_TURBINES];    /* OF 额外 10 ms 槽 */
     FcrTurbineWindEstimate wind_est[FCR_MAX_TURBINES]; /* S06 风速估计 1 s 槽 */
     FcrFlowState           flow;                       /* AWAE 1 s ZOH 槽 */
@@ -126,6 +127,12 @@ int fcr_state_store_set_clock(FcrStateStore *ss, double sim_time_s,
                               uint32_t rt_health_flags);
 int fcr_state_store_set_fast(FcrStateStore *ss, int32_t turbine_id,
                              const FcrRoscoRawState *st);
+/* S02（OpenFAST 原始状态）：字段级归属——OF 拥有物理量测，ROSCO 拥有命令/状态/seq。
+ * 写入 of 槽并把 OF 拥有的字段合并进 fast/extra 槽（不覆盖 ROSCO 侧字段）。 */
+int fcr_state_store_set_openfast(FcrStateStore *ss,
+                                 const FcrOpenFASTRawState *st);
+int fcr_state_store_get_openfast(const FcrStateStore *ss, int32_t turbine_id,
+                                 FcrOpenFASTRawState *out);
 int fcr_state_store_set_extra(FcrStateStore *ss, const FcrTurbineExtraState *st);
 int fcr_state_store_set_flow(FcrStateStore *ss, const FcrFlowState *flow);
 int fcr_state_store_get_fast(const FcrStateStore *ss, int32_t turbine_id,

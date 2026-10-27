@@ -257,9 +257,12 @@ int fcr_rt_set_command(FcrRtHandle *h, const FarmCommandFrame *frame)
 
 int fcr_rt_set_state(FcrRtHandle *h, int32_t turbine_id, const FcrRoscoRawState *st)
 {
+    FcrRoscoRawState merged;
     if (!h || !st || !h->rt) return -1;
     if (fcr_state_store_set_fast(h->rt->ss, turbine_id, st) != 0) return -2;
-    fcr_runtime_feed_fast(h->rt, turbine_id, st);   /* 1 s 统计样本 */
+    /* 统计样本用"合并后"的值：S02 已提供物理量时不会被 S03 的 0 覆盖 */
+    if (fcr_state_store_get_fast(h->rt->ss, turbine_id, &merged) == 0)
+        fcr_runtime_feed_fast(h->rt, turbine_id, &merged);
     return 0;
 }
 
@@ -268,6 +271,24 @@ int fcr_rt_set_extra(FcrRtHandle *h, const FcrTurbineExtraState *st)
     if (!h || !st || !h->rt) return -1;
     if (fcr_state_store_set_extra(h->rt->ss, st) != 0) return -2;
     fcr_runtime_feed_extra_stats(h->rt, st);
+    return 0;
+}
+
+/* S02：OpenFAST 原始状态（fastfarmRT 的 OF 子步输出）。
+ * 与 set_state（S03 ROSCO）字段级共存：OF 只写物理量测，不覆盖 ROSCO 命令/状态/seq。 */
+int fcr_rt_set_openfast_state(FcrRtHandle *h, const FcrOpenFASTRawState *st)
+{
+    FcrTurbineExtraState ex;
+    FcrRoscoRawState merged;
+    if (!h || !st || !h->rt) return -1;
+    if (fcr_state_store_set_openfast(h->rt->ss, st) != 0) return -2;
+    if (!st->valid) return 0;
+    /* S02 同时携带推力/轴矩/塔基弯矩 → 同步喂入 1 s 载荷统计；
+     * 物理量测也喂入快速统计（与 S03 共用同一窗口，值取合并后结果）。 */
+    if (fcr_state_store_get_extra(h->rt->ss, st->turbine_id, &ex) == 0)
+        fcr_runtime_feed_extra_stats(h->rt, &ex);
+    if (fcr_state_store_get_fast(h->rt->ss, st->turbine_id, &merged) == 0)
+        fcr_runtime_feed_fast(h->rt, st->turbine_id, &merged);
     return 0;
 }
 

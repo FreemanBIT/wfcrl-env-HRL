@@ -215,13 +215,18 @@ RT 侧若改走 Modbus，AWAE 帧按 `modbus_register_map.h` 布局（0x3000 区
 sudo apt-get install -y build-essential cmake
 cd farm_control_runtime
 bash tools/build_linux.sh          # cmake 构建 + ctest
-# 预期：91/91 通过（Windows 为 98/98，差 7 个 Windows-only Modbus 用例）
+# 预期：92/92 通过（Windows 为 99/99，差 7 个 Windows-only Modbus 用例）
 ```
 
 - Linux 自动排除的 Windows-only 模块：`modbus_transport.c`（Winsock）、
   `shm_command_source.c`（Windows SHM，替换为 no-op stub）、`zmq_transport.cpp`（LoadLibrary）；
 - RT 路径本身平台无关：`fcr_rt_adapter.c` 用 `CLOCK_MONOTONIC`，`rosco_api.c` 用 pthread；
-- **不在 WSL 范围**：`DISCON_WT1.dll`（Windows PE）与 FAST.Farm 闭环（属 M4）。
+- `DISCON_WT1.dll`（Windows PE）在 WSL 中**不使用**。
+
+**若 WSL 环境具备 fastfarmRT**（可跑 OF/WD/AWAE 的 CPU/GPU 部署）：
+FAST.Farm 物理闭环**可在 WSL 完成**，接入映射（OF→S02、AWAE→S05、ROSCO→S03、S08 回控制器）、
+已补齐的 S02 输入通路（`fcr_rt_set_openfast_state`，RT ABI v2）与仍需平台确认的 6 项见
+**`docs/WSL_FASTFARMRT_INTEGRATION.md`**。
 
 详细审计与验证清单见 **`docs/WSL_READINESS.md`**。
 

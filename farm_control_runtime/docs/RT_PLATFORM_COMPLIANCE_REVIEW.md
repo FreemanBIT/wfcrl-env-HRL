@@ -23,7 +23,7 @@
 | **G-01 Reset** | `fcr_runtime_reset()` + `fcr_rosco_api_reset()` + `FCR_Reset()`（Fortran）；重建全部运行时状态、保留配置与 ROSCO 标称副本 | `rt_reset_repeatable`、`reset_cycle_reproducible` |
 | **G-02 入口校验** | `fcr_command_store_accept_frame` 增加 `isfinite` 校验（偏航目标/诱导因子/时间戳），非法→拒绝并置 `FCR_CMD_FLAG_INVALID_VALUE` | `rt_reject_nan_command`、`rt_reject_inf_command` |
 | **G-04 RTimeCtx** | `FcrRtTimeCtx`（n_low/t_low/dt_low/n_fast_low/dt_high/n_high_low）只读传入 | `fcr_rt.h` |
-| **G-07 调度器形态** | `fcr_rt_adapter.c`：create/configure/init/set_*/step/get_*/reset/stop/destroy | RT 单测 15 例 |
+| **G-07 调度器形态** | `fcr_rt_adapter.c`：create/configure/init/set_*/step/get_*/reset/stop/destroy | RT 单测 16 例 |
 | **G-08 状态接口** | `FcrRtStatus` 九态 + `FcrRtStatusInfo`（ErrorCode/ErrorSource/Message/Timestamp） | 同上 |
 | **G-11 CONFIGURE** | `fcr_rt_configure()` 结构体入参（含 dt_scada 可整除校验） | `rt_configure_validation` |
 | **G-13 SCADA 边界** | 由调度器权威步号推导 + 计数器（与 DT_Low 解耦；重复调用不重复出帧） | `rt_scada_boundary_counter`、`rt_mock_scheduler_1000_cycles` |
@@ -366,7 +366,7 @@ typedef struct { FcrRtStatus status; int32_t code; uint16_t src; char msg[64]; d
 
 ## 6. 附：现有证据索引
 
-- 单测 **89/89**：`farm_control_runtime/tools/_build_test.bat && test_runner.exe`
+- 单测 **99/99**：`farm_control_runtime/tools/_build_test.bat && test_runner.exe`（Linux 92/92）
 - RT 接入测试 **9 例**：`tests/unit/test_rt_adapter.c`
 - 协议 12/12：`farm_control_runtime/tests/integration/test_icd_v15_abi_python.py`
 - ABI：`tools/check_abi.py`（82 字段偏移）

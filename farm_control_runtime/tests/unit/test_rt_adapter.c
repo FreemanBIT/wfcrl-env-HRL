@@ -594,6 +594,75 @@ static void test_reject_version_and_size_mismatch(void)
     fcr_rt_destroy(h);
 }
 
+/* ---- S02：OpenFAST 原始状态输入（fastfarmRT 主状态源）---- */
+static void test_set_openfast_state(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(2);
+    FcrRtStatusInfo si;
+    FarmStateFrame out;
+    FcrOpenFASTRawState of;
+    FcrRoscoRawState rs;
+    FcrRoscoExternalSetpoint sp;
+    FarmCommandFrame fr;
+    int k;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+
+    /* 1) 只给 S02（平台暂无 ROSCO 模块时也能跑） */
+    memset(&of, 0, sizeof(of));
+    of.turbine_id = 1;
+    of.valid = 1;
+    of.of_sample_sim_time_s = 0.0;
+    of.rotor_speed_rad_s = 1.25;
+    of.generator_speed_rad_s = 95.0;
+    of.generator_electrical_power_w = 2.1e6;
+    of.blade_pitch_actual_rad[0] = 0.05;
+    of.blade_pitch_actual_rad[1] = 0.05;
+    of.blade_pitch_actual_rad[2] = 0.05;
+    of.nacelle_heading_actual_rad = 0.0;
+    of.rotor_aero_thrust_n = 4.0e5;
+    of.shaft_torque_nm = 3.0e6;
+    of.tower_base_fa_moment_nm = 1.2e8;
+    ASSERT(fcr_rt_set_openfast_state(h, &of) == 0);
+
+    /* 偏航命令应能用 OF 提供的机舱方位锁存 */
+    mk_yaw_cmd(&fr, 1, 0.1, 1, 0.0);
+    ASSERT(fcr_rt_set_command(h, &fr) == 0);
+
+    for (k = 0; k <= 100; ++k) ASSERT(step_k(h, k, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_output(h, &out) == 1);
+    ASSERT(out.turbines[0].valid == 1);
+    ASSERT_NEAR(out.turbines[0].gen_power_w.instant, 2.1e6, 1.0);
+    ASSERT_NEAR(out.turbines[0].rotor_speed_rad_s, 1.25, 1e-12);
+    ASSERT_NEAR(out.turbines[0].rotor_aero_thrust_n.instant, 4.0e5, 1.0);
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.external_yaw_enable == 1);
+
+    /* 2) 再补 S03（ROSCO 结构体里物理字段留 0）→ OF 物理量不得被清零 */
+    memset(&rs, 0, sizeof(rs));
+    rs.turbine_id = 1;
+    rs.valid = 1;
+    rs.source_time_s = 1.01;
+    rs.rosco_controller_status_flags = 1;
+    rs.generator_torque_command_nm = 1.5e6;
+    rs.pitch_command_rad[0] = 0.06;
+    rs.pitch_command_rad[1] = 0.06;
+    rs.pitch_command_rad[2] = 0.06;
+    ASSERT(fcr_rt_set_state(h, 1, &rs) == 0);
+
+    for (k = 101; k <= 200; ++k) ASSERT(step_k(h, k, &si) == FCR_RT_OK);
+    ASSERT(fcr_rt_get_output(h, &out) == 1);
+    ASSERT_NEAR(out.turbines[0].gen_power_w.instant, 2.1e6, 1.0);   /* OF 值保留 */
+    ASSERT_NEAR(out.turbines[0].rotor_speed_rad_s, 1.25, 1e-12);
+    /* ROSCO 侧字段仍来自 S03 */
+    ASSERT(fcr_rt_get_setpoint(h, 1, &sp) == 0);
+    ASSERT(sp.valid == 1);
+
+    fcr_rt_destroy(h);
+}
+
 void test_rt_adapter_register(void)
 {
     RUN_TEST("rt_configure_validation", test_configure_validation);
@@ -613,4 +682,5 @@ void test_rt_adapter_register(void)
     RUN_TEST("rt_reject_inf_command", test_reject_inf_command);
     RUN_TEST("rt_out_of_range_induction_fallback", test_out_of_range_induction_fallback);
     RUN_TEST("rt_reject_version_and_size_mismatch", test_reject_version_and_size_mismatch);
+    RUN_TEST("rt_set_openfast_state", test_set_openfast_state);
 }

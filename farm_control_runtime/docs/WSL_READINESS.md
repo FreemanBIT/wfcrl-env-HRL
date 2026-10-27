@@ -9,18 +9,24 @@
 
 ## 0. 结论
 
-**修复后可交付 WSL 测试（模块级 + 调度器级），但不包含 FAST.Farm 闭环。**
+**修复后可交付 WSL 测试（模块级 + 调度器级）。**
+
+> **⚠ 结论已于 2026-10-22 更新**：下一阶段 WSL 环境**具备 fastfarmRT**（FAST.Farm 各模块可在 CPU/GPU 部署），
+> 因此 **FAST.Farm 闭环在 WSL 亦可完成**，不再受"无 Linux FAST.Farm"限制。
+> 新评估、接口映射（fastfarmRT hook → 本模块 API）与剩余待确认项见
+> **`WSL_FASTFARMRT_INTEGRATION.md`**；本文 §5/§6 中"不含 FAST.Farm 闭环"的表述以该文为准。
 
 | 能力 | WSL 可用 | 说明 |
 |---|---|---|
 | 场控核心（命令/状态/桥接/AWAE/RT 适配层） | ✅ 可构建 | 纯 C11，无平台依赖 |
-| 单元/RT 测试（91 例） | ✅ 可运行 | Modbus 7 例为 Windows-only |
+| 单元/RT 测试（92 例） | ✅ 可运行 | Modbus 7 例为 Windows-only |
 | `fcr_rt_*` 调度器接入 + 自写 Mock Scheduler | ✅ | 见 `include/fcr_rt.h` |
 | Python 协议镜像（`farm_protocol.py`） | ✅ | 纯 ctypes，Linux x86_64 布局一致 |
 | ZMQ / Modbus 传输 | ❌ | Windows-only（RT 平台由调度器负责传输） |
-| `DISCON_WT1.dll` / FAST.Farm 闭环 | ❌ | Windows PE + ROSCO Fortran DLL（属 M4） |
+| `DISCON_WT1.dll` | ❌ | Windows PE（WSL 不使用它） |
+| **FAST.Farm 闭环** | ✅ **可做（2026-10-22 更新）** | 由 **fastfarmRT** 提供 OF/WD/AWAE（CPU/GPU）；见 `WSL_FASTFARMRT_INTEGRATION.md` |
 
-**交付前必须由开发人员在 WSL 主机执行一次 `bash tools/build_linux.sh`，确认 91/91 通过**（本机无 WSL，无法代跑）。
+**交付前必须由开发人员在 WSL 主机执行一次 `bash tools/build_linux.sh`，确认 92/92 通过**（本机无 WSL，无法代跑）。
 
 ---
 
@@ -31,7 +37,7 @@
 | B1 | `transport/modbus/modbus_transport.c` 依赖 Winsock | `#include <winsock2.h>`、`_beginthreadex` | CMake 在非 WIN32 下**排除**；对应 `test_modbus.c` 排除并定义 `MB_STUB` |
 | B2 | `offline/harness/shm_command_source.c` 依赖 Windows SHM/线程 | `#include <windows.h>`、`CreateThread` | 非 WIN32 下替换为 `shm_command_source_stub.c`（no-op；RT 由调度器传输） |
 | B3 | `transport/zmq/zmq_transport.cpp` 依赖 `LoadLibraryA` | `<windows.h>`、`LoadLibraryA/GetProcAddress` | 原本即 `if(WIN32)`；另在 `rosco_api.c` 增加弱符号 NULL 守卫，避免未链接时空指针调用 |
-| B4 | CMake 单测目标**漏列** `test_rt_adapter.c`（而 `test_main.c` 已引用其注册函数） | CMakeLists 单测列表 | 已补入；Linux 下 91 例 |
+| B4 | CMake 单测目标**漏列** `test_rt_adapter.c`（而 `test_main.c` 已引用其注册函数） | CMakeLists 单测列表 | 已补入；Linux 下 92 例 |
 | B5 | 非 Windows 未链接 pthread | `rosco_api.c` 的 `#else #include <pthread.h>` | CMake 在非 WIN32 下 `find_package(Threads)` 并链接 |
 | B6 | 无 Linux 构建入口 | 只有 `_build_test.bat` / `.ps1` / `_compile.py`（硬编码 TDM-GCC 与 DLL） | 新增/更新 `tools/build_linux.sh`（cmake 优先，gcc 兜底） |
 | B7 | `bridge/rt_snapshot.h` 对齐宏 | `__declspec(align(64))` | 审计确认已有 `#if _MSC_VER / #else __attribute__((aligned(64)))` 分支，**无需改** |
@@ -52,7 +58,7 @@ bash tools/build_linux.sh            # cmake 构建 build-linux/ 并跑 ctest
 # 或：bash tools/build_linux.sh --gcc   # 无 cmake 时的纯 gcc 兜底
 
 # 3) 预期
-#    ctest 通过；单元/RT 测试 91/91（Windows 为 98/98，差 7 个 Modbus 用例）
+#    ctest 通过；单元/RT 测试 92/92（Windows 为 99/99，差 7 个 Modbus 用例）
 ```
 
 ---
@@ -75,7 +81,7 @@ bash tools/build_linux.sh            # cmake 构建 build-linux/ 并跑 ctest
 | 项 | 命令（在 `farm_control_runtime/`） | 预期 |
 |---|---|---|
 | 构建 | `bash tools/build_linux.sh` | 无错误 |
-| 单测/RT | `ctest --test-dir build-linux --output-on-failure` | **91/91** |
+| 单测/RT | `ctest --test-dir build-linux --output-on-failure` | **92/92** |
 | ABI（Python↔C） | `python3 tools/check_abi.py`（需 gcc） | PASS（82 字段偏移） |
 | 信号门禁 | `python3 tools/check_icd_gates.py` | PASS（88 信号） |
 | 信号审计 | `python3 tools/audit_signals.py` | PASS（88/88） |
@@ -88,7 +94,7 @@ bash tools/build_linux.sh            # cmake 构建 build-linux/ 并跑 ctest
 | 项 | 原因 | 建议 |
 |---|---|---|
 | Linux 编译/链接 | 本机未安装 WSL，无法执行 | 开发人员首次 `bash tools/build_linux.sh` 验证 |
-| 91 例测试结果 | 同上 | 以 ctest 输出为准；若有失败请回传日志 |
+| 92 例测试结果 | 同上 | 以 ctest 输出为准；若有失败请回传日志 |
 | Python 镜像在 Linux 的尺寸 | ctypes 布局理论上一致（LP64/固定宽度类型） | `python3 tools/check_abi.py` 会直接校验 |
 | 调度器实机联调 | 平台调度器不在本仓库 | M3 联调（Mock/实际 Scheduler） |
 
@@ -98,6 +104,9 @@ bash tools/build_linux.sh            # cmake 构建 build-linux/ 并跑 ctest
 
 以下**不属于**本次 WSL 交付范围，属采购后 M4：
 
-- Linux FAST.Farm 二进制 + ROSCO `DISCON` 的 `.so` 构建（`_compile.py` 为 Windows 专用）；
-- Linux 版 ZMQ/Modbus 传输实现（若平台调度器不接管传输）；
-- RT vs WSL 结果一致性、Deadline/Jitter/WorstCase/Deadline Miss 实测。
+- 实时框架导入与 RT 指标（Deadline / Jitter / WorstCase / Deadline Miss）实测；
+- 硬件在环与实时机一致性验证。
+
+> **不再属于 M4**：FAST.Farm 物理闭环——WSL 侧由 **fastfarmRT** 提供（2026-10-22 更新）。
+> 仍需在 M3 期间确认的接口项（AWAE 点数容量、调用线程、DT_Low 语义、ROSCO 形态）见
+> `WSL_FASTFARMRT_INTEGRATION.md` §3.2。

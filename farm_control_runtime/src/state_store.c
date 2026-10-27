@@ -45,9 +45,25 @@ int fcr_state_store_set_clock(FcrStateStore *ss, double sim_time_s,
 int fcr_state_store_set_fast(FcrStateStore *ss, int32_t turbine_id,
                              const FcrRoscoRawState *st)
 {
+    int32_t id;
     if (!ss || !st) return -1;
     if (turbine_id < 1 || turbine_id > (int32_t)ss->n_turbines) return -2;
-    ss->fast[turbine_id - 1] = *st;
+    id = turbine_id - 1;
+    ss->fast[id] = *st;
+    /* S02/S03 分离输入（fastfarmRT：OF 与 ROSCO 是两个模块）：
+     * 若该机已有有效 S02，则 OF 拥有的物理量测优先回填，
+     * 避免 ROSCO 侧结构里未知/为 0 的字段把 OF 测点清零。
+     * Windows 路径不输入 S02（of.valid=0），行为完全不变。 */
+    if (ss->of[id].valid) {
+        const FcrOpenFASTRawState *o = &ss->of[id];
+        ss->fast[id].rotor_speed_rad_s = o->rotor_speed_rad_s;
+        ss->fast[id].gen_speed_rad_s = o->generator_speed_rad_s;
+        ss->fast[id].gen_power_w = o->generator_electrical_power_w;
+        ss->fast[id].blade_pitch_rad[0] = o->blade_pitch_actual_rad[0];
+        ss->fast[id].blade_pitch_rad[1] = o->blade_pitch_actual_rad[1];
+        ss->fast[id].blade_pitch_rad[2] = o->blade_pitch_actual_rad[2];
+        ss->fast[id].nacelle_heading_rad = o->nacelle_heading_actual_rad;
+    }
     return 0;
 }
 
@@ -56,6 +72,59 @@ int fcr_state_store_set_extra(FcrStateStore *ss, const FcrTurbineExtraState *st)
     if (!ss || !st) return -1;
     if (st->turbine_id < 1 || st->turbine_id > (int32_t)ss->n_turbines) return -2;
     ss->extra[st->turbine_id - 1] = *st;
+    return 0;
+}
+
+/* S02：OpenFAST 原始状态写入 + 字段级合并。
+ * 归属约定：OF 拥有物理量测（转速/功率/桨距/方位/推力/轴矩/塔基弯矩）；
+ *           ROSCO 拥有命令、状态字、seq；extra 的 Ct/Cp/载荷测点由 Provider 另给。
+ * 因此这里只写 OF 拥有的字段，绝不覆盖 ROSCO 侧 valid/source_seq/命令字段。 */
+int fcr_state_store_set_openfast(FcrStateStore *ss, const FcrOpenFASTRawState *st)
+{
+    int32_t id;
+    FcrRoscoRawState *f;
+    FcrTurbineExtraState *e;
+    if (!ss || !st) return -1;
+    if (st->turbine_id < 1 || st->turbine_id > (int32_t)ss->n_turbines) return -2;
+    id = st->turbine_id - 1;
+    ss->of[id] = *st;
+    if (!st->valid) return 0;
+
+    f = &ss->fast[id];
+    /* fast 槽尚未由 ROSCO 建立时，用 OF 的采样时间/序号初始化 */
+    if (!f->valid) {
+        f->turbine_id = st->turbine_id;
+        f->valid = 1;
+        f->source_time_s = st->of_sample_sim_time_s;
+        f->source_seq = st->source_seq;
+    }
+    f->rotor_speed_rad_s = st->rotor_speed_rad_s;
+    f->gen_speed_rad_s = st->generator_speed_rad_s;
+    f->gen_power_w = st->generator_electrical_power_w;
+    f->blade_pitch_rad[0] = st->blade_pitch_actual_rad[0];
+    f->blade_pitch_rad[1] = st->blade_pitch_actual_rad[1];
+    f->blade_pitch_rad[2] = st->blade_pitch_actual_rad[2];
+    f->nacelle_heading_rad = st->nacelle_heading_actual_rad;
+
+    e = &ss->extra[id];
+    if (!e->valid) {
+        e->turbine_id = st->turbine_id;
+        e->valid = 1;
+        e->source_time_s = st->of_sample_sim_time_s;
+        e->source_seq = st->source_seq;
+    }
+    e->rotor_aero_thrust_n = st->rotor_aero_thrust_n;
+    e->shaft_torque_nm = st->shaft_torque_nm;
+    e->tower_base_fa_moment_nm = st->tower_base_fa_moment_nm;
+    return 0;
+}
+
+int fcr_state_store_get_openfast(const FcrStateStore *ss, int32_t turbine_id,
+                                 FcrOpenFASTRawState *out)
+{
+    if (!ss || !out) return -1;
+    if (turbine_id < 1 || turbine_id > (int32_t)ss->n_turbines) return -2;
+    *out = ss->of[turbine_id - 1];
     return 0;
 }
 

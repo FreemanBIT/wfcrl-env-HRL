@@ -36,8 +36,10 @@ extern "C" {
 /* ================================================================== */
 /* 0. 接口版本（要求 §4.1"接口版本是否兼容"；调度器启动时握手校验）      */
 /* ================================================================== */
-/* 变更规则：任何影响结构布局/函数签名的改动都必须提升本版本号。          */
-#define FCR_RT_ABI_VERSION      1u
+/* 变更规则：任何影响结构布局/函数签名的改动都必须提升本版本号。
+ * v1 → v2：新增 fcr_rt_set_openfast_state（S02 OpenFAST 原始状态输入）；
+ *           只新增函数、不改既有结构布局，属向后兼容扩展。 */
+#define FCR_RT_ABI_VERSION      2u
 /* 返回本模块编译时的 RT 接口版本；调度器与 FCR_RT_ABI_VERSION 比对。 */
 uint32_t fcr_rt_get_version(void);
 
@@ -140,6 +142,10 @@ void fcr_rt_destroy(FcrRtHandle *h);                                /* DESTROY *
 int fcr_rt_set_command(FcrRtHandle *h, const FarmCommandFrame *frame);
 /* 平台状态：S02/S03 快速状态（每机）、S02 额外量、AWAE 流场、S06 风估计 */
 int fcr_rt_set_state(FcrRtHandle *h, int32_t turbine_id, const FcrRoscoRawState *st);
+/* S02：OpenFAST 原始状态（fastfarmRT 的 of_rt_* / OF 子步输出）。
+ * 字段级归属：OF 提供物理量测（转速/功率/桨距/方位/推力/轴矩/塔基弯矩），
+ * ROSCO 提供命令/状态/seq；二者可同时调用，互不覆盖。 */
+int fcr_rt_set_openfast_state(FcrRtHandle *h, const FcrOpenFASTRawState *st);
 int fcr_rt_set_extra(FcrRtHandle *h, const FcrTurbineExtraState *st);
 int fcr_rt_set_flow(FcrRtHandle *h, const FcrFlowState *flow);
 int fcr_rt_set_wind_estimate(FcrRtHandle *h, const FcrTurbineWindEstimate *est);
