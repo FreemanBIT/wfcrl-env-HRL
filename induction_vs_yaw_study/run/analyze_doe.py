@@ -209,6 +209,57 @@ def _gains(group_rows: List[Dict], case_rows: Optional[List[Dict]] = None,
     return out
 
 
+def _per_turbine(group_rows: List[Dict]) -> List[Dict]:
+    """逐机分解：(U,TI,WD,S) 内各 control 的 T1/T2/T3 功率与相对 baseline 的增量。
+
+    用于回答“偏航/降载让哪台机受益/受损”（上游机降功率、下游机尾流恢复）。
+    """
+    idx = {}
+    for r in group_rows:
+        idx[(r["U"], r["TI"], r["WD"], r["spacing_D"], r["control"])] = r
+    out = []
+    for (u, ti, wd, s, ctl) in sorted(idx):
+        if ctl == "baseline":
+            continue
+        b = idx.get((u, ti, wd, s, "baseline"))
+        t = idx[(u, ti, wd, s, ctl)]
+        if b is None:
+            continue
+        row = {"U": u, "TI": ti, "WD": wd, "spacing_D": s, "control": ctl}
+        for i in (1, 2, 3):
+            k = f"T{i}_kw_mean"
+            row[f"T{i}_base_kw"] = b[k]
+            row[f"T{i}_test_kw"] = t[k]
+            row[f"T{i}_delta_kw"] = t[k] - b[k]
+        row["farm_delta_kw"] = sum(row[f"T{i}_delta_kw"] for i in (1, 2, 3))
+        out.append(row)
+    return out
+
+
+def _bias_summary(gain_rows: List[Dict]) -> List[Dict]:
+    """FLORIS 预测 vs FAST.Farm 实测的系统偏差（按 control × U 聚合）。"""
+    from collections import defaultdict
+    g = defaultdict(list)
+    for r in gain_rows:
+        if r["floris_pred_pct"] != r["floris_pred_pct"]:
+            continue
+        g[(r["control"], r["U"])].append((r["floris_pred_pct"], r["gain_pct"]))
+    out = []
+    for (ctl, u), vals in sorted(g.items()):
+        pred = np.array([v[0] for v in vals])
+        meas = np.array([v[1] for v in vals])
+        bias = meas - pred
+        out.append({
+            "control": ctl, "U": u, "n": len(vals),
+            "pred_mean_pct": float(pred.mean()),
+            "meas_mean_pct": float(meas.mean()),
+            "bias_mean_pct": float(bias.mean()),
+            "bias_rmse_pct": float(np.sqrt(np.mean(bias ** 2))),
+            "overpred_count": int((bias < 0).sum()),
+        })
+    return out
+
+
 def _write_csv(rows: List[Dict], path: Path) -> None:
     if not rows:
         return
@@ -220,7 +271,7 @@ def _write_csv(rows: List[Dict], path: Path) -> None:
 
 
 def _report(case_rows, group_rows, gain_rows, unstable_n, path: Path,
-            include_unstable: bool = False) -> None:
+            include_unstable: bool = False, per_t=None, bias=None) -> None:
     lines = ["# Full DOE 分析报告", ""]
     incl = "纳入" if include_unstable else "剔除"
     lines.append(f"- 统计窗: [t_settle, t_end]；case 数: {len(case_rows)}；失稳 case {unstable_n}（已{incl}）")
@@ -274,6 +325,36 @@ def _report(case_rows, group_rows, gain_rows, unstable_n, path: Path,
                     continue
                 a = np.array([r["gain_pct"] for r in sub])
                 lines.append(f"| {ti:.2f} | {ctl} | {len(sub)} | {a.mean():+.2f}% |")
+
+    if per_t:
+        lines.append("")
+        lines.append("## 逐机分解（相对 baseline 的平均功率增量）")
+        lines.append("")
+        lines.append("| control | T1 ΔkW | T2 ΔkW | T3 ΔkW | farm ΔkW |")
+        lines.append("|---|---|---|---|---|")
+        for ctl in ("yaw", "induction"):
+            sub = [r for r in per_t if r["control"] == ctl]
+            if not sub:
+                continue
+            lines.append("| %s | %+.0f | %+.0f | %+.0f | %+.0f |" % (
+                ctl,
+                np.mean([r["T1_delta_kw"] for r in sub]),
+                np.mean([r["T2_delta_kw"] for r in sub]),
+                np.mean([r["T3_delta_kw"] for r in sub]),
+                np.mean([r["farm_delta_kw"] for r in sub]),
+            ))
+
+    if bias:
+        lines.append("")
+        lines.append("## FLORIS 预测 vs FAST.Farm 实测（系统偏差）")
+        lines.append("")
+        lines.append("| control | U | n | 预测均值 | 实测均值 | 偏差(实测-预测) | RMSE | 高估组数 |")
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for r in bias:
+            lines.append("| %s | %.0f | %d | %+.2f%% | %+.2f%% | %+.2f%% | %.2f%% | %d/%d |" % (
+                r["control"], r["U"], r["n"], r["pred_mean_pct"],
+                r["meas_mean_pct"], r["bias_mean_pct"], r["bias_rmse_pct"],
+                r["overpred_count"], r["n"]))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -296,13 +377,19 @@ def main():
     group_rows = _agg(case_rows, a.include_unstable)
     gain_rows = _gains(group_rows, case_rows, a.include_unstable)
 
+    per_t = _per_turbine(group_rows)
+    bias = _bias_summary(gain_rows)
+
     _write_csv(case_rows, out_dir / "case_summary.csv")
     _write_csv(group_rows, out_dir / "group_summary.csv")
     _write_csv(gain_rows, out_dir / "gains.csv")
+    _write_csv(per_t, out_dir / "per_turbine.csv")
+    _write_csv(bias, out_dir / "bias_summary.csv")
     _report(case_rows, group_rows, gain_rows, n_unstable, out_dir / "report.md",
-            a.include_unstable)
+            a.include_unstable, per_t=per_t, bias=bias)
 
-    print(f"cases: {len(case_rows)} (unstable {n_unstable})  groups: {len(group_rows)}  gain rows: {len(gain_rows)}")
+    print(f"cases: {len(case_rows)} (unstable {n_unstable})  groups: {len(group_rows)}"
+          f"  gain rows: {len(gain_rows)}  per-turbine: {len(per_t)}  bias: {len(bias)}")
     print(f"-> {out_dir}")
 
 

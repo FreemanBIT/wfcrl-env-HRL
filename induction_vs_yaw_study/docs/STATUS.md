@@ -230,6 +230,14 @@
 - **影响**：manifest 全量 **2592 pending / 0 qa_failed**；DOE 范围从 2520 扩到 2592（+72 case）
 - 说明：TI15 组的实际实现 TI 为 0.12–0.16（抽样散布），分析时以实测 TI 为协变量更严谨
 
+### 6.12 分析工具增强与阶段性结论（2026-10-26）
+- **`run/check_doe_quality.py`**（新增）：长跑期质量监控——完整性/数值合理性/稳定性（pitch>40 或 rpm<2）/一致性；输出 `quality_report.md` + `quality_issues.csv`；失稳率 >2% 返回非零（可脚本化告警）
+- **`run/analyze_doe.py` 增强**：新增 `per_turbine.csv`（逐机 ΔkW 分解）与 `bias_summary.csv`（FLORIS 预测 vs 实测，按 control×U 聚合偏差/RMSE/高估比例）；报告增加对应章节
+- **阶段性结论**（501 case，部分 seed；失稳已剔除）：
+  1. **逐机机制验证**：yaw 使 T1 −145 kW、T3 +267 kW（farm +114 kW）——尾流偏转的“上游让路、下游受益”成立；induction 较温和（T2 −81、T3 +120）
+  2. **FLORIS 系统性高估 yaw**：U6/U8/U10/U12 分别高估 3.82/3.55/2.63/4.22 个百分点（RMSE 7–10%）；induction 偏差小（RMSE 4–6%）——**这是本研究的关键 model-bias 结论**，说明直接用 FLORIS 优化偏航会高估收益
+  3. 质量：501 case 中 0 失稳（OMP=3 生效），功率分布 P5 1235 / 中位 3741 / P95 14029 kW 合理
+
 ### 6.5 调整后的下一步（ICD v1.5 口径，2026-10-20 更新）
 ✅ 已完成：
 - yaw sign 新 DLL 重跑 PASS（§6.3.4）
