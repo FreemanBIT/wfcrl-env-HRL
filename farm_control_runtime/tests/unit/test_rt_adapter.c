@@ -1,4 +1,4 @@
-/*
+﻿/*
  * test_rt_adapter.c — RT 平台接入层测试（要求 §3 生命周期 / §5 时间 / §6 状态 / §14 数据）
  *
  * 覆盖：
@@ -700,6 +700,42 @@ static void test_shared_runtime_with_rosco_side(void)
     ASSERT(fcr_rosco_api_rt_mode() == 0);
 }
 
+/* ---- 兼容 FAST.Farm 的 n_high_low 含端点约定（101 ≠ 100）----
+ * 报告 n_fast_low = 101 时，不得让 SCADA 边界提前（首个 1 s 帧仍应在 t=1.00）。 */
+static void test_step_n_fast_low_endpoint(void)
+{
+    FcrRtHandle *h = fcr_rt_create();
+    FcrRtConfig c = mk_cfg(1);
+    FcrRtStatusInfo si;
+    FarmStateFrame out;
+    int sec;
+
+    ASSERT(fcr_rt_configure(h, &c) == 0);
+    ASSERT(fcr_rt_init(h) == 0);
+    put_state(h, 1, 0.0);
+
+    for (sec = 0; sec <= 2; ++sec) {
+        FcrRtTimeCtx t;
+        memset(&t, 0, sizeof(t));
+        t.n_low = sec;
+        t.n_fast_low = 101;          /* 含端点约定 */
+        t.dt_low = 1.0;
+        t.dt_high = 0.01;
+        t.n_high_low = 101;
+        t.t_low = (double)sec;
+
+        if (sec == 0) {
+            ASSERT(fcr_rt_step(h, &t, &si) == FCR_RT_OK);
+            ASSERT(fcr_rt_get_output(h, &out) == 0);      /* t=0 不得提前出帧 */
+        } else {
+            ASSERT(fcr_rt_step(h, &t, &si) == FCR_RT_OK);
+            ASSERT(fcr_rt_get_output(h, &out) == 1);      /* t=1,2 各一帧 */
+            ASSERT_NEAR(out.state_sample_sim_time_s, (double)sec, 1e-9);
+        }
+    }
+    fcr_rt_destroy(h);
+}
+
 void test_rt_adapter_register(void)
 {
     RUN_TEST("rt_configure_validation", test_configure_validation);
@@ -721,4 +757,5 @@ void test_rt_adapter_register(void)
     RUN_TEST("rt_reject_version_and_size_mismatch", test_reject_version_and_size_mismatch);
     RUN_TEST("rt_set_openfast_state", test_set_openfast_state);
     RUN_TEST("rt_shared_runtime_with_rosco_side", test_shared_runtime_with_rosco_side);
+    RUN_TEST("rt_step_n_fast_low_endpoint", test_step_n_fast_low_endpoint);
 }

@@ -371,6 +371,7 @@ static FcrRtStatus rt_step_impl(FcrRtHandle *h, const FcrRtTimeCtx *t,
 {
     uint64_t yaw_ttl = 0, ind_ttl = 0;
     uint64_t fast_step;
+    int32_t n_fast;
 
     if (!h || !h->rt || !h->inited) {
         if (h) set_status(h, si, FCR_RT_NOT_READY, FCR_RT_SRC_INTERNAL, 1, "not initialized");
@@ -401,9 +402,16 @@ static FcrRtStatus rt_step_impl(FcrRtHandle *h, const FcrRtTimeCtx *t,
         h->pending_valid = 0;
     }
 
-    /* ---- 2) 时钟同步（调度器为唯一时间源）---- */
-    fast_step = (uint64_t)t->n_low * (uint64_t)h->steps_per_low +
-                (uint64_t)((t->n_fast_low > 0) ? t->n_fast_low : 0);
+    /* ---- 2) 时钟同步（调度器为唯一时间源）----
+     * n_fast_low 两种约定并存，统一钳制到 [0, steps_per_low-1]：
+     *   (a) 子步计数 0..steps_per_low-1（如 0..99）
+     *   (b) 含端点步数 1..n_high_low（FAST.Farm 约定 n_high_low = nint(DT_Low/DT_High)+1，如 101）
+     * 这样 total_step 每个 DT_Low 恰好前进 steps_per_low，SCADA 边界不会提前/重复。 */
+    n_fast = (t->n_fast_low > 0) ? t->n_fast_low : 0;
+    if (h->steps_per_low > 0 && (uint32_t)n_fast >= h->steps_per_low)
+        n_fast = (int32_t)h->steps_per_low - 1;
+
+    fast_step = (uint64_t)t->n_low * (uint64_t)h->steps_per_low + (uint64_t)n_fast;
     fcr_state_store_set_clock(h->rt->ss, t->t_low, fast_step,
                               (uint64_t)t->n_low, FCR_RT_HEALTH_OK);
 
@@ -419,7 +427,7 @@ static FcrRtStatus rt_step_impl(FcrRtHandle *h, const FcrRtTimeCtx *t,
     h->step_index++;
     {
         uint64_t total_step = (uint64_t)t->n_low * (uint64_t)h->steps_per_low +
-                              (uint64_t)((t->n_fast_low > 0) ? t->n_fast_low : 0);
+                              (uint64_t)n_fast;
         uint64_t scada_idx = (h->steps_per_scada > 0)
                                  ? (total_step / (uint64_t)h->steps_per_scada)
                                  : 0;
