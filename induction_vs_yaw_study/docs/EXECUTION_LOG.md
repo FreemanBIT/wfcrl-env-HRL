@@ -1,4 +1,4 @@
-# EXECUTION LOG — full-DOE gate 清单跟踪（审查 §20）— 更新 2026-09-16 13:15
+# EXECUTION LOG — full-DOE gate 清单跟踪（审查 §20）— 更新 2026-10-26
 
 | # | Gate | 状态 | 结果/日期 |
 |---|---|---|---|
@@ -10,14 +10,26 @@
 | 6 | greedy/sentinel induction identity | ✅ | induction_r1 -0.44% |
 | 7 | yaw sign verified | ✅ | wd+10: +20 最优 4635kW 与 FLORIS(+15°) sign 一致；wd-10: ±20 对称；wd0: 0 最优 |
 | 8 | WD mirror sanity | 🟡 单 seed 已跑 | P(+10,+20)=4635 vs P(-10,-20)=4147；多 seed 平均待 pilot |
-| 9 | induction operating map（1T） | 🟡 U8 重跑完成（ICD v1.5 新 DLL） | **新 map（2026-10-20, TI10_s1, OMP=1, settle 120s）**：a 0.10→1029 / 0.15→1210 / 0.20→1389 / 0.25→1527 / 0.30→1610 / 0.33→1622 kW；Ct 0.552-0.864、Cp 0.298-0.474；**a=0.10 Region1 崩溃已消除**（旧 DLL 7.5kW 停机），可用域 [0.10,0.33]；U6/10/12 待盒 |
-| 10 | FLORIS induction LUT 存 calibrated a_cmd | ⬜ | Phase 4（LUT 现含 ratio/power_target；a_cmd 主链待接） |
+| 9 | induction operating map（1T） | ✅ 全 4 风速（2026-10-22） | `induction_operating_map_icd15.csv` **24 点**（4U × 6a）。greedy：U6 790 / U8 1622 / U10 3518 / U12 4359 kW，各 U 单调；a=0.10 Region1 崩溃在新 DLL 下消除。注：U12 a=0.15/0.20 首跑中断（state rows 不足→P=nan），重跑成功 |
+| 10 | FLORIS induction LUT 存 calibrated a_cmd | ✅（2026-10-22） | 144 case / 864 行（4U × 3TI × 3WD × 4S × 2 controls），`a_cmd` 列 100% 覆盖（`optimize/calibrated_a_cmd.py` 校准曲线 + a_cmd 决策变量搜索）；yaw 增益均值 5.79%（max 32.6%）、derating 1.48%（max 16.9%）|
 | 11 | 显式窗口 + 时长派生 | ✅ | metrics.py + Case 派生计数（P0-5） |
 | 12 | worker 清理 PID-scope | ✅ | run/_proc_utils（age+PID） |
 | 13 | manifest 并发安全 | ✅ | 批跑器增量 append+锁；resume 重试 failed |
 | 14 | BTS 共享引用 | ✅ | engine 只引用源盒 |
-| 15 | pilot DOE 通过 | 🟡 前置齐 | U8 盒 18/18 完成（2026-09-24，QA 17/18，TI15_s3 待决策）；全精度 LUT 可跑（quick 已有）；ICD v1.5 新 DLL 复验全 PASS（2026-10-20）；待 TI15_s3 决策 + pilot 启动 |
+| 15 | pilot DOE 通过 | 🟡 运行中 | **Full DOE 运行中**（2026-10-22 起，2592 case）：72 盒全到位（QA 72/72，TI 改相对容差 max(0.02, 25%)）；LUT 全网格完成；**OMP=3**（OMP>3 实测 37% 失稳）；1 worker（内存约束）。进度约 23%，ETA ~12.8 天 |
 
+
+## 新增运维 Gate（2026-10-22~26 DOE 实践发现）
+
+| # | Gate | 状态 | 说明 |
+|---|---|---|---|
+| G-16 | **OMP 稳定性** | ✅ 强制 OMP≤3 | OMP=6 实测 37% case 机组顺桨（正常风速下）；OMP=3 残余 ~2.5%；OMP=1 逐位确定但慢 2.5× |
+| G-17 | **磁盘预算** | ✅ 每 case 1.8MB | ROSCO `LoggingLevel=1` 会写 231MB/case .dbg → 已改 0 + 完成后清理大件 |
+| G-18 | **内存预算** | ✅ 单 worker | 每 case 峰值 ~5GB（bts 2.4–2.9GB + 仿真 2GB）；本机仅 ~5GB 可用 |
+| G-19 | **QA 容差** | ✅ 相对容差 | `|dTI| <= max(0.02, 25%*TI)`；TurbSim 同 seed 确定性，绝对 0.02 对 TI15 过严 |
+| G-20 | **失稳检测** | ✅ pitch>40 或 rpm<2 | 旧判据 pitch>80 漏掉半顺桨（pitch 79/rpm 1.5）→ 假增益 +117% |
+
+---
 
 ## DEL 多机 .outb 通道（2026-09-16 定位解决）
 - 根因实证：ZMQ 客户端在线（引擎轮询状态）时，集成 FAST.Farm 只写 Case.T1.outb（T2/T3 缺失；
