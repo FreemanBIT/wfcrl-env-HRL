@@ -1,4 +1,4 @@
-/*
+﻿/*
  * test_main.c — farm_control_runtime 单元测试入口
  * 编译全部 test_*.c（含本文件）→ 运行。
  * 定义 MB_STUB 时不注册 modbus 测试（链接隔离用）。
@@ -21,6 +21,7 @@ void test_bridge_adapter_register(void);
 void test_awae_register(void);
 void test_rt_snapshot_register(void);
 void test_rt_adapter_register(void);
+void test_mock_command_source_register(void);
 #ifndef MB_STUB
 void test_modbus_register(void);
 #endif
@@ -43,6 +44,7 @@ int main(void)
     test_awae_register();
     test_rt_snapshot_register();
     test_rt_adapter_register();
+    test_mock_command_source_register();
 #ifndef MB_STUB
     test_modbus_register();
 #endif

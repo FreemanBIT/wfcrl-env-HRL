@@ -185,6 +185,24 @@ python3 tools/check_icd_gates.py    # 期望：G-1/G-2/G-3 静态检查通过（
 python3 tools/audit_signals.py      # 期望：88/88 一致（2 条 turbine_id 符号性 NOTE）
 ```
 
+### 5.2b 无 Modbus 时的场控命令输入
+
+WSL 测试阶段不接 Modbus，也不需要 RCP。用命令源按计划表生成 S01：
+
+```bash
+# 计划表示例（6 机：200 s 偏航、300 s 诱导、500 s 回退）
+cat config/mock_commands_example.csv
+```
+
+```c
+FcrMockSource *src = fcr_mock_source_create(n_turbines);
+fcr_mock_source_load_csv(src, "config/mock_commands_example.csv");
+/* 每个 1 s 边界：注入场控模块（h 传 NULL 则只合成帧，供其他模块使用） */
+if (k % 100 == 0) fcr_mock_source_tick(src, h, (double)(k / 100));
+```
+
+详见 `05_MOCK_COMMAND_SOURCE.md`。
+
 > `check_abi.py` 会调用 `gcc` 编译 C 探针；若失败请确认 `gcc` 在 PATH。
 
 ### 5.3 RT 接入冒烟测试（强烈建议）

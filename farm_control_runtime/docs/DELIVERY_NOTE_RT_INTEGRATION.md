@@ -16,6 +16,7 @@
 | **Python 协议镜像** | `farm_protocol.py`（ctypes 逐字节镜像）、`farm_zmq_client.py` | `wfcrl/transport/` |
 | **构建脚本** | `build_linux.sh`（C 库 + 测试）、`build_rosco_linux.sh`（Fortran `.a`）、`_compile.py`（Windows DLL） | `farm_control_runtime/tools/`、`wfcrl/simulators/fastfarm/src/` |
 | **示例** | `rt_minimal_example.c`（1000 × 10 ms 调度器接入） | `farm_control_runtime/examples/` |
+| **命令源（测试替代）** | `fcr_mock_command_source`：以计划表/CSV 生成 S01，替代 Modbus 与 RCP | `farm_control_runtime/offline/harness/`、`config/mock_commands_example.csv` |
 | **测试** | C 单元/RT 测试 100 例、Python 协议 12 例、集成测试、门禁与信号审计 | `farm_control_runtime/tests/`、`tools/` |
 | **产物** | `DISCON_WT1.dll`（Windows 闭环用，2371.6 KB） | `wfcrl/simulators/fastfarm/servo_dll/` |
 | **信号字典** | ICD v1.5 SingleHop（88 信号 / 13 组） | `docs/farm_control/inputs/` |
@@ -174,6 +175,10 @@ Modbus 侧按 `modbus_register_map.h`（AWAE 区 0x3000 起，32 寄存器/点�
 NUMERICAL_ERROR / COMM_ERROR / FATAL`，配套 `FcrRtStatusInfo`（错误码/来源/消息/时间）。
 逐信号的接受/拒绝/限幅/保持/降级动作见 `03_RT_DATA_AND_TIME_POLICY.md`。
 
+**无 Modbus / 无 RCP 时**：用 `offline/harness/fcr_mock_command_source.{h,c}` 按计划表
+（CSV 或事件）生成 S01 命令帧，注入 `fcr_rt_set_command` 或直接取帧供其他模块使用，
+见 `05_MOCK_COMMAND_SOURCE.md`。
+
 ---
 
 ## 9. 已知限制
@@ -197,4 +202,5 @@ NUMERICAL_ERROR / COMM_ERROR / FATAL`，配套 `FcrRtStatusInfo`（错误码/来
 | `02_WSL_DEPLOY_AND_TEST_GUIDE.md` | WSL 部署与测试步骤、排障、验收清单 |
 | `03_RT_DATA_AND_TIME_POLICY.md` | 数据策略、时间语义、降级映射（D0~D4） |
 | `04_ARCHITECTURE_DIAGRAMS.md` | Windows 运行态与 WSL/fastfarmRT 部署态架构图 |
+| `05_MOCK_COMMAND_SOURCE.md` | 命令源：无 Modbus/RCP 时向调度器提供 S01 场控输入 |
 | `docs/farm_control/inputs/FASTFarm_WFC_Signal_ICD_v1_5_SingleHop.csv` | ICD v1.5 信号字典 |

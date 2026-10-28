@@ -30,6 +30,7 @@ set(FCR_SRC
     awae/wind_mapper.c
     awae/awae_frame_builder.c
     offline/provider/offline_fastfarm_provider.c
+    offline/harness/fcr_mock_command_source.c
 )
 
 # ---- 平台相关源（WSL/Linux 无 Windows 共享内存与 Winsock）----
@@ -94,6 +95,7 @@ add_executable(fcr_unit_tests
     tests/unit/test_awae.c
     tests/unit/test_rt_snapshot.c
     tests/unit/test_rt_adapter.c
+    tests/unit/test_mock_command_source.c
 )
 # Modbus 单测依赖 Winsock（transport/modbus/modbus_transport.h -> windows.h），仅 Windows
 if(WIN32)

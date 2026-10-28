@@ -1,0 +1,23 @@
+# 场控命令计划示例（替代 Modbus/RCP 的测试输入）
+# 列：t_s,turbine_id,control_enable,control_mode,yaw_target_heading_rad,induction_ref,ttl_s,duration_s
+#   t_s                  : 生效仿真时刻 [s]
+#   turbine_id           : 1..N；0 = 全场所有机组
+#   control_enable       : 1 = 允许外部场控；0 = 回退 ROSCO 标称
+#   control_mode         : 0=基线 1=PRC 2=Ct 前馈 3=预留
+#   yaw_target_heading_rad: 绝对机舱目标方位 [rad]；空 = 不改偏航通道
+#   induction_ref        : 目标轴向诱导因子 a；空 = 不改诱导通道
+#   ttl_s                : 通道有效时长 [s]；0 = 用模块默认（偏航 60 / 诱导 5）
+#   duration_s           : 事件持续时长 [s]；0 = 持续到下一次同通道事件
+
+# ---- 阶段 1：0 s 起全场使能外部场控，不施加任何动作（baseline）----
+0,0,1,1,,,0,0
+
+# ---- 阶段 2：200 s 起 T3、T4 偏航 10°（0.1745 rad，绝对方位，假设初始 0）----
+200,3,1,1,0.1745,,0,0
+200,4,1,1,0.1745,,0,0
+
+# ---- 阶段 3：300 s 起 T4 诱导 a=0.20（降载），400 s 后自动恢复 ----
+300,4,1,1,,0.20,0,100
+
+# ---- 阶段 4：500 s 起关闭外部场控，回退 ROSCO 标称 ----
+500,0,0,0,,,0,0
