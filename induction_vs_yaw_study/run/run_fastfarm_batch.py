@@ -85,6 +85,43 @@ def _write_status_row(status_path: Path, row, res, wall_s: float) -> None:
                         res.get("error", ""), round(wall_s, 1)])
 
 
+def _free_gb():
+    """可用物理内存（GB）；psutil 缺失时返回 None（闸门自动失效）。"""
+    try:
+        import psutil
+        return psutil.virtual_memory().available / (1024 ** 3)
+    except Exception:
+        return None
+
+
+def _wait_for_memory(min_gb: float, max_wait_s: float, poll_s: float = 20.0) -> float:
+    """启动 case 前等可用内存回到 min_gb 以上，返回已等待秒数。
+
+    背景（G-18 内存闸门）：单 case 峰值 ~5GB（bts 重采样 2.9GB + 仿真 2GB），
+    同机还有另一条工作流在跑（其并发进程实测可达 55 个）。内存不足时 worker 会在
+    openfast_toolbox/turbsim_file.py:85 抛 MemoryError —— 实测 160 个 case 因此
+    失败。与其"立刻失败→退避重试"，不如先等内存回落，把失败换成等待。
+    等待上限 max_wait_s：超过即照常启动（避免内存长期偏低时无限期停滞）。
+    """
+    waited = 0.0
+    announced = False
+    while waited < max_wait_s:
+        free = _free_gb()
+        if free is None or free >= min_gb:
+            if announced:
+                print(f"  [mem] resumed after {waited:.0f}s (free {free:.1f} GB)", flush=True)
+            return waited
+        if not announced:
+            print(f"  [mem] free {free:.1f} GB < {min_gb:.1f} GB -> waiting "
+                  f"(max {max_wait_s:.0f}s)", flush=True)
+            announced = True
+        time.sleep(poll_s)
+        waited += poll_s
+    free = _free_gb()
+    print(f"  [mem] wait cap reached, starting anyway (free {free:.1f} GB)", flush=True)
+    return waited
+
+
 def _run_one(row, lut, ff_cfg, out_dir: Path, ports) -> dict:
     """以**子进程**跑单个 case（_case_worker）。
 
@@ -97,6 +134,11 @@ def _run_one(row, lut, ff_cfg, out_dir: Path, ports) -> dict:
     row_path = out_dir / "_rows" / (f"{row['case_id']}_{row['control']}.json")
     row_path.parent.mkdir(parents=True, exist_ok=True)
     row_path.write_text(_json.dumps(row), encoding="utf-8")
+    # 内存闸门：可用内存不足时先等，避免 worker 在 bts 重采样处 MemoryError
+    _wait_for_memory(
+        float(os.environ.get("WFCRL_STUDY_MIN_FREE_GB", "4.0")),
+        float(os.environ.get("WFCRL_STUDY_MEM_WAIT_MAX_S", "600")),
+    )
     t0 = time.time()
     cmd = [
         sys.executable, "-m", "induction_vs_yaw_study.run._case_worker",

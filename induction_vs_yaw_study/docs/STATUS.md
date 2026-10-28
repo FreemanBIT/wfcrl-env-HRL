@@ -1,6 +1,6 @@
 # STATUS — 诱导 vs 偏航研究：当前状态快照
 
-**快照时间**：2026-10-26 22:30 · 分支 `dev/farm-control-runtime` · 最新提交 `fdbd49b`
+**快照时间**：2026-10-28 17:10 · 分支 `dev/farm-control-runtime` · 最新提交 `86b4eba`
 
 > 文档索引
 > - **本文档**：当前状态 / 开放问题 / 下一步
@@ -15,14 +15,15 @@
 
 | 指标 | 值 |
 |---|---|
-| 进度 | **593 / 2592（22.9%）** |
-| 分布 | U06 216、U08 161、U10 108、U12 108 |
-| 失败 | 101（`--resume` 自动重试中）|
+| 进度 | **624 / 2592（24.1%）** |
+| 分布 | U06 216、U08 189、U10 111、U12 108 |
+| 失败 | 160（`--resume` 自动重试中；均为内存抢占导致，见 G-22）|
 | 运行配置 | **1 worker × OMP=3**（内存约束，见下）|
-| 速率 | 6.16 case/h（平均 584s/case）|
-| ETA | **~308 小时（约 12.8 天）** |
-| 资源 | 磁盘 53.0GB 空闲（~1.8MB/case）；内存 3.1GB 空闲 |
+| 速率 | 6.1 case/h（平均 590s/case）|
+| ETA | **~296 小时（约 12.3 天）** |
+| 资源 | 磁盘 53.1GB 空闲（~1.8MB/case）；内存 4.6GB 空闲 |
 | 数据质量 | 失稳 0（OMP=3 修复后），质量审计通过 |
+| 控制器 DLL | 624 done 中 507 个用旧 DLL、116 个用新 DLL、1 个带 sha 溯源（G-21） |
 
 **为什么只能用 1 worker**：本机 15.8GB，系统+浏览器常占 ~10.8GB；每 case 峰值 ~5GB
 （bts 读取 2.4–2.9GB + 仿真 2GB）→ 2 workers 实测 OOM。详见 `DOE_OPERATIONS.md` §4.3。
@@ -69,7 +70,9 @@
 | `turbsim_inp/generate_wind_boxes.py` / `qa_wind_boxes.py` | 风盒生成 / QA |
 | `run/build_case_manifest.py` | manifest 构建（QA 门禁）|
 
-**单元测试：58 passed**
+| `run/audit_provenance.py` | 溯源审计（DLL sha / git commit / bts sha 一致性）|
+
+**单元测试：66 passed**
 
 ---
 
@@ -78,6 +81,37 @@
 ### 🟡 P4 资源与产能
 - DOE 单 worker 需 ~12.8 天；若需提速只能释放内存开 2 workers（约 6 天）
 - 若要缩短设计：seed 6→4 可省 1/3 时间（统计上 4 seed 仍可给可靠均值/标准差）
+
+### ✅ P10 外部重建控制器 DLL 的数据一致性（已处置，G-21）
+
+**发现**：运行团队在同一分支（`7607e38` + `5436678`，2026-10-27 15:54/16:17）重建了
+`DISCON_WT1.dll`（2359.4 → 2371.6 KB）。DOE 跨越该时间点 → 507 个 case 用旧 DLL、
+116 个用新 DLL，而旧 case 没有记录 DLL 版本，事后无法判定是否同源。
+
+**判定：不影响本研究的数据一致性**，依据三条：
+1. 两次提交的代码改动全部被门控在 **Windows FAST.Farm 路径不会进入**的分支里
+   —— `state_store.c` 的字段合并需 `of.valid`（仅 fastfarmRT 的 S02 输入路径置位），
+   `rosco_api.c` 的 RT 共运行需 `g_rt_rt_mode`（仅 `fcr_rt_init` 置位）；
+2. `FarmStateFrame` 布局未变（25664 B）、`FCR_MAX_TURBINES` 仍 64，仅 AWAE 帧容量
+   64→1000，与 3 机场控回放无关；提交说明亦自述"只影响 AWAE 帧几何/缓冲区"；
+3. 实测：新 DLL 年代的 case 失稳率与旧年代一致（post 1/97 vs pre 0/100），无异常。
+
+**已落地**：case `metadata.json` 与 run `provenance.json` 现记录 `discon_dll_sha256`
+（按 mtime/size 进程内缓存，避免每 case 重读 2.4MB）；新增 `run/audit_provenance.py`
+输出 DLL 年代分布 / git commit 分布 / bts sha 冲突（当前 19 个风盒 0 冲突）。
+
+**遗留**：旧 507 个 case 无 sha 字段，只能按 `timeseries.csv` mtime 划年代。若后续要
+做严格的跨年代 A/B，需在空槽位重跑同一工况（单 case ~10min），当前不阻塞。
+
+### ✅ P11 内存抢占导致 case 批量 MemoryError（已处置，G-22）
+
+**现象**：failed 从 101 涨到 160（+59），全部是 `openfast_toolbox/io/turbsim_file.py:85`
+的 `MemoryError`，每次失败仅 2s。**根因**：同机另一条工作流的并发进程实测可达 55 个
+（其提交说明自述），把可用内存挤到 3GB 以下，3GB 的 bts 重采样放不下。
+
+**处置**：批跑器在每个 case 启动前轮询可用内存（阈值 `WFCRL_STUDY_MIN_FREE_GB`=4.0GB，
+上限 `WFCRL_STUDY_MEM_WAIT_MAX_S`=600s，超时照常启动以免长期停滞），把"失败→重试"
+换成"短暂等待"。已在 2026-10-28 17:00 重启的批次中生效。
 
 ### 🟡 P7 残余数值失稳（~2.5%）
 - OMP=3 下仍有约 2.5% 的 case 出现机组顺桨（正常风速下，非物理）
@@ -98,7 +132,7 @@
 
 ## 五、下一步
 
-1. **等 DOE 跑完**（~12.8 天）→ 补跑 101 failed + 检出失稳 case
+1. **等 DOE 跑完**（~12.3 天）→ 补跑 160 failed + 检出失稳 case
 2. 全量 6-seed 分析 → 复核 §2 的阶段性结论；出最终 `report.md` + 6 张图
 3. DEL 代表工况（keep-files 模式）→ Power-Load Pareto
 4. Phase 5b 直优 → Regret 分析

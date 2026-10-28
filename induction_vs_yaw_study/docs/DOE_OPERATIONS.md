@@ -72,6 +72,29 @@ $env:WFCRL_STUDY_OMP_NUM_THREADS = '3'      # 必须 <=3（见 §4.1）
 - 每 case 峰值 ~5GB（bts 读取 2.4–2.9GB + 仿真 2GB）
 - 2 workers 实测 OOM（`Unable to allocate 2.93 GiB`）
 
+**内存闸门（G-22）**：同机还有另一条工作流（其并发进程实测可达 55 个），可用内存
+会被挤到 3GB 以下，worker 随即在 `openfast_toolbox/io/turbsim_file.py:85` 抛
+`MemoryError`。批跑器现在每个 case 启动前轮询可用内存：
+
+| 环境变量 | 默认 | 作用 |
+|---|---|---|
+| `WFCRL_STUDY_MIN_FREE_GB` | 4.0 | 低于此值先等待 |
+| `WFCRL_STUDY_MEM_WAIT_MAX_S` | 600 | 等待上限；超时照常启动，避免长期停滞 |
+
+等待会打印 `[mem] free X GB < Y GB -> waiting` / `[mem] resumed`。
+大量 `attemptN FAILED ... turbsim_file.py` 且每个只耗 2s，就是内存被抢占的特征。
+
+### 4.3b 控制器 DLL 会被外部重建（G-21）
+- `wfcrl/simulators/fastfarm/servo_dll/DISCON_WT1.dll` 由运行团队在同一分支上重建
+  （2026-10-27 16:14 一次：2359.4→2371.6KB，对应 `7607e38`+`5436678`）
+- 重建后**必须**核对是否影响控制律：那两次提交的改动全部被门控在 Windows
+  FAST.Farm 路径不会进入的分支里（`state_store.c` 需 `of.valid`、
+  `rosco_api.c` 需 `g_rt_rt_mode`），且 `FarmStateFrame` 布局未变（25664B）
+- 现在 case `metadata.json` 与 run `provenance.json` 都记 `discon_dll_sha256`，
+  任何"这批数据用哪个 DLL 跑的"问题都能直接查，不必靠文件 mtime 推断
+- 追溯旧数据：DOE 已完成的 623 case 中 **507** 个在 10-27 16:14 前（旧 DLL）、
+  **116** 个之后（新 DLL）；旧数据无 sha 字段，只能按 `timeseries.csv` mtime 划分
+
 ### 4.4 TurbSim 给定 seed 是确定性的
 - 同 seed + 同 .inp 重跑 → **完全相同的湍流场**（实测 TI 相同到小数点后 4 位）
 - 要让盒"换一个实现"，必须换 `RandSeed1` 或改 `.inp` 参数

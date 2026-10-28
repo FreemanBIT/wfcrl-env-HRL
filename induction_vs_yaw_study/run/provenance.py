@@ -45,6 +45,28 @@ def fastfarm_exe_path() -> Path:
     return _REPO_ROOT / "wfcrl" / "simulators" / "fastfarm" / "bin" / "FAST.Farm_x64_OMP.exe"
 
 
+def discon_dll_path() -> Path:
+    """控制器 DLL（FCR 集成版）。运行时团队会重建它，故必须逐 case 记录。"""
+    return _REPO_ROOT / "wfcrl" / "simulators" / "fastfarm" / "servo_dll" / "DISCON_WT1.dll"
+
+
+_SHA_CACHE: dict = {}
+
+
+def cached_sha256(path: Path) -> Optional[str]:
+    """按 (path, mtime, size) 缓存的哈希：同一进程内多 case 不重复读 2.4MB。"""
+    try:
+        st = path.stat()
+    except Exception:
+        return None
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    if key in _SHA_CACHE:
+        return _SHA_CACHE[key]
+    h = sha256(path)
+    _SHA_CACHE[key] = h
+    return h
+
+
 def run_provenance(bts_file: Optional[str] = None) -> dict:
     exe = fastfarm_exe_path()
     bts_path = _STUDY_ROOT / "FarmInputs" / bts_file if bts_file else None
@@ -53,6 +75,8 @@ def run_provenance(bts_file: Optional[str] = None) -> dict:
         "git_commit": git_commit(),
         "fastfarm_exe": str(exe),
         "fastfarm_exe_sha256": sha256(exe),
+        "discon_dll": str(discon_dll_path()),
+        "discon_dll_sha256": cached_sha256(discon_dll_path()),
         "floris_version": _pkg_ver("floris"),
         "openfast_toolbox_version": _pkg_ver("openfast_toolbox"),
         "bts_file": bts_file,
@@ -101,6 +125,7 @@ def write_case_metadata(case_dir: Path, row: dict, cfg_time: dict = None) -> Pat
         "control": row.get("control"),
         "bts_file": row.get("bts_file"),
         "bts_sha256": sha256(bts_full) if bts_full.exists() else None,
+        "discon_dll_sha256": cached_sha256(discon_dll_path()),
         "t_sim_s": t_sim, "t_settle_s": t_settle, "control_dt_s": dt,
         "n_total_control_steps": n_total, "n_statistics_steps": n_stat,
         "yaw_command_convention": YAW_COMMAND_CONVENTION,
