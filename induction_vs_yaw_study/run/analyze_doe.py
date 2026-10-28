@@ -260,6 +260,38 @@ def _bias_summary(gain_rows: List[Dict]) -> List[Dict]:
     return out
 
 
+def _energy_summary(gain_rows: List[Dict]) -> List[Dict]:
+    """Phase 5c：等权 case-average 能量口径（无站点风玫瑰，不称 AEP）。
+
+    对每个 spacing（及全场合计）按 **等权** 汇总各 (U,TI,WD) 工况的增益：
+    即假设各风速/风向/湍流工况出现概率相同。给出均值、标准差与标准误。
+    """
+    from collections import defaultdict
+    out = []
+    scopes = [("ALL", lambda r: True)]
+    for s in sorted({r["spacing_D"] for r in gain_rows}):
+        scopes.append((f"S{s:g}D", (lambda s_: (lambda r: r["spacing_D"] == s_))(s)))
+    for name, pred in scopes:
+        for ctl in ("yaw", "induction"):
+            sub = [r["gain_pct"] for r in gain_rows if r["control"] == ctl and pred(r)]
+            if not sub:
+                continue
+            a = np.array(sub, dtype=float)
+            a = a[np.isfinite(a)]
+            if a.size == 0:
+                continue
+            out.append({
+                "scope": name, "control": ctl, "n_cases": int(a.size),
+                "equal_weight_gain_pct": float(a.mean()),
+                "std_pct": float(a.std(ddof=1)) if a.size > 1 else 0.0,
+                "sem_pct": float(a.std(ddof=1) / np.sqrt(a.size)) if a.size > 1 else 0.0,
+                "median_pct": float(np.median(a)),
+                "p10_pct": float(np.percentile(a, 10)),
+                "p90_pct": float(np.percentile(a, 90)),
+            })
+    return out
+
+
 def _write_csv(rows: List[Dict], path: Path) -> None:
     if not rows:
         return
@@ -271,7 +303,8 @@ def _write_csv(rows: List[Dict], path: Path) -> None:
 
 
 def _report(case_rows, group_rows, gain_rows, unstable_n, path: Path,
-            include_unstable: bool = False, per_t=None, bias=None) -> None:
+            include_unstable: bool = False, per_t=None, bias=None,
+            energy=None) -> None:
     lines = ["# Full DOE 分析报告", ""]
     incl = "纳入" if include_unstable else "剔除"
     lines.append(f"- 统计窗: [t_settle, t_end]；case 数: {len(case_rows)}；失稳 case {unstable_n}（已{incl}）")
@@ -344,6 +377,19 @@ def _report(case_rows, group_rows, gain_rows, unstable_n, path: Path,
                 np.mean([r["farm_delta_kw"] for r in sub]),
             ))
 
+    if energy:
+        lines.append("")
+        lines.append("## 等权能量口径（Phase 5c；无站点风玫瑰，不称 AEP）")
+        lines.append("")
+        lines.append("假设各 (U,TI,WD) 工况等概率；n=该 spacing 下参与统计的工况数。")
+        lines.append("")
+        lines.append("| scope | control | n | 等权增益 | 标准差 | 标准误 | 中位 | P10 | P90 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
+        for r in energy:
+            lines.append("| %s | %s | %d | **%+.2f%%** | %.2f%% | %.2f%% | %+.2f%% | %+.2f%% | %+.2f%% |" % (
+                r["scope"], r["control"], r["n_cases"], r["equal_weight_gain_pct"],
+                r["std_pct"], r["sem_pct"], r["median_pct"], r["p10_pct"], r["p90_pct"]))
+
     if bias:
         lines.append("")
         lines.append("## FLORIS 预测 vs FAST.Farm 实测（系统偏差）")
@@ -379,17 +425,20 @@ def main():
 
     per_t = _per_turbine(group_rows)
     bias = _bias_summary(gain_rows)
+    energy = _energy_summary(gain_rows)
 
     _write_csv(case_rows, out_dir / "case_summary.csv")
     _write_csv(group_rows, out_dir / "group_summary.csv")
     _write_csv(gain_rows, out_dir / "gains.csv")
     _write_csv(per_t, out_dir / "per_turbine.csv")
     _write_csv(bias, out_dir / "bias_summary.csv")
+    _write_csv(energy, out_dir / "energy_summary.csv")
     _report(case_rows, group_rows, gain_rows, n_unstable, out_dir / "report.md",
-            a.include_unstable, per_t=per_t, bias=bias)
+            a.include_unstable, per_t=per_t, bias=bias, energy=energy)
 
     print(f"cases: {len(case_rows)} (unstable {n_unstable})  groups: {len(group_rows)}"
-          f"  gain rows: {len(gain_rows)}  per-turbine: {len(per_t)}  bias: {len(bias)}")
+          f"  gain rows: {len(gain_rows)}  per-turbine: {len(per_t)}  bias: {len(bias)}"
+          f"  energy: {len(energy)}")
     print(f"-> {out_dir}")
 
 
