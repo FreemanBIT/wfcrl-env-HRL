@@ -29,7 +29,7 @@
 | G-19 | **QA 容差** | ✅ 相对容差 | `|dTI| <= max(0.02, 25%*TI)`；TurbSim 同 seed 确定性，绝对 0.02 对 TI15 过严 |
 | G-20 | **失稳检测** | ✅ pitch>40 或 rpm<2 | 旧判据 pitch>80 漏掉半顺桨（pitch 79/rpm 1.5）→ 假增益 +117% |
 | G-21 | **控制器 DLL 溯源** | ✅ 逐 case 记 sha256 | 运行团队会在同一分支重建 `DISCON_WT1.dll`（本次 2026-10-27 16:14）。此前 DOE 已跑 507 case（旧 DLL）、后续 116 case（新 DLL）——无溯源字段就无法事后判定数据一致性。现 metadata.json + run provenance 均记 `discon_dll_sha256`（含按 mtime/size 的进程内缓存） |
-| G-22 | **内存闸门** | ✅ 启动前等待 | 同机另一条工作流并发进程可达 55 个 → 实测 160 个 case 在 `turbsim_file.py:85` 抛 MemoryError。现每个 case 启动前轮询可用内存（默认阈值 4.0GB、上限 600s，`WFCRL_STUDY_MIN_FREE_GB`/`WFCRL_STUDY_MEM_WAIT_MAX_S` 可调），把"失败→重试"换成"短暂等待" |
+| G-22 | **内存闸门** | ✅ 启动前等待 | 桌面常驻占用 ~10–11GB → 可用只剩 3.5–4.6GB，而 bts 重采样瞬时需 ~3.3GB → 160 个 case 在 `turbsim_file.py:85` 抛 MemoryError（每次仅 2s）。现每个 case 启动前轮询可用内存（默认阈值 4.0GB、上限 600s，`WFCRL_STUDY_MIN_FREE_GB`/`WFCRL_STUDY_MEM_WAIT_MAX_S` 可调）。**注**：任务管理器里的 64 个 `FAST.Farm_x64_OMP.exe` 是已退出的残留条目，不占内存，勿误判为外部抢占 |
 
 ---
 

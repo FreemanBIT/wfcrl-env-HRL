@@ -72,9 +72,16 @@ $env:WFCRL_STUDY_OMP_NUM_THREADS = '3'      # 必须 <=3（见 §4.1）
 - 每 case 峰值 ~5GB（bts 读取 2.4–2.9GB + 仿真 2GB）
 - 2 workers 实测 OOM（`Unable to allocate 2.93 GiB`）
 
-**内存闸门（G-22）**：同机还有另一条工作流（其并发进程实测可达 55 个），可用内存
-会被挤到 3GB 以下，worker 随即在 `openfast_toolbox/io/turbsim_file.py:85` 抛
-`MemoryError`。批跑器现在每个 case 启动前轮询可用内存：
+**内存闸门（G-22）**：本机 15.8GB 中约 **10–11GB** 被桌面环境常驻占用
+（memcompression 2.1 + windows services 1.8 + Edge 1.3 + 微信 1.0 + node 0.5 + 杂项 1.8），
+可用长期只有 3.5–4.6GB。单 case 在 bts 重采样瞬间需要 ~3.3GB（U06 2.93GB + 解释器），
+可用一旦跌破就抛 `MemoryError`（`openfast_toolbox/io/turbsim_file.py:85`）。
+
+> ⚠️ 排查提示：任务管理器里会看到几十个 `FAST.Farm_x64_OMP.exe`（实测 64 个），
+> 它们是**已退出但未释放的残留条目**（0 线程 / 0 CPU / 父进程已消失），**不占内存**，
+> 不要当成"别的进程在抢内存"——曾因此误判（见 STATUS P11）。
+
+批跑器现在每个 case 启动前轮询可用内存：
 
 | 环境变量 | 默认 | 作用 |
 |---|---|---|
